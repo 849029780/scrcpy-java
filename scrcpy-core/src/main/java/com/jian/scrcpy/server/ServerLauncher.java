@@ -31,7 +31,9 @@ public final class ServerLauncher implements AutoCloseable {
         System.out.printf("[scrcpy-java] scid=%s (%d), socket=%s%n", scid, o.scid(), socket);
 
         adb.push(jar, REMOTE);
-        adb.forward(o.localPort(), socket);
+        try { adb.removeForward(o.localPort()); } catch (Exception ignored) {}
+        try { adb.removeReverse(o.localPort()); } catch (Exception ignored) {}
+        adb.reverse(o.localPort(), socket);
 
         var a = new ArrayList<String>();
         Collections.addAll(
@@ -43,7 +45,7 @@ public final class ServerLauncher implements AutoCloseable {
                 "5.0.1",
                 "scid=" + scid,
                 "log_level=info",
-                "tunnel_forward=true");
+                "tunnel_forward=false");
 
         if (!o.video()) a.add("video=false");
         if (!o.audio()) a.add("audio=false");
