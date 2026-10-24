@@ -16,16 +16,30 @@ public final class DeviceInfoDecoder extends ByteToMessageDecoder {
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
         if (done) {
-            if (in.isReadable()) out.add(in.readRetainedSlice(in.readableBytes()));
+            if (in.isReadable()) {
+                out.add(in.readRetainedSlice(in.readableBytes()));
+            }
             return;
         }
-        if (in.readableBytes() < 64) return;
+        if (in.readableBytes() < 64) {
+            return;
+        }
+
         byte[] b = new byte[64];
         in.readBytes(b);
         int n = 0;
-        while (n < b.length && b[n] != 0) n++;
+        while (n < b.length && b[n] != 0) {
+            n++;
+        }
+
         done = true;
         out.add(new DeviceInfo(new String(b, 0, n, StandardCharsets.UTF_8)));
+
+        // Codec/session bytes may already be buffered in the same TCP read.
+        // Preserve them when this handshake decoder removes itself.
+        if (in.isReadable()) {
+            out.add(in.readRetainedSlice(in.readableBytes()));
+        }
         ctx.pipeline().remove(this);
     }
 }
