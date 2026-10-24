@@ -91,6 +91,7 @@ public final class ScrcpyConnection implements AutoCloseable {
                     }
                     ChannelPipeline pipeline = channel.pipeline();
                     pipeline.addLast("media", new ScrcpyMediaDecoder());
+                    pipeline.addLast("configMerger", new ConfigPacketMerger());
                     pipeline.addLast("videoHandler", videoHandler);
                     exceptionLogging(pipeline, "video");
                 }
