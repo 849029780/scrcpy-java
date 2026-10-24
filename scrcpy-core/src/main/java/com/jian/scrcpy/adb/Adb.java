@@ -68,6 +68,14 @@ public final class Adb {
         run("forward", "--remove", "tcp:" + p);
     }
 
+    public void reverse(int p, String a) throws Exception {
+        run("reverse", "tcp:" + p, "localabstract:" + a);
+    }
+
+    public void removeReverse(int p) throws Exception {
+        run("reverse", "--remove", "tcp:" + p);
+    }
+
     public Process shellAsync(List<String> a) throws IOException {
         var c = base();
         c.add("shell");
