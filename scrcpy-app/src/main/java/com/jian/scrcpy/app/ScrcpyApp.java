@@ -13,17 +13,21 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
-import javafx.scene.input.KeyCode;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ScrcpyApp extends Application {
+    private static final double TILE_WIDTH = 360;
+    private static final double TILE_HEIGHT = 680;
+
     private final ListView<AdbDevice> devices = new ListView<>();
     private final Button connect = new Button("连接选中");
     private final Button disconnect = new Button("断开选中");
     private final Button connectAll = new Button("全部连接");
     private final Label status = new Label("正在扫描 ADB 设备...");
+    private final TilePane screenGrid = new TilePane();
+    private final ScrollPane screenScroll = new ScrollPane(screenGrid);
     private final Map<String, DeviceSession> sessions = new ConcurrentHashMap<>();
     private Adb adb;
 
@@ -36,6 +40,18 @@ public final class ScrcpyApp extends Application {
         devices.setCellFactory(v -> deviceCell());
         devices.setPlaceholder(new Label("未发现 ADB 设备"));
 
+        screenGrid.setHgap(10);
+        screenGrid.setVgap(10);
+        screenGrid.setPrefColumns(3);
+        screenGrid.setPrefTileWidth(TILE_WIDTH);
+        screenGrid.setPrefTileHeight(TILE_HEIGHT);
+        screenGrid.setPadding(new javafx.geometry.Insets(10));
+        screenGrid.setTileAlignment(javafx.geometry.Pos.TOP_LEFT);
+
+        screenScroll.setFitToWidth(true);
+        screenScroll.setFitToHeight(false);
+        screenScroll.setPannable(true);
+
         disconnect.setDisable(true);
 
         HBox toolbar = new HBox(8,
@@ -44,8 +60,13 @@ public final class ScrcpyApp extends Application {
                 disconnect,
                 connectAll,
                 status);
-        BorderPane root = new BorderPane(devices);
-        root.setTop(toolbar);
+
+        SplitPane root = new SplitPane();
+        root.setDividerPositions(0.22);
+        root.getItems().addAll(devices, screenScroll);
+
+        BorderPane content = new BorderPane(root);
+        content.setTop(toolbar);
         BorderPane.setMargin(toolbar, new javafx.geometry.Insets(8));
 
         connect.setOnAction(e -> connectSelected());
@@ -55,8 +76,8 @@ public final class ScrcpyApp extends Application {
         devices.getSelectionModel().getSelectedItems().addListener(
                 (javafx.collections.ListChangeListener<AdbDevice>) c -> updateButtons());
 
-        stage.setTitle("scrcpy-java - 多设备");
-        stage.setScene(new Scene(root, 720, 520));
+        stage.setTitle("scrcpy-java - 多设备投屏");
+        stage.setScene(new Scene(content, 1400, 900));
         stage.setOnCloseRequest(e -> {
             closeAllSessions();
             Platform.exit();
@@ -76,7 +97,7 @@ public final class ScrcpyApp extends Application {
                     return;
                 }
                 boolean active = sessions.containsKey(d.serial());
-                String state = active ? "运行中" :
+                String state = active ? "投屏中" :
                         ("device".equals(d.state()) ? "已连接" : d.state());
                 setText(d.displayName() + "  [" + state + "]");
             }
@@ -92,7 +113,7 @@ public final class ScrcpyApp extends Application {
                     devices.setItems(FXCollections.observableArrayList(list));
                     status.setText(list.isEmpty()
                             ? "未发现设备"
-                            : "发现 " + list.size() + " 台设备，已连接 " + sessions.size() + " 台");
+                            : "发现 " + list.size() + " 台设备，投屏中 " + sessions.size() + " 台");
                     updateButtons();
                 });
             } catch (Exception e) {
@@ -123,13 +144,11 @@ public final class ScrcpyApp extends Application {
             return;
         }
 
-        updateButtons();
+        status.setText("正在连接 " + targets.size() + " 台设备...");
         targets.forEach(this::connectDevice);
     }
 
     private void connectDevice(AdbDevice device) {
-        status.setText("正在连接 " + device.displayName() + " ...");
-
         Thread.startVirtualThread(() -> {
             JavaSoundPlayer audioPlayer = null;
             ScrcpySession session = null;
@@ -165,20 +184,11 @@ public final class ScrcpyApp extends Application {
                         return;
                     }
 
-                    Stage deviceStage = new Stage();
-                    BorderPane root = new BorderPane(view);
-                    view.fitWidthProperty().bind(root.widthProperty());
-                    view.fitHeightProperty().bind(root.heightProperty());
-                    deviceStage.setTitle("scrcpy-java - " + device.displayName());
-                    deviceStage.setScene(new Scene(root, 480, 800));
-                    deviceStage.setOnCloseRequest(e -> disconnect(device.serial()));
-
-                    DeviceSession handle = new DeviceSession(runningSession, player, deviceStage);
+                    DeviceSession handle = new DeviceSession(runningSession, player, view);
                     sessions.put(device.serial(), handle);
-                    deviceStage.show();
-
+                    addScreen(handle, device);
                     devices.refresh();
-                    status.setText("已连接 " + sessions.size() + " 台设备");
+                    status.setText("投屏中 " + sessions.size() + " 台设备");
                     updateButtons();
                 });
             } catch (Throwable e) {
@@ -194,6 +204,38 @@ public final class ScrcpyApp extends Application {
         });
     }
 
+    private void addScreen(DeviceSession handle, AdbDevice device) {
+        VBox tile = new VBox(4);
+        tile.setPrefSize(TILE_WIDTH, TILE_HEIGHT);
+        tile.setMinSize(TILE_WIDTH, TILE_HEIGHT);
+        tile.setMaxSize(TILE_WIDTH, TILE_HEIGHT);
+
+        Label title = new Label(device.displayName());
+        title.setMaxWidth(Double.MAX_VALUE);
+        title.setStyle("-fx-font-weight: bold; -fx-padding: 4 6 4 6;");
+
+        StackPane viewport = new StackPane(handle.view());
+        viewport.setPrefSize(TILE_WIDTH, TILE_HEIGHT - 34);
+        viewport.setStyle("-fx-background-color: #222222;");
+
+        handle.view().setPreserveRatio(true);
+        handle.view().setSmooth(true);
+        handle.view().setFitWidth(TILE_WIDTH - 8);
+        handle.view().setFitHeight(TILE_HEIGHT - 42);
+
+        Button close = new Button("断开");
+        close.setOnAction(e -> disconnect(device.serial()));
+
+        HBox header = new HBox(6, title, new Region(), close);
+        HBox.setHgrow(header.getChildren().get(1), Priority.ALWAYS);
+
+        tile.getChildren().addAll(header, viewport);
+        handle.tile = tile;
+        handle.device = device;
+
+        screenGrid.getChildren().add(tile);
+    }
+
     private void disconnectSelected() {
         new ArrayList<>(devices.getSelectionModel().getSelectedItems())
                 .forEach(d -> disconnect(d.serial()));
@@ -202,12 +244,15 @@ public final class ScrcpyApp extends Application {
     private void disconnect(String serial) {
         DeviceSession handle = sessions.remove(serial);
         if (handle == null) return;
+
         handle.close();
-        Platform.runLater(() -> {
-            devices.refresh();
-            status.setText("已连接 " + sessions.size() + " 台设备");
-            updateButtons();
-        });
+        if (handle.tile != null) {
+            screenGrid.getChildren().remove(handle.tile);
+        }
+
+        devices.refresh();
+        status.setText("投屏中 " + sessions.size() + " 台设备");
+        updateButtons();
     }
 
     private void updateButtons() {
@@ -220,7 +265,12 @@ public final class ScrcpyApp extends Application {
     }
 
     private void closeAllSessions() {
-        new ArrayList<>(sessions.values()).forEach(DeviceSession::close);
+        new ArrayList<>(sessions.values()).forEach(handle -> {
+            handle.close();
+            if (handle.tile != null) {
+                screenGrid.getChildren().remove(handle.tile);
+            }
+        });
         sessions.clear();
     }
 
@@ -236,19 +286,27 @@ public final class ScrcpyApp extends Application {
     private static final class DeviceSession implements AutoCloseable {
         private final ScrcpySession session;
         private final JavaSoundPlayer audioPlayer;
-        private final Stage stage;
+        private final VideoView view;
+        private VBox tile;
+        private AdbDevice device;
 
-        private DeviceSession(ScrcpySession session, JavaSoundPlayer audioPlayer, Stage stage) {
+        private DeviceSession(
+                ScrcpySession session,
+                JavaSoundPlayer audioPlayer,
+                VideoView view) {
             this.session = session;
             this.audioPlayer = audioPlayer;
-            this.stage = stage;
+            this.view = view;
         }
 
         @Override
         public void close() {
-            Platform.runLater(stage::close);
             session.close();
             audioPlayer.close();
+        }
+
+        public VideoView view() {
+            return view;
         }
     }
 }
