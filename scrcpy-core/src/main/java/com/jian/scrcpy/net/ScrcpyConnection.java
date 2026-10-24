@@ -43,7 +43,23 @@ public final class ScrcpyConnection implements AutoCloseable {
     }
 
     private void firstSocket(ChannelPipeline pipeline) {
-        pipeline.addLast("forwardProbe", new ForwardProbeDecoder());
+        pipeline.addLast("wireTap", new ChannelInboundHandlerAdapter() {
+                @Override
+                public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+                    if (msg instanceof io.netty.buffer.ByteBuf buf) {
+                        int n = Math.min(buf.readableBytes(), 32);
+                        StringBuilder hex = new StringBuilder();
+                        for (int i = 0; i < n; i++) {
+                            hex.append(String.format("%02x ", buf.getUnsignedByte(buf.readerIndex() + i)));
+                        }
+                        System.out.printf("[scrcpy-java] video raw bytes=%d first=%s%n", buf.readableBytes(), hex);
+                    } else {
+                        System.out.printf("[scrcpy-java] video raw message=%s%n", msg);
+                    }
+                    ctx.fireChannelRead(msg);
+                }
+            });
+            pipeline.addLast("forwardProbe", new ForwardProbeDecoder());
         pipeline.addLast("deviceInfo", new DeviceInfoDecoder());
         pipeline.addLast(
                 "deviceInfoSink",
