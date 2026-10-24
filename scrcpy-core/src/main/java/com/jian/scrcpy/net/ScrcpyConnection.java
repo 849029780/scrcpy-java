@@ -69,7 +69,6 @@ public final class ScrcpyConnection implements AutoCloseable {
     }
 
     private void firstSocket(ChannelPipeline pipeline) {
-        pipeline.addLast("forwardProbe", new ForwardProbeDecoder());
         pipeline.addLast("deviceInfo", new DeviceInfoDecoder());
         pipeline.addLast(
                 "deviceInfoSink",
