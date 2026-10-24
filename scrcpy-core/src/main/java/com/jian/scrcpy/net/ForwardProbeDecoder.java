@@ -21,13 +21,18 @@ public final class ForwardProbeDecoder extends ByteToMessageDecoder {
             return;
         }
 
-        // In scrcpy forward mode the server sends one dummy byte.
-        // Its value is intentionally not part of the protocol contract;
-        // the native client only checks that one byte can be received.
+        // In scrcpy forward mode the server sends one dummy byte before
+        // device metadata. The byte value is intentionally irrelevant.
         int probe = in.readUnsignedByte();
         System.out.printf("[scrcpy-java] forward probe received: 0x%02x%n", probe);
-
         done = true;
+
+        // The probe and device metadata may arrive in the same TCP read.
+        // ByteToMessageDecoder stops after this handler is removed, so the
+        // bytes already buffered after the probe must be explicitly forwarded.
+        if (in.isReadable()) {
+            out.add(in.readRetainedSlice(in.readableBytes()));
+        }
         ctx.pipeline().remove(this);
     }
 }
