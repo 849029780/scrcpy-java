@@ -69,7 +69,7 @@ public final class Adb {
     }
 
     public void reverse(int p, String a) throws Exception {
-        run("reverse", "tcp:" + p, "localabstract:" + a);
+        run("reverse", "localabstract:" + a, "tcp:" + p);
     }
 
     public void removeReverse(int p) throws Exception {
