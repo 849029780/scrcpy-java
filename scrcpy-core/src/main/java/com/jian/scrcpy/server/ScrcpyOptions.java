@@ -28,7 +28,7 @@ public record ScrcpyOptions(
         return new ScrcpyOptions(
                 null,
                 scid,
-                27183,
+                0,
                 true,
                 true,
                 true,
