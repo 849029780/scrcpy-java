@@ -1,0 +1,4 @@
+package com.jian.scrcpy.file;
+import com.jian.scrcpy.adb.Adb;import com.jian.scrcpy.protocol.ControlMessages;import io.netty.channel.Channel;import java.nio.file.*;import java.util.concurrent.*;
+public final class FilePusher implements AutoCloseable{private final Adb adb;private final Channel control;private final String target;private final ExecutorService worker=Executors.newSingleThreadExecutor(Thread.ofPlatform().name("scrcpy-file-",0).factory());
+public FilePusher(Adb a,Channel c,String t){adb=a;control=c;target=t==null?"/sdcard/Download/":t;}public Future<?> push(Path p){return worker.submit(()->{try{adb.push(p,target);control.writeAndFlush(new ControlMessages.ScanFile(target));}catch(Exception e){throw new CompletionException(e);}});}public Future<?> install(Path p){return worker.submit(()->{try{adb.run("install",p.toAbsolutePath().toString());}catch(Exception e){throw new CompletionException(e);}});}public void close(){worker.shutdownNow();}}
