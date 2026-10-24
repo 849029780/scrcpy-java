@@ -1,0 +1,3 @@
+package com.jian.scrcpy.record; import com.jian.scrcpy.protocol.*; import java.util.concurrent.*; import io.netty.buffer.ByteBuf;
+public final class PacketRecorder { public record EncodedPacket(boolean video,CodecId codec,long pts,boolean config,boolean key,byte[] data){} private final BlockingQueue<EncodedPacket> queue=new LinkedBlockingQueue<>(512);
+public boolean offer(boolean video,CodecId codec,MediaMessage.Packet p){ByteBuf b=p.data();byte[] d=new byte[b.readableBytes()];b.getBytes(b.readerIndex(),d);return queue.offer(new EncodedPacket(video,codec,p.pts(),p.config(),p.keyFrame(),d));} public EncodedPacket take() throws InterruptedException{return queue.take();}}
