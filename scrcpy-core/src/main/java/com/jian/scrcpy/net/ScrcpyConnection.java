@@ -1,17 +1,16 @@
 package com.jian.scrcpy.net;
 
 import com.jian.scrcpy.protocol.*;
-import io.netty.bootstrap.Bootstrap;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.channel.socket.nio.NioSocketChannel;
 
-import java.net.*;
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class ScrcpyConnection implements AutoCloseable {
     private final EventLoopGroup group =
@@ -24,28 +23,6 @@ public final class ScrcpyConnection implements AutoCloseable {
         port = p;
     }
 
-    private Channel connect(ChannelInitializer<Channel> initializer, String name) throws Exception {
-        Exception last = null;
-        for (int n = 0; n < 100; n++) {
-            try {
-                Channel channel = new Bootstrap()
-                        .group(group)
-                        .channel(NioSocketChannel.class)
-                        .option(ChannelOption.TCP_NODELAY, true)
-                        .handler(initializer)
-                        .connect(new InetSocketAddress("127.0.0.1", port))
-                        .sync()
-                        .channel();
-                System.out.printf("[scrcpy-java] %s socket connected: %s%n", name, channel.remoteAddress());
-                return channel;
-            } catch (Exception e) {
-                last = e;
-                Thread.sleep(100);
-            }
-        }
-        throw last;
-    }
-
     private void configure(ChannelPipeline pipeline, boolean firstSocket, String name,
                            ChannelInboundHandler videoHandler,
                            ChannelInboundHandler audioHandler,
@@ -53,18 +30,20 @@ public final class ScrcpyConnection implements AutoCloseable {
         if (firstSocket) {
             firstSocket(pipeline);
         }
+
         if ("video".equals(name)) {
             pipeline.addLast("media", new ScrcpyMediaDecoder());
             pipeline.addLast("configMerger", new ConfigPacketMerger());
-            pipeline.addLast("videoHandler", videoHandler);
+            if (videoHandler != null) pipeline.addLast("videoHandler", videoHandler);
         } else if ("audio".equals(name)) {
-            pipeline.addLast("media", new ScrcpyMediaDecoder());
-            pipeline.addLast("audioHandler", audioHandler);
+            pipeline.addLast("audioMedia", new ScrcpyAudioDecoder());
+            if (audioHandler != null) pipeline.addLast("audioHandler", audioHandler);
         } else {
             pipeline.addLast("deviceMessage", new DeviceMessageDecoder());
             pipeline.addLast("controlEncoder", new ControlMessageEncoder());
-            pipeline.addLast("controlHandler", controlHandler);
+            if (controlHandler != null) pipeline.addLast("controlHandler", controlHandler);
         }
+
         exceptionLogging(pipeline, name);
     }
 
@@ -107,16 +86,15 @@ public final class ScrcpyConnection implements AutoCloseable {
             throw new IllegalArgumentException("At least one scrcpy socket must be enabled");
         }
 
+        AtomicInteger index = new AtomicInteger();
         listener = new ServerBootstrap()
                 .group(group)
                 .channel(NioServerSocketChannel.class)
                 .childOption(ChannelOption.TCP_NODELAY, true)
                 .childHandler(new ChannelInitializer<>() {
-                    private int index;
-
                     @Override
                     protected void initChannel(Channel channel) {
-                        int i = index++;
+                        int i = index.getAndIncrement();
                         if (i >= names.size()) {
                             channel.close();
                             return;
@@ -147,7 +125,7 @@ public final class ScrcpyConnection implements AutoCloseable {
     public void open(ChannelInboundHandler videoHandler,
                      ChannelInboundHandler audioHandler,
                      ChannelInboundHandler controlHandler) throws Exception {
-        open(true, true, true, videoHandler, audioHandler, controlHandler);
+        throw new UnsupportedOperationException("Use listen() for reverse scrcpy tunnel");
     }
 
     public void open(boolean videoEnabled, boolean audioEnabled, boolean controlEnabled,
