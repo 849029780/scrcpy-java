@@ -21,13 +21,35 @@ public final class ServerLauncher implements AutoCloseable {
     }
 
     public void start(Path jar) throws Exception {
+        if (o.scid() <= 0) {
+            throw new IllegalArgumentException("Invalid scrcpy scid: " + o.scid());
+        }
+
+        String scid = "%08x".formatted(o.scid());
+        String socket = "scrcpy_" + scid;
+
+        System.out.printf("[scrcpy-java] scid=%s (%d), socket=%s%n", scid, o.scid(), socket);
+
         adb.push(jar, REMOTE);
-        adb.forward(o.localPort(), socketName());
+        adb.forward(o.localPort(), socket);
+
         var a = new ArrayList<String>();
-        Collections.addAll(a, "CLASSPATH=" + REMOTE, "app_process", "/", "com.genymobile.scrcpy.Server", "5.0.1", "scid=%08x".formatted(o.scid()), "log_level=info", "tunnel_forward=true");
+        Collections.addAll(
+                a,
+                "CLASSPATH=" + REMOTE,
+                "app_process",
+                "/",
+                "com.genymobile.scrcpy.Server",
+                "5.0.1",
+                "scid=" + scid,
+                "log_level=info",
+                "tunnel_forward=true");
+
         if (!o.video()) a.add("video=false");
         if (!o.audio()) a.add("audio=false");
         if (!o.control()) a.add("control=false");
+
+        System.out.println("[scrcpy-java] server args: " + String.join(" ", a));
         process = adb.shellAsync(a);
     }
 
