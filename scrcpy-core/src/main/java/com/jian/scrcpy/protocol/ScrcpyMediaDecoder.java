@@ -7,9 +7,9 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 import java.util.List;
 
 public final class ScrcpyMediaDecoder extends ByteToMessageDecoder {
-    private static final long CONFIG = 1L << 62;
-    private static final long KEY = 1L << 61;
-    private static final long PTS_MASK = KEY - 1;
+    private static final long CONFIG = 1L << 63;
+    private static final long KEY = 1L << 62;
+    private static final long PTS_MASK = CONFIG - 1;
 
     private boolean codecRead;
 
