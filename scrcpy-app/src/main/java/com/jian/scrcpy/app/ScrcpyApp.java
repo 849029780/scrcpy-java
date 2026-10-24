@@ -158,23 +158,25 @@ public final class ScrcpyApp extends Application {
                         view::accept,
                         player::accept);
 
-                Stage deviceStage = new Stage();
-                BorderPane root = new BorderPane(view);
-                view.fitWidthProperty().bind(root.widthProperty());
-                view.fitHeightProperty().bind(root.heightProperty());
-                deviceStage.setTitle("scrcpy-java - " + device.displayName());
-                deviceStage.setScene(new Scene(root, 480, 800));
-                deviceStage.setOnCloseRequest(e -> disconnect(device.serial()));
-                deviceStage.show();
-
-                DeviceSession handle = new DeviceSession(runningSession, player, deviceStage);
-                DeviceSession previous = sessions.putIfAbsent(device.serial(), handle);
-                if (previous != null) {
-                    handle.close();
-                    return;
-                }
-
                 Platform.runLater(() -> {
+                    if (sessions.containsKey(device.serial())) {
+                        runningSession.close();
+                        player.close();
+                        return;
+                    }
+
+                    Stage deviceStage = new Stage();
+                    BorderPane root = new BorderPane(view);
+                    view.fitWidthProperty().bind(root.widthProperty());
+                    view.fitHeightProperty().bind(root.heightProperty());
+                    deviceStage.setTitle("scrcpy-java - " + device.displayName());
+                    deviceStage.setScene(new Scene(root, 480, 800));
+                    deviceStage.setOnCloseRequest(e -> disconnect(device.serial()));
+
+                    DeviceSession handle = new DeviceSession(runningSession, player, deviceStage);
+                    sessions.put(device.serial(), handle);
+                    deviceStage.show();
+
                     devices.refresh();
                     status.setText("已连接 " + sessions.size() + " 台设备");
                     updateButtons();
