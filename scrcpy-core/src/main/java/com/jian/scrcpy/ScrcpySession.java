@@ -30,9 +30,9 @@ public final class ScrcpySession implements AutoCloseable {
         connection = new ScrcpyConnection(options.localPort());
 
         try {
+            FfmpegVideoDecoder decoder = new FfmpegVideoDecoder(videoSink);
+            connection.listen(decoder, null, null, true, false, false);
             server.start(serverJar);
-            connection.open(true, false, false,
-                    new FfmpegVideoDecoder(videoSink), null, null);
             started = true;
         } catch (Exception e) {
             close();
