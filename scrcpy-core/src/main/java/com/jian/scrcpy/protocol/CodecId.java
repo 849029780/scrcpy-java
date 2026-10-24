@@ -1,3 +1,19 @@
 package com.jian.scrcpy.protocol;
-public enum CodecId { H264(0x68323634),H265(0x68323635),AV1(0x00617631),VP8(0x00767038),VP9(0x00767039),OPUS(0x6f707573),AAC(0x00616163),FLAC(0x666c6163),RAW(0x00726177);
-private final int wire; CodecId(int wire){this.wire=wire;} public int wire(){return wire;} public static CodecId of(int v){for(var c:values())if(c.wire==v)return c;throw new IllegalArgumentException("Unknown codec: "+Integer.toHexString(v));}}
+
+public enum CodecId {
+    H264(0x68323634), H265(0x68323635), AV1(0x00617631), VP8(0x00767038), VP9(0x00767039), OPUS(0x6f707573), AAC(0x00616163), FLAC(0x666c6163), RAW(0x00726177);
+    private final int wire;
+
+    CodecId(int wire) {
+        this.wire = wire;
+    }
+
+    public int wire() {
+        return wire;
+    }
+
+    public static CodecId of(int v) {
+        for (var c : values()) if (c.wire == v) return c;
+        throw new IllegalArgumentException("Unknown codec: " + Integer.toHexString(v));
+    }
+}

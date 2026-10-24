@@ -12,6 +12,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
+
 import java.util.List;
 
 public final class ScrcpyApp extends Application {
@@ -56,7 +57,8 @@ public final class ScrcpyApp extends Application {
 
     private ListCell<AdbDevice> deviceCell() {
         return new ListCell<>() {
-            @Override protected void updateItem(AdbDevice d, boolean empty) {
+            @Override
+            protected void updateItem(AdbDevice d, boolean empty) {
                 super.updateItem(d, empty);
                 setText(empty || d == null ? null :
                         d.displayName() + "  " + ("device".equals(d.state()) ? "已连接" : d.state()));
@@ -123,7 +125,8 @@ public final class ScrcpyApp extends Application {
         });
     }
 
-    @Override public void stop() {
+    @Override
+    public void stop() {
         if (session != null) session.close();
     }
 

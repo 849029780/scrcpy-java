@@ -1,2 +1,14 @@
-package com.jian.scrcpy.input;import java.util.Map;
-public final class KeyMapper{private static final Map<String,Integer>M=Map.ofEntries(Map.entry("HOME",3),Map.entry("BACK",4),Map.entry("UP",19),Map.entry("DOWN",20),Map.entry("LEFT",21),Map.entry("RIGHT",22),Map.entry("TAB",61),Map.entry("SPACE",62),Map.entry("ENTER",66),Map.entry("BACK_SPACE",67),Map.entry("ESCAPE",111),Map.entry("DELETE",112),Map.entry("PAGE_UP",92),Map.entry("PAGE_DOWN",93),Map.entry("MOVE_HOME",122),Map.entry("END",123));private KeyMapper(){}public static Integer android(String javafxName){return M.get(javafxName);}}
+package com.jian.scrcpy.input;
+
+import java.util.Map;
+
+public final class KeyMapper {
+    private static final Map<String, Integer> M = Map.ofEntries(Map.entry("HOME", 3), Map.entry("BACK", 4), Map.entry("UP", 19), Map.entry("DOWN", 20), Map.entry("LEFT", 21), Map.entry("RIGHT", 22), Map.entry("TAB", 61), Map.entry("SPACE", 62), Map.entry("ENTER", 66), Map.entry("BACK_SPACE", 67), Map.entry("ESCAPE", 111), Map.entry("DELETE", 112), Map.entry("PAGE_UP", 92), Map.entry("PAGE_DOWN", 93), Map.entry("MOVE_HOME", 122), Map.entry("END", 123));
+
+    private KeyMapper() {
+    }
+
+    public static Integer android(String javafxName) {
+        return M.get(javafxName);
+    }
+}

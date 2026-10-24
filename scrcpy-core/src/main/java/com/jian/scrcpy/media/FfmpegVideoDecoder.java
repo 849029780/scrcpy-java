@@ -1,12 +1,104 @@
 package com.jian.scrcpy.media;
-import com.jian.scrcpy.protocol.*;import io.netty.channel.*;import io.netty.util.ReferenceCountUtil;import org.bytedeco.ffmpeg.avcodec.*;import org.bytedeco.ffmpeg.avutil.*;import org.bytedeco.ffmpeg.swscale.SwsContext;import org.bytedeco.javacpp.*;import java.util.function.Consumer;
-import static org.bytedeco.ffmpeg.global.avcodec.*;import static org.bytedeco.ffmpeg.global.avutil.*;import static org.bytedeco.ffmpeg.global.swscale.*;
-public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaMessage> implements AutoCloseable{
- private final Consumer<VideoFrame> sink;private AVCodecContext ctx;private AVFrame frame,rgb;private AVPacket packet;private SwsContext sws;private BytePointer rgbBuffer;private int width,height;
- public FfmpegVideoDecoder(Consumer<VideoFrame>s){super(false);sink=s;}
- private static int avId(CodecId c){return switch(c){case H264->AV_CODEC_ID_H264;case H265->AV_CODEC_ID_HEVC;case AV1->AV_CODEC_ID_AV1;default->throw new IllegalArgumentException("Not video: "+c);};}
- private void init(CodecId c){AVCodec dec=avcodec_find_decoder(avId(c));if(dec==null)throw new IllegalStateException("decoder unavailable "+c);ctx=avcodec_alloc_context3(dec);if(ctx==null||avcodec_open2(ctx,dec,(AVDictionary)null)<0)throw new IllegalStateException("cannot open "+c);frame=av_frame_alloc();rgb=av_frame_alloc();packet=av_packet_alloc();}
- private void converter(int w,int h,int fmt){if(w==width&&h==height&&sws!=null)return;if(sws!=null)sws_freeContext(sws);if(rgbBuffer!=null)rgbBuffer.close();width=w;height=h;sws=sws_getContext(w,h,fmt,w,h,AV_PIX_FMT_BGRA,SWS_BILINEAR,null,null,(DoublePointer)null);int size=av_image_get_buffer_size(AV_PIX_FMT_BGRA,w,h,1);rgbBuffer=new BytePointer(av_malloc(size));av_image_fill_arrays(rgb.data(),rgb.linesize(),rgbBuffer,AV_PIX_FMT_BGRA,w,h,1);}
- protected void channelRead0(ChannelHandlerContext ch,MediaMessage m){if(m instanceof MediaMessage.Codec c){init(c.codec());return;}if(!(m instanceof MediaMessage.Packet p))return;try{if(p.config())return;byte[] b=new byte[p.data().readableBytes()];p.data().getBytes(p.data().readerIndex(),b);try(BytePointer bp=new BytePointer(b)){av_packet_unref(packet);packet.data(bp).size(b.length).pts(p.pts());if(avcodec_send_packet(ctx,packet)<0)return;while(avcodec_receive_frame(ctx,frame)>=0){converter(frame.width(),frame.height(),frame.format());sws_scale(sws,frame.data(),frame.linesize(),0,height,rgb.data(),rgb.linesize());int stride=rgb.linesize(0),n=width*height*4;byte[] out=new byte[n];if(stride==width*4)rgb.data(0).get(out);else for(int y=0;y<height;y++)rgb.data(0).position((long)y*stride).get(out,y*width*4,width*4);sink.accept(new VideoFrame(width,height,out,p.pts()));}}}finally{ReferenceCountUtil.release(p.data());}}
- public void close(){if(sws!=null)sws_freeContext(sws);if(rgbBuffer!=null){av_free(rgbBuffer);rgbBuffer=null;}if(packet!=null)av_packet_free(packet);if(rgb!=null)av_frame_free(rgb);if(frame!=null)av_frame_free(frame);if(ctx!=null)avcodec_free_context(ctx);}
+
+import com.jian.scrcpy.protocol.*;
+import io.netty.channel.*;
+import io.netty.util.ReferenceCountUtil;
+import org.bytedeco.ffmpeg.avcodec.*;
+import org.bytedeco.ffmpeg.avutil.*;
+import org.bytedeco.ffmpeg.swscale.SwsContext;
+import org.bytedeco.javacpp.*;
+
+import java.util.function.Consumer;
+
+import static org.bytedeco.ffmpeg.global.avcodec.*;
+import static org.bytedeco.ffmpeg.global.avutil.*;
+import static org.bytedeco.ffmpeg.global.swscale.*;
+
+public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaMessage> implements AutoCloseable {
+    private final Consumer<VideoFrame> sink;
+    private AVCodecContext ctx;
+    private AVFrame frame, rgb;
+    private AVPacket packet;
+    private SwsContext sws;
+    private BytePointer rgbBuffer;
+    private int width, height;
+
+    public FfmpegVideoDecoder(Consumer<VideoFrame> s) {
+        super(false);
+        sink = s;
+    }
+
+    private static int avId(CodecId c) {
+        return switch (c) {
+            case H264 -> AV_CODEC_ID_H264;
+            case H265 -> AV_CODEC_ID_HEVC;
+            case AV1 -> AV_CODEC_ID_AV1;
+            default -> throw new IllegalArgumentException("Not video: " + c);
+        };
+    }
+
+    private void init(CodecId c) {
+        AVCodec dec = avcodec_find_decoder(avId(c));
+        if (dec == null) throw new IllegalStateException("decoder unavailable " + c);
+        ctx = avcodec_alloc_context3(dec);
+        if (ctx == null || avcodec_open2(ctx, dec, (AVDictionary) null) < 0)
+            throw new IllegalStateException("cannot open " + c);
+        frame = av_frame_alloc();
+        rgb = av_frame_alloc();
+        packet = av_packet_alloc();
+    }
+
+    private void converter(int w, int h, int fmt) {
+        if (w == width && h == height && sws != null) return;
+        if (sws != null) sws_freeContext(sws);
+        if (rgbBuffer != null) rgbBuffer.close();
+        width = w;
+        height = h;
+        sws = sws_getContext(w, h, fmt, w, h, AV_PIX_FMT_BGRA, SWS_BILINEAR, null, null, (DoublePointer) null);
+        int size = av_image_get_buffer_size(AV_PIX_FMT_BGRA, w, h, 1);
+        rgbBuffer = new BytePointer(av_malloc(size));
+        av_image_fill_arrays(rgb.data(), rgb.linesize(), rgbBuffer, AV_PIX_FMT_BGRA, w, h, 1);
+    }
+
+    protected void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
+        if (m instanceof MediaMessage.Codec c) {
+            init(c.codec());
+            return;
+        }
+        if (!(m instanceof MediaMessage.Packet p)) return;
+        try {
+            if (p.config()) return;
+            byte[] b = new byte[p.data().readableBytes()];
+            p.data().getBytes(p.data().readerIndex(), b);
+            try (BytePointer bp = new BytePointer(b)) {
+                av_packet_unref(packet);
+                packet.data(bp).size(b.length).pts(p.pts());
+                if (avcodec_send_packet(ctx, packet) < 0) return;
+                while (avcodec_receive_frame(ctx, frame) >= 0) {
+                    converter(frame.width(), frame.height(), frame.format());
+                    sws_scale(sws, frame.data(), frame.linesize(), 0, height, rgb.data(), rgb.linesize());
+                    int stride = rgb.linesize(0), n = width * height * 4;
+                    byte[] out = new byte[n];
+                    if (stride == width * 4) rgb.data(0).get(out);
+                    else for (int y = 0; y < height; y++)
+                        rgb.data(0).position((long) y * stride).get(out, y * width * 4, width * 4);
+                    sink.accept(new VideoFrame(width, height, out, p.pts()));
+                }
+            }
+        } finally {
+            ReferenceCountUtil.release(p.data());
+        }
+    }
+
+    public void close() {
+        if (sws != null) sws_freeContext(sws);
+        if (rgbBuffer != null) {
+            av_free(rgbBuffer);
+            rgbBuffer = null;
+        }
+        if (packet != null) av_packet_free(packet);
+        if (rgb != null) av_frame_free(rgb);
+        if (frame != null) av_frame_free(frame);
+        if (ctx != null) avcodec_free_context(ctx);
+    }
 }

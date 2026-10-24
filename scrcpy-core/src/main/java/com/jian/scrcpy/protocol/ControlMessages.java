@@ -1,2 +1,43 @@
 package com.jian.scrcpy.protocol;
-public final class ControlMessages{private ControlMessages(){}public sealed interface Message permits Keycode,Text,Touch,Scroll,Simple,ClipboardSet,DisplayPower,ResizeDisplay,StartApp,ScanFile{}public record Keycode(int action,int keycode,int repeat,int metaState)implements Message{}public record Text(String text)implements Message{}public record Position(int x,int y,int screenWidth,int screenHeight){}public record Touch(int action,long pointerId,Position position,float pressure,int actionButton,int buttons)implements Message{}public record Scroll(Position position,float hscroll,float vscroll,int buttons)implements Message{}public record Simple(ControlMessageType type)implements Message{}public record ClipboardSet(long sequence,boolean paste,String text)implements Message{}public record DisplayPower(boolean on)implements Message{}public record ResizeDisplay(int width,int height)implements Message{}public record StartApp(String name)implements Message{}public record ScanFile(String path)implements Message{}}
+
+public final class ControlMessages {
+    private ControlMessages() {
+    }
+
+    public sealed interface Message permits Keycode, Text, Touch, Scroll, Simple, ClipboardSet, DisplayPower, ResizeDisplay, StartApp, ScanFile {
+    }
+
+    public record Keycode(int action, int keycode, int repeat, int metaState) implements Message {
+    }
+
+    public record Text(String text) implements Message {
+    }
+
+    public record Position(int x, int y, int screenWidth, int screenHeight) {
+    }
+
+    public record Touch(int action, long pointerId, Position position, float pressure, int actionButton,
+                        int buttons) implements Message {
+    }
+
+    public record Scroll(Position position, float hscroll, float vscroll, int buttons) implements Message {
+    }
+
+    public record Simple(ControlMessageType type) implements Message {
+    }
+
+    public record ClipboardSet(long sequence, boolean paste, String text) implements Message {
+    }
+
+    public record DisplayPower(boolean on) implements Message {
+    }
+
+    public record ResizeDisplay(int width, int height) implements Message {
+    }
+
+    public record StartApp(String name) implements Message {
+    }
+
+    public record ScanFile(String path) implements Message {
+    }
+}

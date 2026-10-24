@@ -16,7 +16,8 @@ public final class ScrcpyServerArtifact {
     private static final String SHA256 =
             "764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536";
 
-    private ScrcpyServerArtifact() {}
+    private ScrcpyServerArtifact() {
+    }
 
     public static Path resolve() throws Exception {
         String configured = System.getProperty("scrcpy.server.jar");
@@ -76,7 +77,7 @@ public final class ScrcpyServerArtifact {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         try (InputStream in = Files.newInputStream(path)) {
             byte[] buffer = new byte[8192];
-            for (int n; (n = in.read(buffer)) >= 0;) {
+            for (int n; (n = in.read(buffer)) >= 0; ) {
                 if (n > 0) digest.update(buffer, 0, n);
             }
         }
