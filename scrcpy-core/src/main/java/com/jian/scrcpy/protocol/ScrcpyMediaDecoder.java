@@ -7,38 +7,85 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 import java.util.List;
 
 public final class ScrcpyMediaDecoder extends ByteToMessageDecoder {
-    private static final long CONFIG = 1L << 62, KEY = 1L << 61, PTS_MASK = KEY - 1;
+    private static final long CONFIG = 1L << 62;
+    private static final long KEY = 1L << 61;
+    private static final long PTS_MASK = KEY - 1;
+
     private boolean codecRead;
 
+    @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
         if (!codecRead) {
-            if (in.readableBytes() < 4) return;
-            int id = in.readInt();
-            codecRead = true;
-            if (id == 0) {
-                ctx.close();
+            if (in.readableBytes() < 4) {
                 return;
             }
-            if (id == 1) throw new IllegalStateException("server stream configuration error");
-            out.add(new MediaMessage.Codec(CodecId.of(id)));
+
+            int id = in.readInt();
+            codecRead = true;
+
+            if (id == 0) {
+                throw new IllegalStateException("scrcpy video stream disabled");
+            }
+            if (id == 1) {
+                throw new IllegalStateException("scrcpy server stream configuration error");
+            }
+
+            CodecId codec = CodecId.of(id);
+            System.out.printf(
+                    "[scrcpy-java] video codec: %s (0x%08x)%n",
+                    codec,
+                    id);
+            out.add(new MediaMessage.Codec(codec));
             return;
         }
-        if (in.readableBytes() < 12) return;
+
+        // The first packet after codec metadata is the stream/session metadata:
+        // flags(u32), width(u32), height(u32). The first flag has bit 31 set.
+        if (in.readableBytes() < 12) {
+            return;
+        }
+
         in.markReaderIndex();
-        long a = in.readLong();
-        int b = in.readInt();
-        if ((a & Long.MIN_VALUE) != 0) {
+        long header = in.readLong();
+        int size = in.readInt();
+
+        if ((header & Long.MIN_VALUE) != 0) {
             in.resetReaderIndex();
-            int flags = in.readInt(), w = in.readInt(), h = in.readInt();
-            out.add(new MediaMessage.Session(w, h, (flags & 1) != 0));
+
+            int flags = in.readInt();
+            int width = in.readInt();
+            int height = in.readInt();
+
+            System.out.printf(
+                    "[scrcpy-java] video session: %dx%d flags=0x%08x%n",
+                    width,
+                    height,
+                    flags);
+
+            out.add(new MediaMessage.Session(
+                    width,
+                    height,
+                    (flags & 1) != 0));
             return;
         }
-        int n = b;
-        if (n <= 0) throw new IllegalStateException("invalid packet length " + n);
-        if (in.readableBytes() < n) {
+
+        if (size < 0) {
+            throw new IllegalStateException("invalid scrcpy packet length: " + size);
+        }
+
+        if (in.readableBytes() < size) {
             in.resetReaderIndex();
             return;
         }
-        out.add(new MediaMessage.Packet((a & CONFIG) != 0 ? -1 : (a & PTS_MASK), (a & CONFIG) != 0, (a & KEY) != 0, in.readRetainedSlice(n)));
+
+        long pts = header & PTS_MASK;
+        boolean config = (header & CONFIG) != 0;
+        boolean keyFrame = (header & KEY) != 0;
+
+        out.add(new MediaMessage.Packet(
+                config ? -1 : pts,
+                config,
+                keyFrame,
+                in.readRetainedSlice(size)));
     }
 }
