@@ -5,6 +5,7 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioSocketChannel;
+
 import java.net.*;
 import java.util.concurrent.TimeUnit;
 
@@ -42,12 +43,8 @@ public final class ScrcpyConnection implements AutoCloseable {
     }
 
     private void firstSocket(ChannelPipeline pipeline) {
-        pipeline.addLast(
-                "forwardProbe",
-                new ForwardProbeDecoder());
-        pipeline.addLast(
-                "deviceInfo",
-                new DeviceInfoDecoder());
+        pipeline.addLast("forwardProbe", new ForwardProbeDecoder());
+        pipeline.addLast("deviceInfo", new DeviceInfoDecoder());
         pipeline.addLast(
                 "deviceInfoSink",
                 new SimpleChannelInboundHandler<DeviceInfoDecoder.DeviceInfo>() {
@@ -92,12 +89,10 @@ public final class ScrcpyConnection implements AutoCloseable {
                     if (firstSocket) {
                         firstSocket(channel.pipeline());
                     }
-                    channel.pipeline().addLast(
-                            "media",
-                            new ScrcpyMediaDecoder(),
-                            "videoHandler",
-                            videoHandler);
-                    exceptionLogging(channel.pipeline(), "video");
+                    ChannelPipeline pipeline = channel.pipeline();
+                    pipeline.addLast("media", new ScrcpyMediaDecoder());
+                    pipeline.addLast("videoHandler", videoHandler);
+                    exceptionLogging(pipeline, "video");
                 }
             }, "video");
         }
@@ -111,12 +106,10 @@ public final class ScrcpyConnection implements AutoCloseable {
                     if (firstSocket) {
                         firstSocket(channel.pipeline());
                     }
-                    channel.pipeline().addLast(
-                            "media",
-                            new ScrcpyMediaDecoder(),
-                            "audioHandler",
-                            audioHandler);
-                    exceptionLogging(channel.pipeline(), "audio");
+                    ChannelPipeline pipeline = channel.pipeline();
+                    pipeline.addLast("media", new ScrcpyMediaDecoder());
+                    pipeline.addLast("audioHandler", audioHandler);
+                    exceptionLogging(pipeline, "audio");
                 }
             }, "audio");
         }
@@ -130,14 +123,11 @@ public final class ScrcpyConnection implements AutoCloseable {
                     if (firstSocket) {
                         firstSocket(channel.pipeline());
                     }
-                    channel.pipeline().addLast(
-                            "deviceMessage",
-                            new DeviceMessageDecoder(),
-                            "controlEncoder",
-                            new ControlMessageEncoder(),
-                            "controlHandler",
-                            controlHandler);
-                    exceptionLogging(channel.pipeline(), "control");
+                    ChannelPipeline pipeline = channel.pipeline();
+                    pipeline.addLast("deviceMessage", new DeviceMessageDecoder());
+                    pipeline.addLast("controlEncoder", new ControlMessageEncoder());
+                    pipeline.addLast("controlHandler", controlHandler);
+                    exceptionLogging(pipeline, "control");
                 }
             }, "control");
         }
