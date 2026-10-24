@@ -1,0 +1,3 @@
+package com.jian.scrcpy.net;
+import io.netty.buffer.Unpooled;import io.netty.channel.embedded.EmbeddedChannel;import org.junit.jupiter.api.Test;import static org.junit.jupiter.api.Assertions.*;
+class ForwardProbeDecoderTest{@Test void consumesZeroProbe(){var c=new EmbeddedChannel(new ForwardProbeDecoder());assertFalse(c.writeInbound(Unpooled.wrappedBuffer(new byte[]{0})));c.finishAndReleaseAll();}@Test void rejectsBadProbe(){var c=new EmbeddedChannel(new ForwardProbeDecoder());assertThrows(Exception.class,()->c.writeInbound(Unpooled.wrappedBuffer(new byte[]{1})));c.finishAndReleaseAll();}}
