@@ -1,0 +1,1 @@
+package com.jian.scrcpy.input; public final class AndroidKeycodes {private AndroidKeycodes(){} public static final int HOME=3,BACK=4,DPAD_UP=19,DPAD_DOWN=20,DPAD_LEFT=21,DPAD_RIGHT=22,VOLUME_UP=24,VOLUME_DOWN=25,POWER=26,TAB=61,SPACE=62,ENTER=66,DEL=67,ESCAPE=111;}
