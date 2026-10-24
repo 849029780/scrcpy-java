@@ -56,7 +56,7 @@ public final class ScrcpySession implements AutoCloseable {
                     options.audio(),
                     options.control());
 
-            server.start(serverJar);
+            server.start(serverJar, connection.localPort());
             started = true;
         } catch (Exception e) {
             close();
