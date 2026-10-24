@@ -58,7 +58,7 @@ public final class ServerLauncher implements AutoCloseable {
     public void close() {
         if (process != null) process.destroy();
         try {
-            adb.removeForward(o.localPort());
+            adb.removeReverse(o.localPort());
         } catch (Exception ignored) {
         }
     }
