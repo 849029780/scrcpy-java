@@ -17,6 +17,7 @@ public final class ScrcpyConnection implements AutoCloseable {
             new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
     private final int port;
     private Channel video, audio, control, listener;
+    private volatile int localPort;
     private volatile String deviceName;
 
     public ScrcpyConnection(int p) {
@@ -119,7 +120,8 @@ public final class ScrcpyConnection implements AutoCloseable {
                 .sync()
                 .channel();
 
-        System.out.printf("[scrcpy-java] listening on 127.0.0.1:%d for scrcpy reverse tunnel%n", port);
+        localPort = ((InetSocketAddress) listener.localAddress()).getPort();
+        System.out.printf("[scrcpy-java] listening on 127.0.0.1:%d for scrcpy reverse tunnel%n", localPort);
     }
 
     public void open(ChannelInboundHandler videoHandler,
@@ -133,6 +135,11 @@ public final class ScrcpyConnection implements AutoCloseable {
                      ChannelInboundHandler audioHandler,
                      ChannelInboundHandler controlHandler) throws Exception {
         throw new UnsupportedOperationException("Use listen() for reverse scrcpy tunnel");
+    }
+
+    public int localPort() {
+        if (localPort <= 0) throw new IllegalStateException("scrcpy listener is not started");
+        return localPort;
     }
 
     public String deviceName() {
