@@ -1,0 +1,1 @@
+package com.jian.scrcpy.media;public record VideoFrame(int width,int height,byte[] bgra,long pts){}
