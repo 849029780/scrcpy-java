@@ -5,7 +5,6 @@ import com.jian.scrcpy.media.FfmpegVideoDecoder;
 import com.jian.scrcpy.server.ScrcpyOptions;
 import com.jian.scrcpy.server.ServerLauncher;
 import com.jian.scrcpy.net.ScrcpyConnection;
-import io.netty.channel.ChannelInboundHandler;
 import java.nio.file.Path;
 
 public final class ScrcpySession implements AutoCloseable {
