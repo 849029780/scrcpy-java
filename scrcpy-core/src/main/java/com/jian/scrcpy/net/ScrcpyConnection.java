@@ -100,12 +100,13 @@ public final class ScrcpyConnection implements AutoCloseable {
                        ChannelInboundHandler audioHandler,
                        ChannelInboundHandler controlHandler,
                        boolean videoEnabled, boolean audioEnabled, boolean controlEnabled) throws Exception {
-        List<ChannelInitializer<Channel>> initializers = new ArrayList<>();
-        if (videoEnabled) initializers.add(initializer("video", true, videoHandler, audioHandler, controlHandler));
-        if (audioEnabled) initializers.add(initializer("audio", initializers.isEmpty(), videoHandler, audioHandler, controlHandler));
-        if (controlEnabled) initializers.add(initializer("control", initializers.isEmpty(), videoHandler, audioHandler, controlHandler));
-
-        if (initializers.isEmpty()) throw new IllegalArgumentException("At least one scrcpy socket must be enabled");
+        List<String> names = new ArrayList<>();
+        if (videoEnabled) names.add("video");
+        if (audioEnabled) names.add("audio");
+        if (controlEnabled) names.add("control");
+        if (names.isEmpty()) {
+            throw new IllegalArgumentException("At least one scrcpy socket must be enabled");
+        }
 
         listener = new ServerBootstrap()
                 .group(group)
@@ -113,10 +114,28 @@ public final class ScrcpyConnection implements AutoCloseable {
                 .childOption(ChannelOption.TCP_NODELAY, true)
                 .childHandler(new ChannelInitializer<>() {
                     private int index;
+
                     @Override
                     protected void initChannel(Channel channel) {
-                        ChannelInitializer<Channel> initializer = initializers.get(index++);
-                        initializer.initChannel(channel);
+                        int i = index++;
+                        if (i >= names.size()) {
+                            channel.close();
+                            return;
+                        }
+
+                        String name = names.get(i);
+                        configure(channel.pipeline(), i == 0, name,
+                                videoHandler, audioHandler, controlHandler);
+
+                        switch (name) {
+                            case "video" -> video = channel;
+                            case "audio" -> audio = channel;
+                            case "control" -> control = channel;
+                            default -> throw new IllegalStateException("unknown socket: " + name);
+                        }
+
+                        System.out.printf("[scrcpy-java] %s socket accepted: %s%n",
+                                name, channel.remoteAddress());
                     }
                 })
                 .bind(new InetSocketAddress("127.0.0.1", port))
@@ -124,19 +143,6 @@ public final class ScrcpyConnection implements AutoCloseable {
                 .channel();
 
         System.out.printf("[scrcpy-java] listening on 127.0.0.1:%d for scrcpy reverse tunnel%n", port);
-    }
-
-    private ChannelInitializer<Channel> initializer(String name, boolean firstSocket,
-                                                     ChannelInboundHandler videoHandler,
-                                                     ChannelInboundHandler audioHandler,
-                                                     ChannelInboundHandler controlHandler) {
-        return new ChannelInitializer<>() {
-            @Override
-            protected void initChannel(Channel channel) {
-                configure(channel.pipeline(), firstSocket, name, videoHandler, audioHandler, controlHandler);
-                System.out.printf("[scrcpy-java] %s socket accepted: %s%n", name, channel.remoteAddress());
-            }
-        };
     }
 
     public void open(ChannelInboundHandler videoHandler,
