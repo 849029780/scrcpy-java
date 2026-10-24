@@ -1,0 +1,2 @@
+package com.jian.scrcpy.protocol;import io.netty.buffer.Unpooled;import io.netty.channel.embedded.EmbeddedChannel;import org.junit.jupiter.api.Test;import static org.junit.jupiter.api.Assertions.*;
+class DeviceMessageDecoderTest{@Test void ack(){var c=new EmbeddedChannel(new DeviceMessageDecoder());c.writeInbound(Unpooled.buffer().writeByte(1).writeLong(42));var m=(DeviceMessage.AckClipboard)c.readInbound();assertEquals(42,m.sequence());}}
