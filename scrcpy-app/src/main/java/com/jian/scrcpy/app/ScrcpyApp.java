@@ -443,6 +443,14 @@ public final class ScrcpyApp extends Application {
                         options);
 
                 ScrcpySession runningSession = session;
+                runningSession.onTransportFailure(cause -> Platform.runLater(() -> {
+                    DeviceSession active = sessions.get(device.serial());
+                    if (active == null || active.session != runningSession) {
+                        return;
+                    }
+                    status.setText("设备连接异常: " + device.displayName() + "，正在隔离并重连");
+                    disconnectForReconnect(device.serial());
+                }));
                 runningSession.start(
                         ScrcpyServerArtifact.resolve(),
                         view::accept,
