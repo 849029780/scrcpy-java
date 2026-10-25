@@ -1,7 +1,7 @@
 package com.jian.scrcpy;
 
 import com.jian.scrcpy.adb.Adb;
-import com.jian.scrcpy.control.ControlMessages;
+import com.jian.scrcpy.protocol.ControlMessages;
 import com.jian.scrcpy.server.ScrcpyOptions;
 import org.junit.jupiter.api.Test;
 
