@@ -13,6 +13,8 @@ class ConfigPacketMergerTest {
     void prependsH264Config() {
         var c = new EmbeddedChannel(new ConfigPacketMerger());
         c.writeInbound(new MediaMessage.Codec(CodecId.H264));
+        assertInstanceOf(MediaMessage.Codec.class, c.readInbound());
+
         c.writeInbound(new MediaMessage.Packet(-1, true, false,
                 Unpooled.wrappedBuffer(new byte[]{1, 2})));
         c.writeInbound(new MediaMessage.Packet(10, false, true,
@@ -29,6 +31,8 @@ class ConfigPacketMergerTest {
     void prependsH265Config() {
         var c = new EmbeddedChannel(new ConfigPacketMerger());
         c.writeInbound(new MediaMessage.Codec(CodecId.H265));
+        assertInstanceOf(MediaMessage.Codec.class, c.readInbound());
+
         c.writeInbound(new MediaMessage.Packet(-1, true, false,
                 Unpooled.wrappedBuffer(new byte[]{1, 2})));
         c.writeInbound(new MediaMessage.Packet(10, false, true,
@@ -45,6 +49,8 @@ class ConfigPacketMergerTest {
     void doesNotMergeAv1Config() {
         var c = new EmbeddedChannel(new ConfigPacketMerger());
         c.writeInbound(new MediaMessage.Codec(CodecId.AV1));
+        assertInstanceOf(MediaMessage.Codec.class, c.readInbound());
+
         c.writeInbound(new MediaMessage.Packet(-1, true, false,
                 Unpooled.wrappedBuffer(new byte[]{1, 2})));
         c.writeInbound(new MediaMessage.Packet(10, false, true,
