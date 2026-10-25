@@ -327,6 +327,7 @@ public final class ScrcpyApp extends Application {
 
         ComboBox<String> videoCodec = combo("H.264", "H.265", "AV1");
         ComboBox<String> videoEncoder = combo("自动（推荐）");
+        ComboBox<String> videoDecoder = combo("自动（推荐）", "硬件解码", "软件解码");
         TextField videoCodecOptions = new TextField();
         videoCodecOptions.setPromptText("例如 bitrate-mode:int=1,profile:int=1");
         ComboBox<String> audioCodec = combo("opus", "aac", "flac");
@@ -339,6 +340,7 @@ public final class ScrcpyApp extends Application {
         startApp.setPromptText("可选：应用名称或包名，例如 抖音 / com.ss.android.ugc.aweme");
 
         videoCodec.setValue("H.264");
+        videoDecoder.setValue("自动（推荐）");
         audioCodec.setValue("opus");
         videoBitRate.setValue("8M"); audioBitRate.setValue("128K");
         maxSize.setValue("1920"); maxFps.setValue("60"); crop.setValue("不裁剪");
@@ -372,6 +374,7 @@ public final class ScrcpyApp extends Application {
         grid.add(video, 0, row); grid.add(audio, 1, row); grid.add(control, 2, row++);
         grid.add(new Label("视频编码"), 0, row); grid.add(videoCodec, 1, row++, 2, 1);
         grid.add(new Label("视频编码器"), 0, row); grid.add(videoEncoder, 1, row++, 2, 1);
+        grid.add(new Label("视频解码器"), 0, row); grid.add(videoDecoder, 1, row++, 2, 1);
         grid.add(new Label("音频编码"), 0, row); grid.add(audioCodec, 1, row++, 2, 1);
         grid.add(new Label("视频码率"), 0, row); grid.add(videoBitRate, 1, row++, 2, 1);
         grid.add(new Label("音频码率"), 0, row); grid.add(audioBitRate, 1, row++, 2, 1);
@@ -400,7 +403,7 @@ public final class ScrcpyApp extends Application {
             String encoder = "自动（推荐）".equals(videoEncoder.getValue())
                     ? null : blankToNull(videoEncoder.getValue());
             return new ConnectionSettings(video.isSelected(), audio.isSelected(), control.isSelected(),
-                    codec, encoder, blankToNull(videoCodecOptions.getText()), audioCodec.getValue(),
+                    codec, encoder, blankToNull(videoCodecOptions.getText()), videoDecoderMode(videoDecoder.getValue()), audioCodec.getValue(),
                     parseBitRate(videoBitRate.getValue()), parseBitRate(audioBitRate.getValue()),
                     parsePositiveInt(maxSize.getValue(), 0),
                     "不限制".equals(maxFps.getValue()) ? null : maxFps.getValue(),
@@ -424,6 +427,14 @@ public final class ScrcpyApp extends Application {
             target = "?" + target;
         }
         return forceStop ? "+" + target : target;
+    }
+
+    private static String videoDecoderMode(String label) {
+        return switch (Objects.requireNonNullElse(label, "自动（推荐）")) {
+            case "硬件解码" -> "hardware";
+            case "软件解码" -> "software";
+            default -> "auto";
+        };
     }
 
     private static String videoCodecName(String label) {
@@ -571,7 +582,7 @@ public final class ScrcpyApp extends Application {
                 ScrcpyOptions options = new ScrcpyOptions(
                         device.serial(), d.scid(), d.localPort(),
                         d.video(), d.audio(), d.control(),
-                        d.videoCodec(), d.videoEncoder(), d.videoCodecOptions(), d.audioCodec(),
+                        d.videoCodec(), d.videoEncoder(), d.videoCodecOptions(), d.videoDecoder(), d.audioCodec(),
                         d.videoBitRate(), d.audioBitRate(),
                         d.maxSize(), d.maxFps(),
                         d.showTouches(), d.stayAwake(),
@@ -1549,7 +1560,7 @@ public final class ScrcpyApp extends Application {
 
     private record ConnectionSettings(
             boolean video, boolean audio, boolean control,
-            String videoCodec, String videoEncoder, String videoCodecOptions, String audioCodec,
+            String videoCodec, String videoEncoder, String videoCodecOptions, String videoDecoder, String audioCodec,
             long videoBitRate, long audioBitRate,
             int maxSize, String maxFps,
             boolean showTouches, boolean stayAwake,
@@ -1557,7 +1568,7 @@ public final class ScrcpyApp extends Application {
 
         ScrcpyOptions toOptions(String serial, ScrcpyOptions base) {
             return new ScrcpyOptions(serial, base.scid(), base.localPort(),
-                    video, audio, control, videoCodec, videoEncoder, videoCodecOptions, audioCodec,
+                    video, audio, control, videoCodec, videoEncoder, videoCodecOptions, videoDecoder, audioCodec,
                     videoBitRate, audioBitRate, maxSize, maxFps,
                     showTouches, stayAwake, turnScreenOff, crop, startApp);
         }
