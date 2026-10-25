@@ -6,6 +6,7 @@ import com.jian.scrcpy.media.FfmpegAudioDecoder;
 import com.jian.scrcpy.media.FfmpegVideoDecoder;
 import com.jian.scrcpy.net.ScrcpyConnection;
 import com.jian.scrcpy.protocol.ControlMessages;
+import com.jian.scrcpy.protocol.ClipboardAckTracker;
 import com.jian.scrcpy.protocol.ControlMessageQueue;
 import com.jian.scrcpy.protocol.DeviceMessage;
 import com.jian.scrcpy.server.ScrcpyOptions;
@@ -26,6 +27,7 @@ public final class ScrcpySession implements AutoCloseable {
     private FfmpegVideoDecoder videoDecoder;
     private FfmpegAudioDecoder audioDecoder;
     private volatile Consumer<DeviceMessage> deviceMessageSink = message -> {};
+    private final ClipboardAckTracker clipboardAcks = new ClipboardAckTracker();
     private boolean started;
 
     public ScrcpySession(Adb adb, ScrcpyOptions options) {
@@ -62,6 +64,9 @@ public final class ScrcpySession implements AutoCloseable {
                     options.control() ? new SimpleChannelInboundHandler<DeviceMessage>() {
                         @Override
                         protected void channelRead0(ChannelHandlerContext ctx, DeviceMessage message) {
+                            if (message instanceof DeviceMessage.AckClipboard ack) {
+                                clipboardAcks.acknowledge(ack.sequence());
+                            }
                             deviceMessageSink.accept(message);
                         }
                     } : null,
@@ -98,6 +103,20 @@ public final class ScrcpySession implements AutoCloseable {
         return queue.submit(message);
     }
 
+    public long setClipboard(String text, boolean paste, Consumer<Long> onAck) {
+        long sequence = clipboardAcks.nextSequence();
+        clipboardAcks.track(sequence, onAck);
+        if (!sendControl(new ControlMessages.ClipboardSet(sequence, paste, text))) {
+            clipboardAcks.acknowledge(sequence);
+            return 0;
+        }
+        return sequence;
+    }
+
+    public int pendingClipboardAcks() {
+        return clipboardAcks.pendingCount();
+    }
+
     public void stop() {
         close();
     }
@@ -120,6 +139,7 @@ public final class ScrcpySession implements AutoCloseable {
             server.close();
             server = null;
         }
+        clipboardAcks.clear();
         started = false;
     }
 }
