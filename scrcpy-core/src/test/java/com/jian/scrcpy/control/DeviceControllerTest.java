@@ -1,6 +1,7 @@
 package com.jian.scrcpy.control;
 
 import com.jian.scrcpy.protocol.ControlMessages;
+import com.jian.scrcpy.protocol.ControlMessageType;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -29,7 +30,7 @@ final class DeviceControllerTest {
         assertEquals(10, touch.position().x());
         assertEquals(20, touch.position().y());
         assertInstanceOf(ControlMessages.Scroll.class, sent.get(3));
-        assertEquals(ControlMessages.ControlMessageType.ROTATE_DEVICE,
+        assertEquals(ControlMessageType.ROTATE_DEVICE,
                 assertInstanceOf(ControlMessages.Simple.class, sent.get(4)).type());
         assertFalse(assertInstanceOf(ControlMessages.DisplayPower.class, sent.get(5)).on());
     }
