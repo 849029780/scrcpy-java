@@ -545,18 +545,13 @@ public final class ScrcpyApp extends Application {
 
         installControls(handle);
 
-        ComboBox<MouseMode> mouseMode = new ComboBox<>(FXCollections.observableArrayList(MouseMode.values()));
-        mouseMode.setValue(MouseMode.ABSOLUTE_TOUCH);
-        mouseMode.setPrefWidth(112);
-        mouseMode.setOnAction(e -> setMouseMode(handle, mouseMode.getValue()));
-
         Button primary = new Button("设为主设备");
         primary.setOnAction(e -> togglePrimary(handle));
 
         Button close = new Button("断开");
         close.setOnAction(e -> disconnect(device.serial()));
 
-        HBox header = new HBox(6, title, new Region(), mouseMode, primary, close);
+        HBox header = new HBox(6, title, new Region(), primary, close);
         HBox.setHgrow(header.getChildren().get(1), Priority.ALWAYS);
 
         viewport.getChildren().add(deviceMenu);
@@ -568,9 +563,35 @@ public final class ScrcpyApp extends Application {
         handle.primaryButton = primary;
         handle.adaptClickItem = adaptClick;
         handle.device = device;
+        handle.mouseModeButton = createMouseModeButton(handle);
 
         resizeTile(handle, false);
         secondaryGrid.getChildren().add(tile);
+    }
+
+    private ToggleButton createMouseModeButton(DeviceSession handle) {
+        ToggleButton button = new ToggleButton();
+        button.setFocusTraversable(false);
+        button.setMinSize(34, 34);
+        button.setPrefSize(34, 34);
+        button.setMaxSize(34, 34);
+        updateMouseModeButton(button, handle.mouseMode);
+        button.setOnAction(e -> setMouseModeFromSidebar(handle, button.isSelected()));
+        return button;
+    }
+
+    private static void updateMouseModeButton(ToggleButton button, MouseMode mode) {
+        boolean uhid = mode == MouseMode.UHID_RELATIVE;
+        button.setSelected(uhid);
+        button.setText(uhid ? "🖱" : "☝");
+        button.setTooltip(new Tooltip(uhid ? "UHID 鼠标（点击切换为触控）" : "触控（点击切换为 UHID 鼠标）"));
+    }
+
+    private void setMouseModeFromSidebar(DeviceSession source, boolean uhid) {
+        MouseMode mode = uhid ? MouseMode.UHID_RELATIVE : MouseMode.ABSOLUTE_TOUCH;
+        for (DeviceSession target : inputTargets(source)) {
+            setMouseMode(target, mode);
+        }
     }
 
     private VBox createDeviceNavigationBar(DeviceSession handle) {
@@ -606,7 +627,7 @@ public final class ScrcpyApp extends Application {
             rightSidebarStayAwake(handle, enabled);
         });
 
-        VBox bar = new VBox(5, back, home, recent, power, displayPower, stayAwake);
+        VBox bar = new VBox(5, back, home, recent, power, displayPower, stayAwake, handle.mouseModeButton);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
@@ -779,6 +800,13 @@ public final class ScrcpyApp extends Application {
             e.consume();
         });
         view.addEventHandler(KeyEvent.KEY_PRESSED, e -> {
+            if (handle.mouseMode == MouseMode.UHID_RELATIVE
+                    && e.getCode() == KeyCode.ESCAPE
+                    && e.isControlDown()) {
+                releaseRelativeMouseCapture(handle);
+                e.consume();
+                return;
+            }
             int usage = HidKeyMapper.usage(e.getCode());
             if (usage < 0) return;
             int modifiers = HidKeyMapper.modifiers(e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown());
@@ -1142,6 +1170,7 @@ public final class ScrcpyApp extends Application {
         handle.mouseMode = mode == null ? MouseMode.ABSOLUTE_TOUCH : mode;
         handle.relativePointerValid = false;
         handle.view().setCursor(Cursor.DEFAULT);
+        handle.relativeCaptured = false;
         if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
             handle.uhid.openMouse();
             handle.view().requestFocus();
@@ -1152,7 +1181,9 @@ public final class ScrcpyApp extends Application {
     }
 
     private void captureRelativeMouse(DeviceSession handle) {
-        if (handle.mouseMode != MouseMode.UHID_RELATIVE || !handle.view().isVisible()) return;
+        if (handle.mouseMode != MouseMode.UHID_RELATIVE
+                || !handle.view().isVisible()
+                || handle.relativeCaptured) return;
         javafx.geometry.Point2D center = handle.view().localToScreen(
                 handle.view().getBoundsInLocal().getWidth() / 2.0,
                 handle.view().getBoundsInLocal().getHeight() / 2.0);
@@ -1161,10 +1192,24 @@ public final class ScrcpyApp extends Application {
         handle.relativePointerValid = true;
         mouseRobot.mouseMove(center.getX(), center.getY());
         handle.recentering = false;
+        handle.relativeCaptured = true;
+    }
+
+    private void releaseRelativeMouseCapture(DeviceSession handle) {
+        if (handle.mouseMode != MouseMode.UHID_RELATIVE) return;
+        handle.relativeCaptured = false;
+        handle.relativePointerValid = false;
+        handle.recentering = false;
+        try {
+            handle.uhid.mouse().clearTransientState();
+        } catch (Throwable ignored) {
+        }
+        handle.view().setCursor(Cursor.DEFAULT);
     }
 
     private void sendRelativeMove(DeviceSession handle, MouseEvent e) {
-        if (handle.recentering || handle.mouseMode != MouseMode.UHID_RELATIVE) return;
+        if (handle.recentering || handle.mouseMode != MouseMode.UHID_RELATIVE
+                || !handle.relativeCaptured) return;
         if (!handle.relativePointerValid) {
             captureRelativeMouse(handle);
             return;
@@ -1345,6 +1390,8 @@ public final class ScrcpyApp extends Application {
         private boolean displayPower = true;
         private ToggleButton displayPowerButton;
         private ToggleButton stayAwakeButton;
+        private ToggleButton mouseModeButton;
+        private boolean relativeCaptured;
 
         private DeviceSession(
                 ScrcpySession session,
