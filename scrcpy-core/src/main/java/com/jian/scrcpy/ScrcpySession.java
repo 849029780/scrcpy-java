@@ -11,6 +11,7 @@ import com.jian.scrcpy.protocol.DeviceMessage;
 import com.jian.scrcpy.server.ScrcpyOptions;
 import com.jian.scrcpy.server.ServerLauncher;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelInboundHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 
