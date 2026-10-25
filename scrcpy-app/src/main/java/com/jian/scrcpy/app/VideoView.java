@@ -13,6 +13,14 @@ public final class VideoView extends ImageView {
     private volatile int frameWidth;
     private volatile int frameHeight;
 
+    // Reuse the JavaFX image instead of allocating a new WritableImage for
+    // every decoded frame. Multiple 720p devices otherwise create a large
+    // amount of JavaFX/Prism native graphics allocation churn.
+    private WritableImage image;
+    private PixelWriter pixelWriter;
+    private int imageWidth;
+    private int imageHeight;
+
     public VideoView() {
         setPreserveRatio(true);
         setSmooth(true);
@@ -30,9 +38,18 @@ public final class VideoView extends ImageView {
             try {
                 VideoFrame v = latest.getAndSet(null);
                 if (v != null) {
-                    WritableImage image = new WritableImage(v.width(), v.height());
-                    image.getPixelWriter().setPixels(0, 0, v.width(), v.height(), PixelFormat.getByteBgraInstance(), v.bgra(), 0, v.width() * 4);
-                    setImage(image);
+                    if (image == null || imageWidth != v.width() || imageHeight != v.height()) {
+                        image = new WritableImage(v.width(), v.height());
+                        pixelWriter = image.getPixelWriter();
+                        imageWidth = v.width();
+                        imageHeight = v.height();
+                        setImage(image);
+                    }
+                    pixelWriter.setPixels(
+                            0, 0,
+                            v.width(), v.height(),
+                            PixelFormat.getByteBgraInstance(),
+                            v.bgra(), 0, v.width() * 4);
                 }
             } finally {
                 synchronized (this) {
