@@ -17,9 +17,12 @@ import io.netty.channel.SimpleChannelInboundHandler;
 
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 public final class ScrcpySession implements AutoCloseable {
+    public enum State { NEW, CONNECTING, RUNNING, STOPPING, STOPPED }
+
     private final Adb adb;
     private final ScrcpyOptions options;
     private ServerLauncher server;
@@ -27,10 +30,9 @@ public final class ScrcpySession implements AutoCloseable {
     private FfmpegVideoDecoder videoDecoder;
     private FfmpegAudioDecoder audioDecoder;
     private volatile Consumer<DeviceMessage> deviceMessageSink = message -> {};
-    private final java.util.concurrent.CopyOnWriteArrayList<Consumer<DeviceMessage>> deviceMessageListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Consumer<DeviceMessage>> deviceMessageListeners = new CopyOnWriteArrayList<>();
     private final ClipboardAckTracker clipboardAcks = new ClipboardAckTracker();
-    private volatile boolean started;
-    private boolean closing;
+    private State state = State.NEW;
 
     public ScrcpySession(Adb adb, ScrcpyOptions options) {
         this.adb = adb;
@@ -46,7 +48,9 @@ public final class ScrcpySession implements AutoCloseable {
                       Consumer<com.jian.scrcpy.media.VideoFrame> videoSink,
                       Consumer<AudioFrame> audioSink)
             throws Exception {
-        if (started) return;
+        if (state == State.RUNNING) return;
+        if (state != State.NEW) throw new IllegalStateException("Session cannot be started from state " + state);
+        state = State.CONNECTING;
         server = new ServerLauncher(adb, options);
         connection = new ScrcpyConnection(options.localPort());
 
@@ -93,7 +97,7 @@ public final class ScrcpySession implements AutoCloseable {
                 }
             }
 
-            started = true;
+            state = State.RUNNING;
         } catch (Exception e) {
             close();
             throw e;
@@ -124,14 +128,16 @@ public final class ScrcpySession implements AutoCloseable {
         return () -> deviceMessageListeners.remove(listener);
     }
 
-    public boolean controlReady() {
+    public synchronized State state() { return state; }
+
+    public synchronized boolean controlReady() {
         Channel channel = connection == null ? null : connection.control();
         return channel != null && channel.isActive();
     }
 
-    public boolean sendControl(ControlMessages.Message message) {
+    public synchronized boolean sendControl(ControlMessages.Message message) {
         Objects.requireNonNull(message, "message");
-        if (closing) return false;
+        if (state != State.CONNECTING && state != State.RUNNING) return false;
         Channel channel = connection == null ? null : connection.control();
         ControlMessageQueue queue = connection == null ? null : connection.controlQueue();
         if (channel == null || !channel.isActive() || queue == null) return false;
@@ -139,8 +145,13 @@ public final class ScrcpySession implements AutoCloseable {
     }
 
     public long setClipboard(String text, boolean paste, Consumer<Long> onAck) {
+        return setClipboard(text, paste, onAck, null);
+    }
+
+    public long setClipboard(String text, boolean paste, Consumer<Long> onAck,
+                             Consumer<Long> onTimeout) {
         long sequence = clipboardAcks.nextSequence();
-        clipboardAcks.track(sequence, onAck);
+        clipboardAcks.track(sequence, onAck, 5_000, onTimeout);
         if (!sendControl(new ControlMessages.ClipboardSet(sequence, paste, text))) {
             clipboardAcks.acknowledge(sequence);
             return 0;
@@ -158,30 +169,29 @@ public final class ScrcpySession implements AutoCloseable {
 
     @Override
     public synchronized void close() {
-        if (closing) return;
-        closing = true;
+        if (state == State.STOPPING || state == State.STOPPED) return;
+        state = State.STOPPING;
         try {
-        if (connection != null) {
-            connection.close();
-            connection = null;
-        }
-        if (videoDecoder != null) {
-            videoDecoder.close();
-            videoDecoder = null;
-        }
-        if (audioDecoder != null) {
-            audioDecoder.close();
-            audioDecoder = null;
-        }
-        if (server != null) {
-            server.close();
-            server = null;
-        }
-        clipboardAcks.clear();
-        deviceMessageListeners.clear();
-        started = false;
+            if (connection != null) {
+                connection.close();
+                connection = null;
+            }
+            if (videoDecoder != null) {
+                videoDecoder.close();
+                videoDecoder = null;
+            }
+            if (audioDecoder != null) {
+                audioDecoder.close();
+                audioDecoder = null;
+            }
+            if (server != null) {
+                server.close();
+                server = null;
+            }
+            clipboardAcks.clear();
+            deviceMessageListeners.clear();
         } finally {
-            closing = false;
+            state = State.STOPPED;
         }
     }
 }
