@@ -5,10 +5,16 @@ import com.jian.scrcpy.media.AudioFrame;
 import com.jian.scrcpy.media.FfmpegAudioDecoder;
 import com.jian.scrcpy.media.FfmpegVideoDecoder;
 import com.jian.scrcpy.net.ScrcpyConnection;
+import com.jian.scrcpy.protocol.ControlMessages;
+import com.jian.scrcpy.protocol.DeviceMessage;
 import com.jian.scrcpy.server.ScrcpyOptions;
 import com.jian.scrcpy.server.ServerLauncher;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.SimpleChannelInboundHandler;
 
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 public final class ScrcpySession implements AutoCloseable {
@@ -18,6 +24,7 @@ public final class ScrcpySession implements AutoCloseable {
     private ScrcpyConnection connection;
     private FfmpegVideoDecoder videoDecoder;
     private FfmpegAudioDecoder audioDecoder;
+    private volatile Consumer<DeviceMessage> deviceMessageSink = message -> {};
     private boolean started;
 
     public ScrcpySession(Adb adb, ScrcpyOptions options) {
@@ -51,7 +58,12 @@ public final class ScrcpySession implements AutoCloseable {
             connection.listen(
                     videoDecoder,
                     audioDecoder,
-                    null,
+                    options.control() ? new SimpleChannelInboundHandler<DeviceMessage>() {
+                        @Override
+                        protected void channelRead0(ChannelHandlerContext ctx, DeviceMessage message) {
+                            deviceMessageSink.accept(message);
+                        }
+                    } : null,
                     options.video(),
                     options.audio(),
                     options.control());
@@ -66,6 +78,23 @@ public final class ScrcpySession implements AutoCloseable {
 
     public String deviceName() {
         return connection == null ? null : connection.deviceName();
+    }
+
+    public void onDeviceMessage(Consumer<DeviceMessage> sink) {
+        deviceMessageSink = Objects.requireNonNullElse(sink, message -> {});
+    }
+
+    public boolean controlReady() {
+        Channel channel = connection == null ? null : connection.control();
+        return channel != null && channel.isActive();
+    }
+
+    public boolean sendControl(ControlMessages.Message message) {
+        Objects.requireNonNull(message, "message");
+        Channel channel = connection == null ? null : connection.control();
+        if (channel == null || !channel.isActive()) return false;
+        channel.writeAndFlush(message);
+        return true;
     }
 
     public void stop() {
