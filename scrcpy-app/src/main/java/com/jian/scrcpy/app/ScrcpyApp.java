@@ -19,6 +19,7 @@ import javafx.collections.FXCollections;
 import javafx.scene.Scene;
 import javafx.scene.Cursor;
 import javafx.scene.input.Clipboard;
+import javafx.scene.robot.Robot;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
@@ -38,6 +39,7 @@ public final class ScrcpyApp extends Application {
     private final TilePane screenGrid = new TilePane();
     private final ScrollPane screenScroll = new ScrollPane(screenGrid);
     private final Map<String, DeviceSession> sessions = new ConcurrentHashMap<>();
+    private final Robot mouseRobot = new Robot();
     private Adb adb;
     private volatile String lastDesktopClipboard = "";
     private final java.util.concurrent.atomic.AtomicBoolean applyingRemoteClipboard = new java.util.concurrent.atomic.AtomicBoolean();
@@ -301,10 +303,12 @@ public final class ScrcpyApp extends Application {
 
         view.addEventHandler(MouseEvent.MOUSE_ENTERED, e -> {
             if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
-                handle.resetRelativePointer(e.getX(), e.getY());
+                captureRelativeMouse(handle);
             }
         });
-        view.addEventHandler(MouseEvent.MOUSE_EXITED, e -> handle.relativePointerValid = false);
+        view.addEventHandler(MouseEvent.MOUSE_EXITED, e -> {
+            if (!handle.recentering) handle.relativePointerValid = false;
+        });
         view.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
             if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
                 sendRelativeMove(handle, e);
@@ -385,21 +389,46 @@ public final class ScrcpyApp extends Application {
         if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
             handle.uhid.openMouse();
             handle.view().requestFocus();
+            Platform.runLater(() -> captureRelativeMouse(handle));
         } else {
             handle.uhid.mouse().buttons(0);
         }
     }
 
+    private void captureRelativeMouse(DeviceSession handle) {
+        if (handle.mouseMode != MouseMode.UHID_RELATIVE || !handle.view().isVisible()) return;
+        javafx.geometry.Point2D center = handle.view().localToScreen(
+                handle.view().getBoundsInLocal().getWidth() / 2.0,
+                handle.view().getBoundsInLocal().getHeight() / 2.0);
+        if (center == null) return;
+        handle.recentering = true;
+        handle.relativePointerValid = true;
+        mouseRobot.mouseMove(center.getX(), center.getY());
+        handle.recentering = false;
+    }
+
     private void sendRelativeMove(DeviceSession handle, MouseEvent e) {
+        if (handle.recentering || handle.mouseMode != MouseMode.UHID_RELATIVE) return;
         if (!handle.relativePointerValid) {
-            handle.resetRelativePointer(e.getX(), e.getY());
+            captureRelativeMouse(handle);
             return;
         }
-        double dx = e.getX() - handle.lastMouseX;
-        double dy = e.getY() - handle.lastMouseY;
-        handle.lastMouseX = e.getX();
-        handle.lastMouseY = e.getY();
+        javafx.geometry.Point2D center = handle.view().localToScreen(
+                handle.view().getBoundsInLocal().getWidth() / 2.0,
+                handle.view().getBoundsInLocal().getHeight() / 2.0);
+        if (center == null) return;
+
+        javafx.geometry.Point2D screen = handle.view().localToScreen(e.getX(), e.getY());
+        if (screen == null) return;
+
+        double dx = screen.getX() - center.getX();
+        double dy = screen.getY() - center.getY();
+        if (dx == 0 && dy == 0) return;
+
         handle.uhid.mouse().move(dx, dy);
+        handle.recentering = true;
+        mouseRobot.mouseMove(center.getX(), center.getY());
+        handle.recentering = false;
     }
 
     private void sendTouch(DeviceSession handle, MouseEvent e, int action, float pressure, int actionButton) {
@@ -475,8 +504,7 @@ public final class ScrcpyApp extends Application {
         private AdbDevice device;
         private MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
         private boolean relativePointerValid;
-        private double lastMouseX;
-        private double lastMouseY;
+        private boolean recentering;
 
         private DeviceSession(
                 ScrcpySession session,
