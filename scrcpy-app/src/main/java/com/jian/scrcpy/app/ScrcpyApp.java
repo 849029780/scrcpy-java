@@ -606,7 +606,8 @@ public final class ScrcpyApp extends Application {
                 // message. For a live per-device switch use Android's stay_on_while_plugged_in
                 // setting; ADB/scrcpy connections are normally USB or charging-capable.
                 String value = enabled ? "7" : "0";
-                adb.shell(serial, "settings", "put", "global", "stay_on_while_plugged_in", value);
+                new Adb(System.getProperty("scrcpy.adb", "adb"), serial)
+                        .run("shell", "settings", "put", "global", "stay_on_while_plugged_in", value);
             } catch (Throwable t) {
                 Platform.runLater(() -> status.setText("设置屏幕常亮失败: " + t.getMessage()));
             }
