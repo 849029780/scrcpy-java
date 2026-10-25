@@ -77,10 +77,37 @@ public final class ScrcpySession implements AutoCloseable {
                     options.control());
 
             server.start(serverJar, connection.localPort());
+
+            if (options.turnScreenOff() || options.startApp() != null) {
+                if (!options.control()) {
+                    throw new IllegalArgumentException(
+                            "turnScreenOff/startApp require control=true");
+                }
+                awaitControlReady(5_000);
+                if (options.turnScreenOff()
+                        && !sendControl(new ControlMessages.DisplayPower(false))) {
+                    throw new IllegalStateException("Could not request device screen off");
+                }
+                if (options.startApp() != null
+                        && !sendControl(new ControlMessages.StartApp(options.startApp()))) {
+                    throw new IllegalStateException("Could not start app: " + options.startApp());
+                }
+            }
+
             started = true;
         } catch (Exception e) {
             close();
             throw e;
+        }
+    }
+
+    private void awaitControlReady(long timeoutMillis) throws InterruptedException {
+        long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
+        while (!controlReady()) {
+            if (System.nanoTime() >= deadline) {
+                throw new IllegalStateException("Timed out waiting for scrcpy control socket");
+            }
+            Thread.sleep(10);
         }
     }
 
