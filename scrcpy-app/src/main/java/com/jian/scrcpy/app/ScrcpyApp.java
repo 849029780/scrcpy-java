@@ -680,7 +680,7 @@ public final class ScrcpyApp extends Application {
 
     private void broadcastHover(DeviceSession source, DeviceController.ScreenPosition position) {
         for (DeviceSession target : inputTargets(source)) {
-            DeviceController.ScreenPosition p = adaptScreenClick && source != target ? scalePosition(position, target.view()) : position;
+            DeviceController.ScreenPosition p = mapAbsolutePosition(source, target, position);
             if (p != null) target.controller.hover(p);
         }
     }
@@ -688,7 +688,7 @@ public final class ScrcpyApp extends Application {
     private void broadcastTouch(DeviceSession source, int action, DeviceController.ScreenPosition position,
                                 float pressure, int actionButton) {
         for (DeviceSession target : inputTargets(source)) {
-            DeviceController.ScreenPosition p = adaptScreenClick && source != target ? scalePosition(position, target.view()) : position;
+            DeviceController.ScreenPosition p = mapAbsolutePosition(source, target, position);
             if (p != null) {
                 int buttons = action == DeviceController.ACTION_UP ? 0 : 1;
                 target.controller.touch(action, DeviceController.POINTER_ID_MOUSE, p, pressure, actionButton, buttons);
@@ -702,6 +702,17 @@ public final class ScrcpyApp extends Application {
             DeviceController.ScreenPosition p = scalePosition(position, target.view());
             if (p != null) target.controller.scroll(p, horizontal, vertical, 0);
         }
+    }
+
+    private DeviceController.ScreenPosition mapAbsolutePosition(DeviceSession source,
+                                                                  DeviceSession target,
+                                                                  DeviceController.ScreenPosition position) {
+        if (source == target) return position;
+        if (adaptScreenClick) return scalePosition(position, target.view());
+        int width = target.view().frameWidth();
+        int height = target.view().frameHeight();
+        if (width <= 0 || height <= 0) return position;
+        return new DeviceController.ScreenPosition(position.x(), position.y(), width, height);
     }
 
     private static DeviceController.ScreenPosition scalePosition(DeviceController.ScreenPosition source,
