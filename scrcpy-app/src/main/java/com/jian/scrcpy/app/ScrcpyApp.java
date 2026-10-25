@@ -674,8 +674,8 @@ public final class ScrcpyApp extends Application {
         viewport.setStyle("-fx-background-color: transparent;");
         viewport.setAlignment(Pos.TOP_CENTER);
 
-        VBox navigationBar = createDeviceNavigationBar(handle);
-        HBox videoAndNavigation = new HBox(3, viewport, navigationBar);
+        VBox navigationBar = createDeviceNavigationBar(handle, device);
+        HBox videoAndNavigation = new HBox(0, viewport, navigationBar);
         videoAndNavigation.setAlignment(Pos.TOP_LEFT);
 
         handle.view().setPreserveRatio(true);
@@ -683,11 +683,8 @@ public final class ScrcpyApp extends Application {
 
         installControls(handle);
 
-        Button close = new Button("断开");
-        close.setOnAction(e -> disconnect(device.serial()));
-
-        HBox header = new HBox(6, title, new Region(), close);
-        HBox.setHgrow(header.getChildren().get(1), Priority.ALWAYS);
+        HBox header = new HBox(6, title);
+        HBox.setHgrow(title, Priority.ALWAYS);
 
         tile.getChildren().addAll(header, videoAndNavigation);
         VBox.setVgrow(videoAndNavigation, Priority.ALWAYS);
@@ -750,7 +747,9 @@ public final class ScrcpyApp extends Application {
         }
     }
 
-    private VBox createDeviceNavigationBar(DeviceSession handle) {
+    private VBox createDeviceNavigationBar(DeviceSession handle, AdbDevice device) {
+        Button close = deviceControlButton("×", "断开设备", () -> disconnect(device.serial()));
+
         ToggleButton primaryScreen = new ToggleButton("★");
         primaryScreen.setCursor(Cursor.DEFAULT);
         primaryScreen.setTooltip(new Tooltip("设为主屏幕"));
@@ -801,7 +800,7 @@ public final class ScrcpyApp extends Application {
             rightSidebarStayAwake(handle, enabled);
         });
 
-        VBox bar = new VBox(5, primaryScreen, back, home, recent, power, displayPower, stayAwake, mouseModeButton, adaptClickButton);
+        VBox bar = new VBox(5, close, primaryScreen, back, home, recent, power, displayPower, stayAwake, mouseModeButton, adaptClickButton);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
@@ -1345,17 +1344,23 @@ public final class ScrcpyApp extends Application {
             videoWidth = videoHeight * aspect;
         }
 
-        double controlsWidth = 39;
-        double tileWidth = videoWidth + controlsWidth;
-        double tileHeight = videoHeight + 42;
-        handle.tile.setPrefSize(tileWidth, tileHeight);
-        handle.tile.setMinSize(tileWidth, tileHeight);
-        handle.tile.setMaxSize(tileWidth, tileHeight);
+        // Derive the outer tile from the actual laid-out content instead of
+        // fixed padding estimates. This keeps the viewport flush with the
+        // decoded frame and avoids unused black space on the right/bottom.
+        double controlsWidth = 38;
+        double headerHeight = 31;
+        double tileWidth = Math.ceil(videoWidth + controlsWidth);
+        double tileHeight = Math.ceil(videoHeight + headerHeight);
+
         handle.viewport.setPrefSize(videoWidth, videoHeight);
         handle.viewport.setMinSize(videoWidth, videoHeight);
         handle.viewport.setMaxSize(videoWidth, videoHeight);
         handle.view().setFitWidth(videoWidth);
         handle.view().setFitHeight(videoHeight);
+
+        handle.tile.setPrefSize(tileWidth, tileHeight);
+        handle.tile.setMinSize(tileWidth, tileHeight);
+        handle.tile.setMaxSize(tileWidth, tileHeight);
     }
 
     private void refreshAdaptClickButtons() {
