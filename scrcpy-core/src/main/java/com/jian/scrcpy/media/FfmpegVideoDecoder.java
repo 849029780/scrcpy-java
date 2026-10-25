@@ -193,16 +193,6 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 if (DEBUG_SKIP_SWS_SCALE) {
                     continue;
                 }
-                System.out.printf(
-                        "[scrcpy-video] sws_scale begin "
-                                + "src=%dx%d fmt=%d dst=%dx%d "
-                                + "srcStride=[%d,%d,%d,%d] dstStride=%d%n",
-                        frame.width(), frame.height(), frame.format(),
-                        width, height,
-                        frame.linesize(0), frame.linesize(1),
-                        frame.linesize(2), frame.linesize(3),
-                        rgb.linesize(0));
-
                 int scaled = sws_scale(
                         sws,
                         frame.data(),
@@ -211,8 +201,6 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                         frame.height(),
                         rgb.data(),
                         rgb.linesize());
-
-                System.out.printf("[scrcpy-video] sws_scale end: %d%n", scaled);
 
                 if (scaled <= 0) {
                     continue;
