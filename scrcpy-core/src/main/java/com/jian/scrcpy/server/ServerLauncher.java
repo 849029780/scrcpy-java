@@ -45,6 +45,13 @@ public final class ServerLauncher implements AutoCloseable {
         try { adb.removeReverse(localPort); } catch (Exception ignored) {}
         adb.reverse(localPort, socket);
 
+        var a = buildServerArgs(o, scid);
+
+        System.out.println("[scrcpy-java] server args: " + String.join(" ", a));
+        process = adb.shellAsync(a);
+    }
+
+    static ArrayList<String> buildServerArgs(ScrcpyOptions o, String scid) {
         var a = new ArrayList<String>();
         Collections.addAll(
                 a,
@@ -57,17 +64,62 @@ public final class ServerLauncher implements AutoCloseable {
                 "log_level=info",
                 "tunnel_forward=false");
 
-        if (!o.video()) a.add("video=false");
-        if (!o.audio()) a.add("audio=false");
-        if (!o.control()) a.add("control=false");
+        if (!o.video()) {
+            a.add("video=false");
+        } else {
+            if (o.videoCodec() != null && !o.videoCodec().isBlank()
+                    && !"h264".equalsIgnoreCase(o.videoCodec())) {
+                a.add("video_codec=" + o.videoCodec());
+            }
+            if (o.videoBitRate() > 0) {
+                a.add("video_bit_rate=" + requireIntRange("video_bit_rate", o.videoBitRate()));
+            }
+            if (o.maxSize() > 0) {
+                a.add("max_size=" + o.maxSize());
+            }
+            if (o.maxFps() != null && !o.maxFps().isBlank()) {
+                a.add("max_fps=" + o.maxFps());
+            }
+            if (o.crop() != null && !o.crop().isBlank()) {
+                a.add("crop=" + o.crop());
+            }
+        }
 
-        // Forward Android-side display/power options to the scrcpy 5.0.1 server.
-        if (o.showTouches()) a.add("show_touches=true");
-        if (o.stayAwake()) a.add("stay_awake=true");
-        if (o.turnScreenOff()) a.add("turn_screen_off=true");
+        if (!o.audio()) {
+            a.add("audio=false");
+        } else {
+            if (o.audioCodec() != null && !o.audioCodec().isBlank()
+                    && !"opus".equalsIgnoreCase(o.audioCodec())) {
+                a.add("audio_codec=" + o.audioCodec());
+            }
+            if (o.audioBitRate() > 0) {
+                a.add("audio_bit_rate=" + requireIntRange("audio_bit_rate", o.audioBitRate()));
+            }
+        }
 
-        System.out.println("[scrcpy-java] server args: " + String.join(" ", a));
-        process = adb.shellAsync(a);
+        if (!o.control()) {
+            a.add("control=false");
+        }
+
+        // These two are server-side options in scrcpy 5.0.1.
+        if (o.showTouches()) {
+            a.add("show_touches=true");
+        }
+        if (o.stayAwake()) {
+            a.add("stay_awake=true");
+        }
+
+        // turn_screen_off is intentionally NOT a server option.
+        // scrcpy's desktop client sends SET_DISPLAY_POWER(false) through the
+        // control socket after all sockets are initialized.
+        return a;
+    }
+
+    private static String requireIntRange(String name, long value) {
+        if (value > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(name + " exceeds scrcpy server int range: " + value);
+        }
+        return Long.toString(value);
     }
 
     public void close() {
