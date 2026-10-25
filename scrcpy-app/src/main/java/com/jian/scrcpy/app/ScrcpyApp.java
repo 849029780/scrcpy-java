@@ -38,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 public final class ScrcpyApp extends Application {
     private static final double TILE_WIDTH = 360;
     private static final double TILE_HEIGHT = 680;
+    private static final double RELATIVE_MOUSE_EDGE_MARGIN = 2.0;
 
     // Device management is intentionally kept out of the main workspace and
     // shown from the "设备" menu as a modal popup.
@@ -552,6 +553,11 @@ public final class ScrcpyApp extends Application {
             if (!handle.recentering) handle.relativePointerValid = false;
         });
         view.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
+            if (handle.mouseMode == MouseMode.UHID_RELATIVE && isRelativeMouseAtEdge(handle.view(), e)) {
+                clearMouseInputAtEdge(handle);
+                e.consume();
+                return;
+            }
             if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
                 double dx = relativeDeltaX(handle, e);
                 double dy = relativeDeltaY(handle, e);
@@ -725,6 +731,22 @@ public final class ScrcpyApp extends Application {
         int y = Math.min(height - 1, Math.max(0,
                 (int) Math.round((source.y() / (double) Math.max(1, source.screenHeight() - 1)) * (height - 1))));
         return new DeviceController.ScreenPosition(x, y, width, height);
+    }
+
+    private boolean isRelativeMouseAtEdge(VideoView view, MouseEvent e) {
+        double width = view.getBoundsInLocal().getWidth();
+        double height = view.getBoundsInLocal().getHeight();
+        if (width <= 0 || height <= 0) return false;
+        double margin = RELATIVE_MOUSE_EDGE_MARGIN;
+        return e.getX() <= margin || e.getY() <= margin
+                || e.getX() >= width - margin || e.getY() >= height - margin;
+    }
+
+    private void clearMouseInputAtEdge(DeviceSession handle) {
+        handle.uhid.mouse().clearTransientState();
+        handle.relativePointerValid = false;
+        handle.recentering = false;
+        recenterRelativePointer(handle);
     }
 
     private double relativeDeltaX(DeviceSession handle, MouseEvent e) {
