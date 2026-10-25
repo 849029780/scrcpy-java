@@ -578,38 +578,17 @@ public final class ScrcpyApp extends Application {
                 captureRelativeMouse(handle);
             }
         });
-        view.addEventHandler(MouseEvent.MOUSE_EXITED, e -> {
-            if (handle.recentering) return;
-
-            // Leaving the mapped video area terminates the current mouse
-            // interaction. JavaFX may not deliver MOUSE_RELEASED to this view
-            // once the pointer is outside it, so explicitly release any
-            // remote pressed state and discard queued input here.
-            for (DeviceSession target : inputTargets(handle)) {
-                target.session.clearPendingControlEvents();
-                try {
-                    target.uhid.mouse().clearTransientState();
-                } catch (Throwable ignored) {
-                }
-            }
-
-            // In absolute-touch mode a drag is represented as a touch pointer.
-            // End it at the last valid edge position instead of leaving Android
-            // with a permanently pressed pointer.
-            if (handle.mouseMode == MouseMode.ABSOLUTE_TOUCH && e.isPrimaryButtonDown()) {
-                DeviceController.ScreenPosition exit = InputMapper.position(
-                        view,
-                        Math.max(0, Math.min(view.getBoundsInLocal().getWidth() - 1, e.getX())),
-                        Math.max(0, Math.min(view.getBoundsInLocal().getHeight() - 1, e.getY())));
-                if (exit != null) {
-                    broadcastTouch(handle, DeviceController.ACTION_UP, exit, 0f, 1);
-                }
-            }
-
-            handle.relativePointerValid = false;
-            handle.recentering = false;
-        });
+        view.addEventHandler(MouseEvent.MOUSE_EXITED, e -> endMouseInput(handle, e));
         view.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
+            // Do not rely only on MOUSE_EXITED. On Windows/JavaFX the event may
+            // be missed when crossing the left/top edge quickly. Treat an edge
+            // crossing as leaving the mapped screen before forwarding another
+            // hover event.
+            if (isPointerOutsideOrAtEdge(view, e)) {
+                endMouseInput(handle, e);
+                e.consume();
+                return;
+            }
             if (handle.mouseMode == MouseMode.UHID_RELATIVE && isRelativeMouseAtEdge(handle.view(), e)) {
                 clearMouseInputAtEdge(handle);
                 e.consume();
@@ -692,6 +671,43 @@ public final class ScrcpyApp extends Application {
             broadcastKeyboard(handle, usage, false, modifiers);
             e.consume();
         });
+    }
+
+    private boolean isPointerOutsideOrAtEdge(VideoView view, MouseEvent e) {
+        double width = view.getBoundsInLocal().getWidth();
+        double height = view.getBoundsInLocal().getHeight();
+        if (width <= 0 || height <= 0) return true;
+        // A small symmetric guard catches fast crossings on every side,
+        // especially the left edge where JavaFX may skip MOUSE_EXITED.
+        double margin = 1.0;
+        return e.getX() <= margin || e.getY() <= margin
+                || e.getX() >= width - margin || e.getY() >= height - margin;
+    }
+
+    private void endMouseInput(DeviceSession handle, MouseEvent e) {
+        if (handle.recentering) return;
+
+        for (DeviceSession target : inputTargets(handle)) {
+            target.session.clearPendingControlEvents();
+            try {
+                target.uhid.mouse().clearTransientState();
+            } catch (Throwable ignored) {
+            }
+        }
+
+        if (handle.mouseMode == MouseMode.ABSOLUTE_TOUCH && e.isPrimaryButtonDown()) {
+            VideoView view = handle.view();
+            DeviceController.ScreenPosition exit = InputMapper.position(
+                    view,
+                    Math.max(0, Math.min(Math.max(0, view.getBoundsInLocal().getWidth() - 1), e.getX())),
+                    Math.max(0, Math.min(Math.max(0, view.getBoundsInLocal().getHeight() - 1), e.getY())));
+            if (exit != null) {
+                broadcastTouch(handle, DeviceController.ACTION_UP, exit, 0f, 1);
+            }
+        }
+
+        handle.relativePointerValid = false;
+        handle.recentering = false;
     }
 
     private boolean isPrimary(DeviceSession handle) {
