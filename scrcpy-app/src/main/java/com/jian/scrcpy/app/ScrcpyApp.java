@@ -23,6 +23,10 @@ import javafx.scene.robot.Robot;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
+import javafx.stage.Modality;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.control.TextInputDialog;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,6 +39,8 @@ public final class ScrcpyApp extends Application {
     private final Button connect = new Button("连接选中");
     private final Button disconnect = new Button("断开选中");
     private final Button connectAll = new Button("全部连接");
+    private final Button refresh = new Button("刷新设备");
+    private final Button connectionSettings = new Button("连接设置");
     private final Label status = new Label("正在扫描 ADB 设备...");
     private final TilePane screenGrid = new TilePane();
     private final ScrollPane screenScroll = new ScrollPane(screenGrid);
@@ -42,6 +48,7 @@ public final class ScrcpyApp extends Application {
     private final Robot mouseRobot = new Robot();
     private Adb adb;
     private volatile String lastDesktopClipboard = "";
+    private ConnectionSettings connectionSettingsValue = ConnectionSettings.defaults();
     private final java.util.concurrent.atomic.AtomicBoolean applyingRemoteClipboard = new java.util.concurrent.atomic.AtomicBoolean();
 
     @Override
@@ -69,10 +76,13 @@ public final class ScrcpyApp extends Application {
 
         HBox toolbar = new HBox(8,
                 new Label("设备:"),
+                refresh,
+                connectionSettings,
                 connect,
                 disconnect,
                 connectAll,
                 status);
+        toolbar.setAlignment(Pos.CENTER_LEFT);
 
         SplitPane root = new SplitPane();
         root.setDividerPositions(0.22);
@@ -85,6 +95,8 @@ public final class ScrcpyApp extends Application {
         connect.setOnAction(e -> connectSelected());
         disconnect.setOnAction(e -> disconnectSelected());
         connectAll.setOnAction(e -> connectAll());
+        refresh.setOnAction(e -> scanDevices());
+        connectionSettings.setOnAction(e -> showConnectionSettings());
 
         devices.getSelectionModel().getSelectedItems().addListener(
                 (javafx.collections.ListChangeListener<AdbDevice>) c -> updateButtons());
@@ -158,7 +170,14 @@ public final class ScrcpyApp extends Application {
             try {
                 List<AdbDevice> list = adb.devices();
                 Platform.runLater(() -> {
+                    Set<String> selectedSerials = new HashSet<>();
+                    devices.getSelectionModel().getSelectedItems().forEach(d -> selectedSerials.add(d.serial()));
                     devices.setItems(FXCollections.observableArrayList(list));
+                    for (int i = 0; i < list.size(); i++) {
+                        if (selectedSerials.contains(list.get(i).serial())) {
+                            devices.getSelectionModel().select(i);
+                        }
+                    }
                     status.setText(list.isEmpty()
                             ? "未发现设备"
                             : "发现 " + list.size() + " 台设备，投屏中 " + sessions.size() + " 台");
@@ -168,6 +187,125 @@ public final class ScrcpyApp extends Application {
                 Platform.runLater(() -> status.setText("ADB 扫描失败: " + e.getMessage()));
             }
         });
+    }
+
+    private void showConnectionSettings() {
+        Dialog<ConnectionSettings> dialog = new Dialog<>();
+        dialog.setTitle("scrcpy 连接设置");
+        dialog.setHeaderText("设置下一次设备连接使用的参数");
+        dialog.initModality(Modality.APPLICATION_MODAL);
+
+        ConnectionSettings s = connectionSettingsValue;
+
+        CheckBox video = new CheckBox("视频");
+        video.setSelected(s.video());
+        CheckBox audio = new CheckBox("音频");
+        audio.setSelected(s.audio());
+        CheckBox control = new CheckBox("控制");
+        control.setSelected(s.control());
+        CheckBox showTouches = new CheckBox("显示触摸点");
+        showTouches.setSelected(s.showTouches());
+        CheckBox stayAwake = new CheckBox("保持唤醒");
+        stayAwake.setSelected(s.stayAwake());
+        CheckBox turnScreenOff = new CheckBox("关闭设备屏幕");
+        turnScreenOff.setSelected(s.turnScreenOff());
+
+        ComboBox<String> videoCodec = new ComboBox<>(FXCollections.observableArrayList("h264", "h265", "av1"));
+        videoCodec.setValue(s.videoCodec());
+        ComboBox<String> audioCodec = new ComboBox<>(FXCollections.observableArrayList("opus", "aac", "flac"));
+        audioCodec.setValue(s.audioCodec());
+
+        TextField videoBitRate = new TextField(formatBitRate(s.videoBitRate()));
+        videoBitRate.setPromptText("例如 8M");
+        TextField audioBitRate = new TextField(formatBitRate(s.audioBitRate()));
+        audioBitRate.setPromptText("例如 128K");
+        TextField maxSize = new TextField(s.maxSize() <= 0 ? "" : Integer.toString(s.maxSize()));
+        maxSize.setPromptText("例如 1920");
+        TextField maxFps = new TextField(s.maxFps() == null ? "" : s.maxFps());
+        maxFps.setPromptText("例如 60");
+        TextField crop = new TextField(Objects.requireNonNullElse(s.crop(), ""));
+        crop.setPromptText("例如 1080:1920:0:0");
+        TextField startApp = new TextField(Objects.requireNonNullElse(s.startApp(), ""));
+        startApp.setPromptText("可选：启动应用包名");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(8);
+        grid.setPadding(new Insets(10));
+        int row = 0;
+        grid.add(video, 0, row); grid.add(audio, 1, row); grid.add(control, 2, row++);
+        grid.add(new Label("视频编码"), 0, row); grid.add(videoCodec, 1, row++, 2, 1);
+        grid.add(new Label("音频编码"), 0, row); grid.add(audioCodec, 1, row++, 2, 1);
+        grid.add(new Label("视频码率"), 0, row); grid.add(videoBitRate, 1, row++, 2, 1);
+        grid.add(new Label("音频码率"), 0, row); grid.add(audioBitRate, 1, row++, 2, 1);
+        grid.add(new Label("最大分辨率"), 0, row); grid.add(maxSize, 1, row++, 2, 1);
+        grid.add(new Label("最大帧率"), 0, row); grid.add(maxFps, 1, row++, 2, 1);
+        grid.add(new Label("裁剪"), 0, row); grid.add(crop, 1, row++, 2, 1);
+        grid.add(new Label("启动应用"), 0, row); grid.add(startApp, 1, row++, 2, 1);
+        grid.add(showTouches, 0, row); grid.add(stayAwake, 1, row); grid.add(turnScreenOff, 2, row);
+
+        dialog.getDialogPane().setContent(grid);
+        ButtonType ok = new ButtonType("保存", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(ok, ButtonType.CANCEL);
+        dialog.setResultConverter(bt -> {
+            if (bt != ok) return null;
+            try {
+                return new ConnectionSettings(
+                        video.isSelected(), audio.isSelected(), control.isSelected(),
+                        videoCodec.getValue(), audioCodec.getValue(),
+                        parseBitRate(videoBitRate.getText()),
+                        parseBitRate(audioBitRate.getText()),
+                        parsePositiveInt(maxSize.getText(), 0),
+                        blankToNull(maxFps.getText()),
+                        showTouches.isSelected(), stayAwake.isSelected(),
+                        turnScreenOff.isSelected(), blankToNull(crop.getText()),
+                        blankToNull(startApp.getText()));
+            } catch (IllegalArgumentException ex) {
+                new Alert(Alert.AlertType.ERROR, "连接设置无效", ex.getMessage(), ButtonType.OK).showAndWait();
+                return null;
+            }
+        });
+        dialog.showAndWait().ifPresent(value -> {
+            connectionSettingsValue = value;
+            status.setText("连接设置已保存");
+        });
+    }
+
+    private static String formatBitRate(long value) {
+        if (value <= 0) return "";
+        if (value % 1_000_000 == 0) return (value / 1_000_000) + "M";
+        if (value % 1_000 == 0) return (value / 1_000) + "K";
+        return Long.toString(value);
+    }
+
+    private static long parseBitRate(String value) {
+        String s = Objects.requireNonNullElse(value, "").trim().toUpperCase(Locale.ROOT);
+        if (s.isEmpty()) return 0;
+        long multiplier = 1;
+        if (s.endsWith("M")) { multiplier = 1_000_000; s = s.substring(0, s.length() - 1); }
+        else if (s.endsWith("K")) { multiplier = 1_000; s = s.substring(0, s.length() - 1); }
+        long number;
+        try { number = Long.parseLong(s.trim()); }
+        catch (NumberFormatException e) { throw new IllegalArgumentException("码率必须是数字，可使用 K/M 后缀"); }
+        if (number < 0 || number > Long.MAX_VALUE / multiplier) throw new IllegalArgumentException("码率超出范围");
+        return number * multiplier;
+    }
+
+    private static int parsePositiveInt(String value, int defaultValue) {
+        String s = Objects.requireNonNullElse(value, "").trim();
+        if (s.isEmpty()) return defaultValue;
+        try {
+            int n = Integer.parseInt(s);
+            if (n < 0) throw new NumberFormatException();
+            return n;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("数值必须是非负整数");
+        }
+    }
+
+    private static String blankToNull(String value) {
+        String s = Objects.requireNonNullElse(value, "").trim();
+        return s.isEmpty() ? null : s;
     }
 
     private void connectSelected() {
@@ -201,10 +339,10 @@ public final class ScrcpyApp extends Application {
             JavaSoundPlayer audioPlayer = null;
             ScrcpySession session = null;
             try {
-                ScrcpyOptions d = ScrcpyOptions.defaults();
+                ScrcpyOptions d = connectionSettingsValue.toOptions(device.serial(), ScrcpyOptions.defaults());
                 ScrcpyOptions options = new ScrcpyOptions(
                         device.serial(), d.scid(), d.localPort(),
-                        true, true, true,
+                        d.video(), d.audio(), d.control(),
                         d.videoCodec(), d.audioCodec(),
                         d.videoBitRate(), d.audioBitRate(),
                         d.maxSize(), d.maxFps(),
@@ -463,6 +601,8 @@ public final class ScrcpyApp extends Application {
         connect.setDisable(!hasSelection);
         disconnect.setDisable(!hasSelection);
         connectAll.setDisable(!hasReady);
+        refresh.setDisable(false);
+        connectionSettings.setDisable(false);
     }
 
     private void closeAllSessions() {
@@ -482,6 +622,38 @@ public final class ScrcpyApp extends Application {
 
     public static void main(String[] args) {
         launch(args);
+    }
+
+    private record ConnectionSettings(
+            boolean video,
+            boolean audio,
+            boolean control,
+            String videoCodec,
+            String audioCodec,
+            long videoBitRate,
+            long audioBitRate,
+            int maxSize,
+            String maxFps,
+            boolean showTouches,
+            boolean stayAwake,
+            boolean turnScreenOff,
+            String crop,
+            String startApp) {
+
+        static ConnectionSettings defaults() {
+            ScrcpyOptions d = ScrcpyOptions.defaults();
+            return new ConnectionSettings(d.video(), d.audio(), d.control(),
+                    d.videoCodec(), d.audioCodec(), d.videoBitRate(), d.audioBitRate(),
+                    d.maxSize(), d.maxFps(), d.showTouches(), d.stayAwake(),
+                    d.turnScreenOff(), d.crop(), d.startApp());
+        }
+
+        ScrcpyOptions toOptions(String serial, ScrcpyOptions base) {
+            return new ScrcpyOptions(serial, base.scid(), base.localPort(),
+                    video, audio, control, videoCodec, audioCodec,
+                    videoBitRate, audioBitRate, maxSize, maxFps,
+                    showTouches, stayAwake, turnScreenOff, crop, startApp);
+        }
     }
 
     private enum MouseMode {
