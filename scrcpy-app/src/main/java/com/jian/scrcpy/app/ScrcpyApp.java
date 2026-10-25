@@ -15,6 +15,7 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.scene.Scene;
+import javafx.scene.Cursor;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
@@ -246,6 +247,8 @@ public final class ScrcpyApp extends Application {
     private void installControls(DeviceSession handle) {
         VideoView view = handle.view();
         view.setFocusTraversable(true);
+        // Keep the normal pointer while dragging; do not expose JavaFX's move/drag cursor.
+        view.setCursor(Cursor.DEFAULT);
 
         view.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
             DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
