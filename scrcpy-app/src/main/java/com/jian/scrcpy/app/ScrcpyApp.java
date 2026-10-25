@@ -576,7 +576,7 @@ public final class ScrcpyApp extends Application {
     private void connectDevice(AdbDevice device, ConnectionSettings settings, boolean reconnect) {
         Thread.startVirtualThread(() -> {
             JavaSoundPlayer audioPlayer = null;
-            FfmpegVideoDecoder videoDecoder = null;
+            java.util.concurrent.atomic.AtomicReference<FfmpegVideoDecoder> videoDecoderRef = new java.util.concurrent.atomic.AtomicReference<>();
             ScrcpySession session = null;
             try {
                 ScrcpyOptions d = settings.toOptions(device.serial(), ScrcpyOptions.defaults());
@@ -590,9 +590,10 @@ public final class ScrcpyApp extends Application {
                         d.turnScreenOff(), d.crop(), d.startApp());
 
                 VideoView view = new VideoView();
-                videoDecoder = d.video()
+                final FfmpegVideoDecoder videoDecoder = d.video()
                         ? new FfmpegVideoDecoder(view::accept, d.videoDecoder())
                         : null;
+                videoDecoderRef.set(videoDecoder);
                 audioPlayer = new JavaSoundPlayer();
                 JavaSoundPlayer player = audioPlayer;
 
@@ -649,6 +650,7 @@ public final class ScrcpyApp extends Application {
             } catch (Throwable e) {
                 reconnecting.remove(device.serial());
                 if (session != null) session.close();
+                FfmpegVideoDecoder videoDecoder = videoDecoderRef.getAndSet(null);
                 if (videoDecoder != null) videoDecoder.close();
                 if (audioPlayer != null) audioPlayer.close();
                 Platform.runLater(() -> {
