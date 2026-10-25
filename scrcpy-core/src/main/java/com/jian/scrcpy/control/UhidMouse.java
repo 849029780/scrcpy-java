@@ -57,6 +57,13 @@ public final class UhidMouse implements AutoCloseable {
         if (next != buttons) buttons(next);
     }
 
+    /** Clear transient mouse state without destroying the UHID device. */
+    public void clearTransientState() {
+        releaseButtons();
+        residualH = 0;
+        residualV = 0;
+    }
+
     /** Release every pressed mouse button without destroying the UHID device. */
     public void releaseButtons() {
         if (!open || buttons == 0) return;
