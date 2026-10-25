@@ -564,7 +564,10 @@ public final class ScrcpyApp extends Application {
         DeviceSession handle = sessions.remove(serial);
         if (handle == null) return;
 
-        handle.close();
+        // Do not close Netty/audio resources on the JavaFX Application Thread.
+        // In particular, closing the per-device EventLoopGroup can block while
+        // channels are being torn down. The UI tile is removed immediately,
+        // while the actual session shutdown happens in a virtual thread.
         if (handle.tile != null) {
             screenGrid.getChildren().remove(handle.tile);
         }
@@ -572,6 +575,15 @@ public final class ScrcpyApp extends Application {
         devices.refresh();
         status.setText("投屏中 " + sessions.size() + " 台设备");
         updateButtons();
+
+        Thread.startVirtualThread(() -> {
+            try {
+                handle.close();
+            } catch (Throwable t) {
+                System.err.println("[scrcpy-java] disconnect failed for " + serial + ": " + t);
+                t.printStackTrace(System.err);
+            }
+        });
     }
 
     private void updateButtons() {
@@ -658,9 +670,34 @@ public final class ScrcpyApp extends Application {
 
         @Override
         public void close() {
-            uhid.close();
-            session.close();
-            audioPlayer.close();
+            Throwable first = null;
+
+            // Release virtual HID devices while the control channel is still
+            // alive. Failure here must not prevent the actual scrcpy session
+            // and audio resources from being closed.
+            try {
+                uhid.close();
+            } catch (Throwable t) {
+                first = t;
+            }
+
+            try {
+                session.close();
+            } catch (Throwable t) {
+                if (first == null) first = t;
+                else first.addSuppressed(t);
+            }
+
+            try {
+                audioPlayer.close();
+            } catch (Throwable t) {
+                if (first == null) first = t;
+                else first.addSuppressed(t);
+            }
+
+            if (first != null) {
+                throw new IllegalStateException("Failed to close device session", first);
+            }
         }
 
         private void resetRelativePointer(double x, double y) {
