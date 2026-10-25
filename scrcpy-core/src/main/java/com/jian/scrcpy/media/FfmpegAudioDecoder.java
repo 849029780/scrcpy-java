@@ -7,6 +7,9 @@ import org.bytedeco.ffmpeg.avcodec.*;
 import org.bytedeco.ffmpeg.avutil.*;
 import org.bytedeco.javacpp.*;
 
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static org.bytedeco.ffmpeg.global.avcodec.*;
@@ -19,8 +22,15 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private AVPacket packet;
     private CodecId codec;
     private long packetIndex;
+    private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(240);
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final Thread decodeThread;
 
-    public FfmpegAudioDecoder(Consumer<AudioFrame> s) { super(false); sink = s; }
+    public FfmpegAudioDecoder(Consumer<AudioFrame> s) {
+        super(false);
+        sink = s;
+        decodeThread = Thread.ofVirtual().name("scrcpy-audio-decoder").start(this::decodeLoop);
+    }
 
     private static int avId(CodecId c) {
         return switch (c) {
@@ -45,40 +55,70 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     @Override
-    protected synchronized void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
+    protected void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
+        if (closed.get()) {
+            releaseMessage(m);
+            return;
+        }
+        if (!decodeQueue.offer(m)) {
+            MediaMessage dropped = decodeQueue.poll();
+            releaseMessage(dropped);
+            if (!decodeQueue.offer(m)) releaseMessage(m);
+        }
+    }
+
+    private void decodeLoop() {
+        try {
+            while (!closed.get() || !decodeQueue.isEmpty()) {
+                MediaMessage m = decodeQueue.take();
+                try {
+                    decodeMessage(m);
+                } finally {
+                    releaseMessage(m);
+                }
+            }
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        } catch (Throwable t) {
+            System.err.println("[scrcpy-java] audio decode worker failed: " + t);
+            t.printStackTrace(System.err);
+        } finally {
+            MediaMessage m;
+            while ((m = decodeQueue.poll()) != null) releaseMessage(m);
+        }
+    }
+
+    private synchronized void decodeMessage(MediaMessage m) {
         if (m instanceof MediaMessage.Codec c) { init(c.codec()); return; }
         if (!(m instanceof MediaMessage.Packet p)) return;
-        try {
-            long index = ++packetIndex;
-            // scrcpy 5.0.1 only merges config packets for H.264/H.265 video.
-            // Audio config packets are metadata for recording and must not be
-            // submitted to the audio decoder as compressed frames.
-            if (p.config()) {
-                System.out.printf("[scrcpy-java] audio config packet: codec=%s packet=%d size=%d%n",
-                        codec, index, p.data().readableBytes());
+        long index = ++packetIndex;
+        if (p.config()) {
+            System.out.printf("[scrcpy-java] audio config packet: codec=%s packet=%d size=%d%n",
+                    codec, index, p.data().readableBytes());
+            return;
+        }
+        byte[] bytes = new byte[p.data().readableBytes() + AV_INPUT_BUFFER_PADDING_SIZE];
+        int payloadSize = p.data().readableBytes();
+        p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
+        try (BytePointer bp = new BytePointer(bytes)) {
+            av_packet_unref(packet);
+            packet.data(bp).size(payloadSize).pts(p.pts()).dts(p.pts());
+
+            int ret = avcodec_send_packet(ctx, packet);
+            if (ret == AVERROR_EAGAIN()) {
+                drainFrames(p.pts());
+                ret = avcodec_send_packet(ctx, packet);
+            }
+            if (ret < 0) {
+                logDecodeError("send_packet", ret, index, payloadSize, p.pts());
                 return;
             }
-            byte[] bytes = new byte[p.data().readableBytes() + AV_INPUT_BUFFER_PADDING_SIZE];
-            int payloadSize = p.data().readableBytes();
-            p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
-            try (BytePointer bp = new BytePointer(bytes)) {
-                av_packet_unref(packet);
-                packet.data(bp).size(payloadSize).pts(p.pts()).dts(p.pts());
-
-                int ret = avcodec_send_packet(ctx, packet);
-                if (ret == AVERROR_EAGAIN()) {
-                    drainFrames(p.pts());
-                    ret = avcodec_send_packet(ctx, packet);
-                }
-                if (ret < 0) {
-                    logDecodeError("send_packet", ret, index, payloadSize, p.pts());
-                    return;
-                }
-                drainFrames(p.pts());
-            }
-        } finally {
-            ReferenceCountUtil.release(p.data());
+            drainFrames(p.pts());
         }
+    }
+
+    private static void releaseMessage(MediaMessage m) {
+        if (m instanceof MediaMessage.Packet p) ReferenceCountUtil.release(p.data());
     }
 
     private void drainFrames(long pts) {
@@ -140,7 +180,18 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         return (short) Math.round(v * 32767f);
     }
 
-    @Override public synchronized void close() {
+    @Override public void close() {
+        if (!closed.compareAndSet(false, true)) return;
+        decodeThread.interrupt();
+        try {
+            decodeThread.join(2_000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        closeNative();
+    }
+
+    private synchronized void closeNative() {
         if (packet != null) { av_packet_free(packet); packet = null; }
         if (frame != null) { av_frame_free(frame); frame = null; }
         if (ctx != null) { avcodec_free_context(ctx); ctx = null; }
