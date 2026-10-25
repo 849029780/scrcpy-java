@@ -563,7 +563,6 @@ public final class ScrcpyApp extends Application {
         handle.primaryButton = primary;
         handle.adaptClickItem = adaptClick;
         handle.device = device;
-        handle.mouseModeButton = createMouseModeButton(handle);
 
         resizeTile(handle, false);
         secondaryGrid.getChildren().add(tile);
@@ -595,6 +594,8 @@ public final class ScrcpyApp extends Application {
     }
 
     private VBox createDeviceNavigationBar(DeviceSession handle) {
+        ToggleButton mouseModeButton = createMouseModeButton(handle);
+        handle.mouseModeButton = mouseModeButton;
         Button back = deviceControlButton("←", "返回", () -> rightSidebarKey(handle, AndroidKeycodes.BACK));
         Button home = deviceControlButton("⌂", "Home", () -> rightSidebarKey(handle, AndroidKeycodes.HOME));
         Button recent = deviceControlButton("▣", "多任务", () -> rightSidebarKey(handle, 187));
@@ -627,7 +628,7 @@ public final class ScrcpyApp extends Application {
             rightSidebarStayAwake(handle, enabled);
         });
 
-        VBox bar = new VBox(5, back, home, recent, power, displayPower, stayAwake, handle.mouseModeButton);
+        VBox bar = new VBox(5, back, home, recent, power, displayPower, stayAwake, mouseModeButton);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
