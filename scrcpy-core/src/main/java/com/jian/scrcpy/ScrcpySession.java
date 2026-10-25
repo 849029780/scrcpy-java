@@ -58,7 +58,7 @@ public final class ScrcpySession implements AutoCloseable {
 
         try {
             if (options.video()) {
-                videoDecoder = new FfmpegVideoDecoder(videoSink);
+                videoDecoder = new FfmpegVideoDecoder(videoSink, options.videoDecoder());
             }
             if (options.audio()) {
                 audioDecoder = new FfmpegAudioDecoder(audioSink == null ? f -> {} : audioSink);
