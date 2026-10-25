@@ -140,13 +140,15 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
+        // Interrupt the worker so it stops waiting for more packets. Native
+        // FFmpeg resources are released by the worker itself after it exits,
+        // never concurrently with decodeMessage().
         decodeThread.interrupt();
         try {
             decodeThread.join(2_000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        closeNative();
     }
 
     private synchronized void closeNative() {
