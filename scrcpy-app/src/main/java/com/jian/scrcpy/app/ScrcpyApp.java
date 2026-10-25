@@ -6,6 +6,7 @@ import com.jian.scrcpy.adb.AdbDevice;
 import com.jian.scrcpy.media.JavaSoundPlayer;
 import com.jian.scrcpy.control.DeviceController;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.InputMethodEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
@@ -293,10 +294,23 @@ public final class ScrcpyApp extends Application {
                     InputMapper.metaState(e.isShiftDown(), e.isControlDown(), e.isAltDown()));
             e.consume();
         });
+        view.setOnInputMethodTextChanged(e -> {
+            String committed = e.getCommitted();
+            if (committed != null && !committed.isEmpty()) {
+                handle.controller.pasteText(committed);
+            }
+            e.consume();
+        });
         view.addEventHandler(KeyEvent.KEY_TYPED, e -> {
             String text = e.getCharacter();
             if (text == null || text.isEmpty() || text.charAt(0) < 0x20) return;
-            handle.controller.text(text);
+            // SDK text injection is suitable for ASCII. Non-ASCII (for example
+            // Chinese committed by the PC IME) is sent via clipboard+paste.
+            if (text.codePoints().allMatch(cp -> cp < 0x80)) {
+                handle.controller.text(text);
+            } else {
+                handle.controller.pasteText(text);
+            }
             e.consume();
         });
     }
