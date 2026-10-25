@@ -10,6 +10,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class VideoView extends ImageView {
     private final AtomicReference<VideoFrame> latest = new AtomicReference<>();
     private boolean scheduled;
+    private volatile int frameWidth;
+    private volatile int frameHeight;
 
     public VideoView() {
         setPreserveRatio(true);
@@ -17,6 +19,8 @@ public final class VideoView extends ImageView {
     }
 
     public void accept(VideoFrame f) {
+        frameWidth = f.width();
+        frameHeight = f.height();
         latest.set(f);
         synchronized (this) {
             if (scheduled) return;
@@ -37,5 +41,13 @@ public final class VideoView extends ImageView {
                 if (latest.get() != null) accept(latest.get());
             }
         });
+    }
+
+    public int frameWidth() {
+        return frameWidth;
+    }
+
+    public int frameHeight() {
+        return frameHeight;
     }
 }
