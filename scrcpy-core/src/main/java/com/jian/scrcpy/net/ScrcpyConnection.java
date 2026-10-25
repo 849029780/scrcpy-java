@@ -1,5 +1,3 @@
-package com.jian.scrcpy.net;
-
 import com.jian.scrcpy.protocol.*;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
@@ -10,6 +8,7 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class ScrcpyConnection implements AutoCloseable {
@@ -20,6 +19,7 @@ public final class ScrcpyConnection implements AutoCloseable {
     private volatile ControlMessageQueue controlQueue;
     private volatile int localPort;
     private volatile String deviceName;
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     public ScrcpyConnection(int p) {
         port = p;
@@ -159,9 +159,26 @@ public final class ScrcpyConnection implements AutoCloseable {
 
     @Override
     public void close() {
-        for (var channel : new Channel[]{video, audio, control, listener}) {
-            if (channel != null) channel.close();
+        if (!closed.compareAndSet(false, true)) {
+            return;
         }
-        group.shutdownGracefully(0, 2, TimeUnit.SECONDS);
+
+        // The media handlers invoke FFmpeg from Netty event-loop threads.
+        // Wait for every channel to finish closing before the caller releases
+        // FFmpeg native state. Otherwise an in-flight channelRead0() can access
+        // an AVCodecContext/AVFrame after it has been freed, which can crash
+        // the JVM in native FFmpeg code.
+        Channel[] channels = {video, audio, control, listener};
+        for (Channel channel : channels) {
+            if (channel == null) continue;
+            try {
+                channel.close().syncUninterruptibly();
+            } catch (Throwable t) {
+                System.err.println("[scrcpy-java] channel close failed: " + t);
+            }
+        }
+
+        // Ensure queued Netty callbacks have completed before decoder cleanup.
+        group.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
     }
 }
