@@ -49,6 +49,14 @@ public final class UhidKeyboard implements AutoCloseable {
         sendReport();
     }
 
+    /** Release every pressed key and modifier without destroying the UHID device. */
+    public void releaseAll() {
+        if (!open) return;
+        pressed.clear();
+        modifiers = 0;
+        sendReport();
+    }
+
     public void modifiers(int modifiers) {
         open();
         this.modifiers = modifiers & 0xff;
@@ -89,12 +97,15 @@ public final class UhidKeyboard implements AutoCloseable {
     @Override
     public void close() {
         if (!open) return;
-        // Release all keys before destroying the virtual device.
-        pressed.clear();
-        modifiers = 0;
-        sendReport();
-        sink.accept(new ControlMessages.UhidDestroy(HID_ID));
-        open = false;
+        try {
+            releaseAll();
+        } finally {
+            try {
+                sink.accept(new ControlMessages.UhidDestroy(HID_ID));
+            } finally {
+                open = false;
+            }
+        }
     }
 
     private static byte[] bytes(int... values) {
