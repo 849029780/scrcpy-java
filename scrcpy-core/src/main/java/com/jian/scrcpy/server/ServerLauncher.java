@@ -71,6 +71,12 @@ public final class ServerLauncher implements AutoCloseable {
                     && !"h264".equalsIgnoreCase(o.videoCodec())) {
                 a.add("video_codec=" + o.videoCodec());
             }
+            if (o.videoEncoder() != null && !o.videoEncoder().isBlank()) {
+                a.add("video_encoder=" + o.videoEncoder().trim());
+            }
+            if (o.videoCodecOptions() != null && !o.videoCodecOptions().isBlank()) {
+                a.add("video_codec_options=" + o.videoCodecOptions().trim());
+            }
             if (o.videoBitRate() > 0) {
                 a.add("video_bit_rate=" + requireIntRange("video_bit_rate", o.videoBitRate()));
             }
