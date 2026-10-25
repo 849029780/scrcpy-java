@@ -580,11 +580,37 @@ public final class ScrcpyApp extends Application {
         Button power = deviceControlButton("⏻", "电源", () -> pressAndroidKey(handle, AndroidKeycodes.POWER));
         Button screenOff = deviceControlButton("◐", "熄屏", () -> handle.controller.setDisplayPower(false));
 
-        VBox bar = new VBox(5, back, home, recent, power, screenOff);
+        ToggleButton stayAwake = new ToggleButton("☀");
+        stayAwake.setTooltip(new Tooltip("保持屏幕常亮"));
+        stayAwake.setFocusTraversable(false);
+        stayAwake.setMinSize(34, 34);
+        stayAwake.setPrefSize(34, 34);
+        stayAwake.setMaxSize(34, 34);
+        stayAwake.setSelected(handle.stayAwake);
+        stayAwake.setOnAction(e -> setStayAwake(handle, stayAwake.isSelected()));
+
+        VBox bar = new VBox(5, back, home, recent, power, screenOff, stayAwake);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
         return bar;
+    }
+
+    private void setStayAwake(DeviceSession handle, boolean enabled) {
+        if (handle.device == null) return;
+        handle.stayAwake = enabled;
+        String serial = handle.device.serial();
+        Thread.startVirtualThread(() -> {
+            try {
+                // scrcpy's stay_awake is a server start option, not a runtime control
+                // message. For a live per-device switch use Android's stay_on_while_plugged_in
+                // setting; ADB/scrcpy connections are normally USB or charging-capable.
+                String value = enabled ? "7" : "0";
+                adb.shell(serial, "settings", "put", "global", "stay_on_while_plugged_in", value);
+            } catch (Throwable t) {
+                Platform.runLater(() -> status.setText("设置屏幕常亮失败: " + t.getMessage()));
+            }
+        });
     }
 
     private Button deviceControlButton(String text, String tooltip, Runnable action) {
@@ -1260,6 +1286,7 @@ public final class ScrcpyApp extends Application {
         private MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
         private boolean relativePointerValid;
         private boolean recentering;
+        private boolean stayAwake;
 
         private DeviceSession(
                 ScrcpySession session,
