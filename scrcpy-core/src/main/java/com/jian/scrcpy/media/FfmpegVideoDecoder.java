@@ -61,14 +61,38 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     private void converter(int w, int h, int fmt) {
         if (w == width && h == height && sws != null) return;
-        if (sws != null) sws_freeContext(sws);
-        if (rgbBuffer != null) rgbBuffer.close();
+        if (sws != null) {
+            sws_freeContext(sws);
+            sws = null;
+        }
+        if (rgbBuffer != null) {
+            rgbBuffer.close();
+            rgbBuffer = null;
+        }
+
         width = w;
         height = h;
-        sws = sws_getContext(w, h, fmt, w, h, AV_PIX_FMT_BGRA, SWS_BILINEAR, null, null, (DoublePointer) null);
+
+        sws = sws_getContext(
+                w, h, fmt,
+                w, h, AV_PIX_FMT_BGRA,
+                SWS_BILINEAR,
+                null, null, (DoublePointer) null);
+        if (sws == null) {
+            throw new IllegalStateException("cannot create swscale context: " + w + "x" + h);
+        }
+
         int size = av_image_get_buffer_size(AV_PIX_FMT_BGRA, w, h, 1);
-        rgbBuffer = new BytePointer(av_malloc(size));
-        av_image_fill_arrays(rgb.data(), rgb.linesize(), rgbBuffer, AV_PIX_FMT_BGRA, w, h, 1);
+        if (size <= 0) {
+            throw new IllegalStateException("invalid BGRA buffer size: " + size);
+        }
+
+        // Allocate through JavaCPP so the BytePointer owns the buffer.
+        // Do not mix JavaCPP deallocation with av_free() for the same block.
+        rgbBuffer = new BytePointer(size);
+        av_image_fill_arrays(
+                rgb.data(), rgb.linesize(), rgbBuffer,
+                AV_PIX_FMT_BGRA, w, h, 1);
     }
 
     @Override
@@ -169,7 +193,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             sws = null;
         }
         if (rgbBuffer != null) {
-            av_free(rgbBuffer);
+            rgbBuffer.close();
             rgbBuffer = null;
         }
         if (packet != null) av_packet_free(packet);
