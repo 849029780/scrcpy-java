@@ -107,8 +107,11 @@ public final class ScrcpyApp extends Application {
         deviceManager.setOnAction(e -> showDeviceManager());
         MenuItem refreshDevices = new MenuItem("刷新设备");
         refreshDevices.setOnAction(e -> scanDevices());
+        CheckMenuItem adaptClick = new CheckMenuItem("主设备点击坐标适配");
+        adaptClick.setSelected(adaptScreenClick);
+        adaptClick.setOnAction(e -> adaptScreenClick = adaptClick.isSelected());
         MenuButton deviceMenu = new MenuButton("设备");
-        deviceMenu.getItems().addAll(deviceManager, refreshDevices);
+        deviceMenu.getItems().addAll(deviceManager, refreshDevices, adaptClick);
 
         HBox toolbar = new HBox(12, deviceMenu, primaryStatus, status);
         toolbar.setAlignment(Pos.CENTER_LEFT);
