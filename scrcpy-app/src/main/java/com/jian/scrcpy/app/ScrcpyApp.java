@@ -813,6 +813,7 @@ public final class ScrcpyApp extends Application {
         }
         if (isPrimary(handle)) {
             primarySerial = null;
+            screenArea.setLeft(null);
             primaryHost.setManaged(false);
             primaryHost.setVisible(false);
             primaryHost.setPrefWidth(0);
@@ -862,6 +863,7 @@ public final class ScrcpyApp extends Application {
         primaryHost.setManaged(false);
         primaryHost.setVisible(false);
         primaryHost.setPrefWidth(0);
+        screenArea.setLeft(null);
     }
 
     @Override
