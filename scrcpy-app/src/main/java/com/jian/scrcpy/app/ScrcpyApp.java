@@ -7,7 +7,6 @@ import com.jian.scrcpy.media.JavaSoundPlayer;
 import com.jian.scrcpy.control.DeviceController;
 import com.jian.scrcpy.control.UhidController;
 import javafx.scene.input.KeyEvent;
-import javafx.scene.input.InputMethodEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
@@ -297,25 +296,11 @@ public final class ScrcpyApp extends Application {
                     HidKeyMapper.modifiers(e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown()));
             e.consume();
         });
-        view.setOnInputMethodTextChanged(e -> {
-            String committed = e.getCommitted();
-            if (committed != null && !committed.isEmpty()) {
-                handle.controller.pasteText(committed);
-            }
-            e.consume();
-        });
-        view.addEventHandler(KeyEvent.KEY_TYPED, e -> {
-            String text = e.getCharacter();
-            if (text == null || text.isEmpty() || text.charAt(0) < 0x20) return;
-            // SDK text injection is suitable for ASCII. Non-ASCII (for example
-            // Chinese committed by the PC IME) is sent via clipboard+paste.
-            if (text.codePoints().allMatch(cp -> cp < 0x80)) {
-                handle.controller.text(text);
-            } else {
-                handle.controller.pasteText(text);
-            }
-            e.consume();
-        });
+        // UHID is a physical keyboard: forward physical key events only.
+        // Do not forward JavaFX KEY_TYPED/InputMethodEvent, otherwise printable
+        // keys are injected twice and PC IME committed text would fall back to
+        // clipboard paste. Chinese is composed directly by the Android IME from
+        // the UHID key stream (PC keyboard/input source should be in Latin mode).
     }
 
     private void sendTouch(DeviceSession handle, MouseEvent e, int action, float pressure, int actionButton) {
