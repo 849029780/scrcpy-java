@@ -595,6 +595,16 @@ public final class ScrcpyApp extends Application {
     }
 
     private VBox createDeviceNavigationBar(DeviceSession handle) {
+        ToggleButton primaryScreen = new ToggleButton("★");
+        primaryScreen.setTooltip(new Tooltip("设为主屏幕"));
+        primaryScreen.setFocusTraversable(false);
+        primaryScreen.setMinSize(34, 34);
+        primaryScreen.setPrefSize(34, 34);
+        primaryScreen.setMaxSize(34, 34);
+        handle.primaryScreenButton = primaryScreen;
+        updatePrimaryScreenToggle(primaryScreen, isPrimary(handle));
+        primaryScreen.setOnAction(e -> togglePrimary(handle));
+
         ToggleButton mouseModeButton = createMouseModeButton(handle);
         handle.mouseModeButton = mouseModeButton;
         Button back = deviceControlButton("←", "返回", () -> rightSidebarKey(handle, AndroidKeycodes.BACK));
@@ -629,7 +639,7 @@ public final class ScrcpyApp extends Application {
             rightSidebarStayAwake(handle, enabled);
         });
 
-        VBox bar = new VBox(5, back, home, recent, power, displayPower, stayAwake, mouseModeButton);
+        VBox bar = new VBox(5, primaryScreen, back, home, recent, power, displayPower, stayAwake, mouseModeButton);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
@@ -660,6 +670,12 @@ public final class ScrcpyApp extends Application {
             }
             setStayAwake(target, enabled);
         }
+    }
+
+    private static void updatePrimaryScreenToggle(ToggleButton button, boolean primary) {
+        button.setSelected(primary);
+        button.setText(primary ? "★" : "☆");
+        button.setTooltip(new Tooltip(primary ? "取消主屏幕" : "设为主屏幕"));
     }
 
     private static void updateDisplayPowerToggle(ToggleButton button, boolean on) {
@@ -1162,6 +1178,9 @@ public final class ScrcpyApp extends Application {
         }
         sessions.values().forEach(s -> {
             if (s.primaryButton != null) s.primaryButton.setText(isPrimary(s) ? "取消主设备" : "设为主设备");
+            if (s.primaryScreenButton != null) {
+                updatePrimaryScreenToggle(s.primaryScreenButton, isPrimary(s));
+            }
         });
         refreshDeviceMenuStates();
     }
@@ -1393,6 +1412,7 @@ public final class ScrcpyApp extends Application {
         private ToggleButton displayPowerButton;
         private ToggleButton stayAwakeButton;
         private ToggleButton mouseModeButton;
+        private ToggleButton primaryScreenButton;
         private boolean relativeCaptured;
 
         private DeviceSession(
