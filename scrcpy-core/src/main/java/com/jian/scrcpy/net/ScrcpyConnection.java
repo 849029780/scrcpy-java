@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 public final class ScrcpyConnection implements AutoCloseable {
     private final EventLoopGroup group =
@@ -22,9 +23,33 @@ public final class ScrcpyConnection implements AutoCloseable {
     private volatile int localPort;
     private volatile String deviceName;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean failureReported = new AtomicBoolean();
+    private final String sessionLabel;
+    private volatile Consumer<Throwable> transportFailureSink = cause -> {};
 
     public ScrcpyConnection(int p) {
+        this(p, null);
+    }
+
+    public ScrcpyConnection(int p, String sessionLabel) {
         port = p;
+        this.sessionLabel = sessionLabel == null || sessionLabel.isBlank() ? "unknown" : sessionLabel;
+    }
+
+    public void onTransportFailure(Consumer<Throwable> sink) {
+        transportFailureSink = sink == null ? cause -> {} : sink;
+    }
+
+    private void reportTransportFailure(String stream, Throwable cause) {
+        if (closed.get()) return;
+        System.err.printf("[scrcpy-java][%s] %s transport failed: %s%n", sessionLabel, stream, cause);
+        if (failureReported.compareAndSet(false, true)) {
+            try {
+                transportFailureSink.accept(cause);
+            } catch (Throwable callbackError) {
+                System.err.printf("[scrcpy-java][%s] transport failure callback failed: %s%n", sessionLabel, callbackError);
+            }
+        }
     }
 
     private void configure(ChannelPipeline pipeline, boolean firstSocket, String name,
@@ -63,7 +88,7 @@ public final class ScrcpyConnection implements AutoCloseable {
                             ChannelHandlerContext ctx,
                             DeviceInfoDecoder.DeviceInfo info) {
                         deviceName = info.name();
-                        System.out.println("[scrcpy-java] device name: " + deviceName);
+                        System.out.println("[scrcpy-java][" + sessionLabel + "] device name: " + deviceName);
                         ctx.pipeline().remove(this);
                     }
                 });
@@ -73,7 +98,7 @@ public final class ScrcpyConnection implements AutoCloseable {
         pipeline.addLast("exceptionLogger", new ChannelInboundHandlerAdapter() {
             @Override
             public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-                System.err.println("[scrcpy-java] " + name + " pipeline error: " + cause);
+                reportTransportFailure(name, cause);
                 cause.printStackTrace(System.err);
                 ctx.close();
             }
@@ -117,8 +142,8 @@ public final class ScrcpyConnection implements AutoCloseable {
                             default -> throw new IllegalStateException("unknown socket: " + name);
                         }
 
-                        System.out.printf("[scrcpy-java] %s socket accepted: %s%n",
-                                name, channel.remoteAddress());
+                        System.out.printf("[scrcpy-java][%s] %s socket accepted: %s%n",
+                                sessionLabel, name, channel.remoteAddress());
                     }
                 })
                 .bind(new InetSocketAddress("127.0.0.1", port))
@@ -126,7 +151,7 @@ public final class ScrcpyConnection implements AutoCloseable {
                 .channel();
 
         localPort = ((InetSocketAddress) listener.localAddress()).getPort();
-        System.out.printf("[scrcpy-java] listening on 127.0.0.1:%d for scrcpy reverse tunnel%n", localPort);
+        System.out.printf("[scrcpy-java][%s] listening on 127.0.0.1:%d for scrcpy reverse tunnel%n", sessionLabel, localPort);
     }
 
     public void open(ChannelInboundHandler videoHandler,
