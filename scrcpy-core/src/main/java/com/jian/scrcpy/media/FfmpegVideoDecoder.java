@@ -256,10 +256,6 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             sws_freeContext(sws);
             sws = null;
         }
-        if (rgbBuffer != null) {
-            rgbBuffer.close();
-            rgbBuffer = null;
-        }
         if (packet != null) av_packet_free(packet);
         if (rgb != null) av_frame_free(rgb);
         if (frame != null) av_frame_free(frame);
