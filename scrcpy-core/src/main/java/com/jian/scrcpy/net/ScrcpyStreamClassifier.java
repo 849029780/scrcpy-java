@@ -5,14 +5,14 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
 
 import java.util.List;
-import java.util.function.IntConsumer;
+import java.util.function.BiConsumer;
 
 /**
  * Identifies a reverse-tunnel socket from its first stream bytes.
  *
- * <p>The scrcpy server opens video, audio and control connections from
- * independent threads, so TCP accept order is not a reliable stream identity.
- * Video/audio sockets expose a 4-byte codec id; the control socket does not.</p>
+ * <p>The scrcpy server starts video/audio processors independently, so TCP
+ * accept order is not a reliable stream identity. Video/audio sockets expose
+ * a 4-byte codec id; the control socket does not.</p>
  */
 final class ScrcpyStreamClassifier extends ByteToMessageDecoder {
     static final int VIDEO_H264 = 0x68323634;
@@ -26,9 +26,9 @@ final class ScrcpyStreamClassifier extends ByteToMessageDecoder {
     static final int AUDIO_FLAC = 0x666c6163;
     static final int AUDIO_RAW = 0x00726177;
 
-    private final IntConsumer classifier;
+    private final BiConsumer<ChannelHandlerContext, Integer> classifier;
 
-    ScrcpyStreamClassifier(IntConsumer classifier) {
+    ScrcpyStreamClassifier(BiConsumer<ChannelHandlerContext, Integer> classifier) {
         this.classifier = classifier;
     }
 
@@ -39,18 +39,14 @@ final class ScrcpyStreamClassifier extends ByteToMessageDecoder {
         }
 
         int id = in.getInt(in.readerIndex());
-        if (isVideoCodec(id)) {
-            classifier.accept(id);
-            return;
-        }
-        if (isAudioCodec(id)) {
-            classifier.accept(id);
+        if (isVideoCodec(id) || isAudioCodec(id)) {
+            classifier.accept(ctx, id);
             return;
         }
 
-        // A control socket has no codec header. It may remain idle, so the
-        // connection owner assigns it once all enabled media sockets are known.
-        classifier.accept(-1);
+        // A control socket has no codec header. The connection owner only
+        // accepts this classification after all enabled media sockets are known.
+        classifier.accept(ctx, -1);
     }
 
     static boolean isVideoCodec(int id) {
