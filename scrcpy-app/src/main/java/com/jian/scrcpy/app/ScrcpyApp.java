@@ -56,6 +56,8 @@ public final class ScrcpyApp extends Application {
     private final Map<String, ConnectionSettings> desiredConnections = new ConcurrentHashMap<>();
     private final Set<String> reconnecting = ConcurrentHashMap.newKeySet();
     private volatile String primarySerial;
+    /** Preserve the user's primary-device choice across temporary ADB loss. */
+    private volatile String desiredPrimarySerial;
     private final Robot mouseRobot = new Robot();
     private Adb adb;
     private volatile String lastDesktopClipboard = "";
@@ -464,6 +466,9 @@ public final class ScrcpyApp extends Application {
                             new DeviceController(runningSession::sendControl), uhid, clipboard);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
+                    if (Objects.equals(desiredPrimarySerial, device.serial())) {
+                        setPrimary(handle);
+                    }
                     devices.refresh();
                     status.setText("投屏中 " + sessions.size() + " 台设备");
                     updateButtons();
@@ -761,6 +766,7 @@ public final class ScrcpyApp extends Application {
         }
 
         primarySerial = handle.device.serial();
+        desiredPrimarySerial = primarySerial;
         handle.primary = true;
         if (handle.tile != null) {
             secondaryGrid.getChildren().remove(handle.tile);
@@ -776,6 +782,7 @@ public final class ScrcpyApp extends Application {
 
     private void clearPrimary() {
         releaseAllTransientInput();
+        desiredPrimarySerial = null;
         DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
         if (old == null) {
             primarySerial = null;
@@ -891,12 +898,23 @@ public final class ScrcpyApp extends Application {
     private void disconnect(String serial) {
         desiredConnections.remove(serial);
         reconnecting.remove(serial);
+        if (Objects.equals(desiredPrimarySerial, serial)) {
+            desiredPrimarySerial = null;
+        }
         disconnectSession(serial);
     }
 
     private void disconnectForReconnect(String serial) {
         reconnecting.remove(serial);
+        // A temporary ADB loss must not forget which device was primary.
+        if (isPrimarySerial(serial)) {
+            desiredPrimarySerial = serial;
+        }
         disconnectSession(serial);
+    }
+
+    private boolean isPrimarySerial(String serial) {
+        return primarySerial != null && primarySerial.equals(serial);
     }
 
     private void disconnectSession(String serial) {
@@ -959,6 +977,7 @@ public final class ScrcpyApp extends Application {
         });
         sessions.clear();
         primarySerial = null;
+        desiredPrimarySerial = null;
         primaryHost.getChildren().clear();
         primaryHost.setManaged(false);
         primaryHost.setVisible(false);
