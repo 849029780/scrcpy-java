@@ -664,7 +664,7 @@ public final class ScrcpyApp extends Application {
         if (handle.device == null) return;
         if (primarySerial != null && primarySerial.equals(handle.device.serial())) return;
 
-        DeviceSession old = sessions.get(primarySerial);
+        DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
         if (old != null) {
             old.primary = false;
             if (old.tile != null) {
