@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,22 +53,32 @@ final class UhidControllerTest {
 
     @Test
     void keyboardCloseStillDestroysWhenReleaseSendFails() {
+        AtomicBoolean fail = new AtomicBoolean();
         UhidKeyboard keyboard = new UhidKeyboard(message -> {
-            if (message instanceof ControlMessages.UhidInput) throw new IllegalStateException("send failed");
+            if (fail.get() && message instanceof ControlMessages.UhidInput) {
+                throw new IllegalStateException("send failed");
+            }
         });
         keyboard.open();
         keyboard.key(0x04, true, 0);
+        fail.set(true);
+
         assertThrows(IllegalStateException.class, keyboard::close);
         assertDoesNotThrow(keyboard::close);
     }
 
     @Test
     void mouseCloseStillDestroysWhenReleaseSendFails() {
+        AtomicBoolean fail = new AtomicBoolean();
         UhidMouse mouse = new UhidMouse(message -> {
-            if (message instanceof ControlMessages.UhidInput) throw new IllegalStateException("send failed");
+            if (fail.get() && message instanceof ControlMessages.UhidInput) {
+                throw new IllegalStateException("send failed");
+            }
         });
         mouse.open();
         mouse.button(UhidMouse.BUTTON_LEFT, true);
+        fail.set(true);
+
         assertThrows(IllegalStateException.class, mouse::close);
         assertDoesNotThrow(mouse::close);
     }
