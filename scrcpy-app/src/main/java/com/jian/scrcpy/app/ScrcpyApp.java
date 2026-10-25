@@ -247,6 +247,11 @@ public final class ScrcpyApp extends Application {
         VideoView view = handle.view();
         view.setFocusTraversable(true);
 
+        view.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
+            DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
+            if (p == null) return;
+            handle.controller.hover(p);
+        });
         view.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
             if (e.getButton() != MouseButton.PRIMARY) return;
             view.requestFocus();
@@ -296,7 +301,7 @@ public final class ScrcpyApp extends Application {
     private void sendTouch(DeviceSession handle, MouseEvent e, int action, float pressure, int actionButton) {
         DeviceController.ScreenPosition p = InputMapper.position(handle.view(), e.getX(), e.getY());
         if (p == null) return;
-        handle.controller.touch(action, -1L, p, pressure, actionButton, e.isPrimaryButtonDown() ? 1 : 0);
+        handle.controller.touch(action, DeviceController.POINTER_ID_MOUSE, p, pressure, actionButton, e.isPrimaryButtonDown() ? 1 : 0);
     }
 
     private void disconnectSelected() {
