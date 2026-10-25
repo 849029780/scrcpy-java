@@ -9,6 +9,11 @@ import java.util.function.Consumer;
  */
 public final class UhidMouse implements AutoCloseable {
     public static final int HID_ID = 2;
+    public static final int BUTTON_LEFT = 1;
+    public static final int BUTTON_RIGHT = 2;
+    public static final int BUTTON_MIDDLE = 4;
+    public static final int BUTTON_BACK = 8;
+    public static final int BUTTON_FORWARD = 16;
 
     // Exact descriptor used by scrcpy 5.0.1 app/src/hid/hid_mouse.c.
     public static final byte[] REPORT_DESCRIPTOR = bytes(
@@ -41,6 +46,15 @@ public final class UhidMouse implements AutoCloseable {
         int y = clampRelative(dy);
         if (x == 0 && y == 0) return;
         send(buttons, x, y, 0, 0);
+    }
+
+    public int buttons() {
+        return buttons;
+    }
+
+    public void button(int mask, boolean down) {
+        int next = down ? buttons | mask : buttons & ~mask;
+        if (next != buttons) buttons(next);
     }
 
     public void buttons(int buttons) {
