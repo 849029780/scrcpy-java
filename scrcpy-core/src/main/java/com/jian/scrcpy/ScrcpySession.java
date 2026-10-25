@@ -5,7 +5,7 @@ import com.jian.scrcpy.media.AudioFrame;
 import com.jian.scrcpy.media.FfmpegAudioDecoder;
 import com.jian.scrcpy.media.FfmpegVideoDecoder;
 import com.jian.scrcpy.net.ScrcpyConnection;
-import com.jian.scrcpy.protocol.ControlMessages;
+import com.jian.scrcpy.protocol.ControlMessages;\nimport com.jian.scrcpy.protocol.ControlMessageQueue;
 import com.jian.scrcpy.protocol.DeviceMessage;
 import com.jian.scrcpy.server.ScrcpyOptions;
 import com.jian.scrcpy.server.ServerLauncher;
@@ -92,9 +92,9 @@ public final class ScrcpySession implements AutoCloseable {
     public boolean sendControl(ControlMessages.Message message) {
         Objects.requireNonNull(message, "message");
         Channel channel = connection == null ? null : connection.control();
-        if (channel == null || !channel.isActive()) return false;
-        channel.writeAndFlush(message);
-        return true;
+        ControlMessageQueue queue = connection == null ? null : connection.controlQueue();
+        if (channel == null || !channel.isActive() || queue == null) return false;
+        return queue.submit(message);
     }
 
     public void stop() {
