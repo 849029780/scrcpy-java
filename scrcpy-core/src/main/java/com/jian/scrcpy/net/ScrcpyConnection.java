@@ -15,8 +15,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 public final class ScrcpyConnection implements AutoCloseable {
+    // scrcpy reverse mode assigns sockets strictly by connection order:
+    // video -> audio -> control. ChannelInitializer callbacks may otherwise run
+    // concurrently on different Netty event-loop threads and reorder that
+    // assignment (for example, routing an "opus" audio stream into the control
+    // DeviceMessageDecoder). Keep registration/initialization ordered.
     private final EventLoopGroup group =
-            new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+            new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     private final int port;
     private Channel video, audio, control, listener;
     private volatile ControlMessageQueue controlQueue;
