@@ -140,8 +140,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 if (stride == width * 4) rgb.data(0).get(out);
                 else for (int y = 0; y < height; y++)
                     rgb.data(0).position((long) y * stride).get(out, y * width * 4, width * 4);
-                sink.accept(new VideoFrame(width, height, out, p.pts()));
-            }
+            sink.accept(new VideoFrame(width, height, out, p.pts()));
         }
     }
 
