@@ -702,6 +702,7 @@ public final class ScrcpyApp extends Application {
 
     private ToggleButton createAdaptClickButton(DeviceSession handle) {
         ToggleButton button = new ToggleButton();
+        button.setCursor(Cursor.DEFAULT);
         button.setFocusTraversable(false);
         button.setMinSize(34, 34);
         button.setPrefSize(34, 34);
@@ -751,6 +752,7 @@ public final class ScrcpyApp extends Application {
 
     private VBox createDeviceNavigationBar(DeviceSession handle) {
         ToggleButton primaryScreen = new ToggleButton("★");
+        primaryScreen.setCursor(Cursor.DEFAULT);
         primaryScreen.setTooltip(new Tooltip("设为主屏幕"));
         primaryScreen.setFocusTraversable(false);
         primaryScreen.setMinSize(34, 34);
@@ -770,6 +772,7 @@ public final class ScrcpyApp extends Application {
         Button recent = deviceControlButton("▣", "多任务", () -> rightSidebarKey(handle, 187));
         Button power = deviceControlButton("⏻", "电源", () -> rightSidebarKey(handle, AndroidKeycodes.POWER));
         ToggleButton displayPower = new ToggleButton("◐");
+        displayPower.setCursor(Cursor.DEFAULT);
         displayPower.setTooltip(new Tooltip("熄屏 / 亮屏"));
         displayPower.setFocusTraversable(false);
         displayPower.setMinSize(34, 34);
@@ -784,6 +787,7 @@ public final class ScrcpyApp extends Application {
         });
 
         ToggleButton stayAwake = new ToggleButton("☀");
+        stayAwake.setCursor(Cursor.DEFAULT);
         stayAwake.setTooltip(new Tooltip("保持屏幕常亮"));
         stayAwake.setFocusTraversable(false);
         stayAwake.setMinSize(34, 34);
@@ -867,6 +871,7 @@ public final class ScrcpyApp extends Application {
 
     private Button deviceControlButton(String text, String tooltip, Runnable action) {
         Button button = new Button(text);
+        button.setCursor(Cursor.DEFAULT);
         button.setTooltip(new Tooltip(tooltip));
         button.setFocusTraversable(false);
         button.setMinSize(34, 34);
