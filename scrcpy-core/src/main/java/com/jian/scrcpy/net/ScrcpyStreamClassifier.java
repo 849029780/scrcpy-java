@@ -5,7 +5,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
 
 import java.util.List;
-import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 
 /**
  * Identifies a reverse-tunnel socket from its first stream bytes.
@@ -26,9 +26,9 @@ final class ScrcpyStreamClassifier extends ByteToMessageDecoder {
     static final int AUDIO_FLAC = 0x666c6163;
     static final int AUDIO_RAW = 0x00726177;
 
-    private final BiConsumer<ChannelHandlerContext, Integer> classifier;
+    private final BiFunction<ChannelHandlerContext, Integer, Boolean> classifier;
 
-    ScrcpyStreamClassifier(BiConsumer<ChannelHandlerContext, Integer> classifier) {
+    ScrcpyStreamClassifier(BiFunction<ChannelHandlerContext, Integer, Boolean> classifier) {
         this.classifier = classifier;
     }
 
@@ -39,14 +39,21 @@ final class ScrcpyStreamClassifier extends ByteToMessageDecoder {
         }
 
         int id = in.getInt(in.readerIndex());
-        if (isVideoCodec(id) || isAudioCodec(id)) {
-            classifier.accept(ctx, id);
+        if (!isVideoCodec(id) && !isAudioCodec(id)) {
+            id = -1; // control socket has no codec header
+        }
+
+        if (!Boolean.TRUE.equals(classifier.apply(ctx, id))) {
             return;
         }
 
-        // A control socket has no codec header. The connection owner only
-        // accepts this classification after all enabled media sockets are known.
-        classifier.accept(ctx, -1);
+        // The real decoder must receive the original bytes, including the
+        // 4-byte codec id. Hand the cumulated bytes to the newly-installed
+        // decoder before removing this classifier.
+        if (in.isReadable()) {
+            out.add(in.readRetainedSlice(in.readableBytes()));
+        }
+        ctx.pipeline().remove(this);
     }
 
     static boolean isVideoCodec(int id) {
