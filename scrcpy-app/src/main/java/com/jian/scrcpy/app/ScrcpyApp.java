@@ -442,6 +442,8 @@ public final class ScrcpyApp extends Application {
                         new Adb(System.getProperty("scrcpy.adb", "adb"), device.serial()),
                         options);
 
+                java.util.concurrent.atomic.AtomicBoolean firstFrameLayout = new java.util.concurrent.atomic.AtomicBoolean();
+
                 ScrcpySession runningSession = session;
                 runningSession.onTransportFailure(cause -> Platform.runLater(() -> {
                     DeviceSession active = sessions.get(device.serial());
@@ -453,7 +455,12 @@ public final class ScrcpyApp extends Application {
                 }));
                 runningSession.start(
                         ScrcpyServerArtifact.resolve(),
-                        view::accept,
+                        frame -> {
+                            view.accept(frame);
+                            if (firstFrameLayout.compareAndSet(false, true)) {
+                                Platform.runLater(() -> resizeTileForCurrentRole(device.serial()));
+                            }
+                        },
                         player::accept);
 
                 Platform.runLater(() -> {
@@ -511,7 +518,8 @@ public final class ScrcpyApp extends Application {
         title.setStyle("-fx-font-weight: bold; -fx-padding: 4 6 4 6;");
 
         StackPane viewport = new StackPane(handle.view());
-        viewport.setStyle("-fx-background-color: #222222;");
+        viewport.setStyle("-fx-background-color: transparent;");
+        viewport.setAlignment(Pos.TOP_CENTER);
 
         // Per-device overflow menu. The click-coordinate adaptation is a
         // global broadcast policy, but is exposed from every device tile.
@@ -915,16 +923,39 @@ public final class ScrcpyApp extends Application {
         refreshPrimaryUi();
     }
 
+    private void resizeTileForCurrentRole(String serial) {
+        DeviceSession handle = sessions.get(serial);
+        if (handle != null) resizeTile(handle, isPrimary(handle));
+    }
+
     private void resizeTile(DeviceSession handle, boolean primary) {
         if (handle.tile == null || handle.view() == null) return;
-        double width = primary ? 620 : TILE_WIDTH;
-        double height = primary ? 820 : TILE_HEIGHT;
-        handle.tile.setPrefSize(width, height);
-        handle.tile.setMinSize(width, height);
-        handle.tile.setMaxSize(width, height);
-        handle.viewport.setPrefSize(width, height - 34);
-        handle.view().setFitWidth(width - 8);
-        handle.view().setFitHeight(height - 42);
+
+        double maxWidth = primary ? 620 : TILE_WIDTH;
+        double maxVideoHeight = (primary ? 820 : TILE_HEIGHT) - 42;
+        int frameWidth = handle.view().frameWidth();
+        int frameHeight = handle.view().frameHeight();
+
+        // Size the mapped viewport to the actual video aspect ratio. Previously
+        // the viewport was always 360/620 px wide while ImageView preserved the
+        // phone aspect ratio, which left large black columns on both sides.
+        double videoWidth = maxWidth;
+        double videoHeight = maxVideoHeight;
+        if (frameWidth > 0 && frameHeight > 0) {
+            double aspect = frameWidth / (double) frameHeight;
+            videoHeight = Math.min(maxVideoHeight, maxWidth / aspect);
+            videoWidth = videoHeight * aspect;
+        }
+
+        double tileHeight = videoHeight + 42;
+        handle.tile.setPrefSize(videoWidth, tileHeight);
+        handle.tile.setMinSize(videoWidth, tileHeight);
+        handle.tile.setMaxSize(videoWidth, tileHeight);
+        handle.viewport.setPrefSize(videoWidth, videoHeight);
+        handle.viewport.setMinSize(videoWidth, videoHeight);
+        handle.viewport.setMaxSize(videoWidth, videoHeight);
+        handle.view().setFitWidth(videoWidth);
+        handle.view().setFitHeight(videoHeight);
         if (handle.primaryButton != null) {
             handle.primaryButton.setText(primary ? "取消主设备" : "设为主设备");
         }
