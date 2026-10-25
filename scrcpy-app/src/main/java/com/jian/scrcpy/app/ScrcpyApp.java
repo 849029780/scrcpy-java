@@ -66,11 +66,11 @@ public final class ScrcpyApp extends Application {
     private Adb adb;
     private volatile String lastDesktopClipboard = "";
     private final java.util.concurrent.atomic.AtomicBoolean applyingRemoteClipboard = new java.util.concurrent.atomic.AtomicBoolean();
-    private final ScheduledExecutorService adbMonitor = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "scrcpy-adb-monitor");
-        t.setDaemon(true);
-        return t;
-    });
+    // ADB polling spends almost all of its time blocked in Process I/O, so a
+    // virtual-thread scheduler avoids dedicating a platform thread to it.
+    private final ScheduledExecutorService adbMonitor =
+            Executors.newSingleThreadScheduledExecutor(
+                    Thread.ofVirtual().name("scrcpy-adb-monitor").factory());
 
     @Override
     public void start(Stage stage) {
