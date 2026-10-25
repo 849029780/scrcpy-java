@@ -33,6 +33,7 @@ public final class ScrcpySession implements AutoCloseable {
     private final CopyOnWriteArrayList<Consumer<DeviceMessage>> deviceMessageListeners = new CopyOnWriteArrayList<>();
     private final ClipboardAckTracker clipboardAcks = new ClipboardAckTracker();
     private State state = State.NEW;
+    private volatile Consumer<Throwable> transportFailureSink = cause -> {};
 
     public ScrcpySession(Adb adb, ScrcpyOptions options) {
         this.adb = adb;
@@ -52,7 +53,8 @@ public final class ScrcpySession implements AutoCloseable {
         if (state != State.NEW) throw new IllegalStateException("Session cannot be started from state " + state);
         state = State.CONNECTING;
         server = new ServerLauncher(adb, options);
-        connection = new ScrcpyConnection(options.localPort());
+        connection = new ScrcpyConnection(options.localPort(), options.serial());
+        connection.onTransportFailure(cause -> transportFailureSink.accept(cause));
 
         try {
             if (options.video()) {
@@ -116,6 +118,10 @@ public final class ScrcpySession implements AutoCloseable {
 
     public String deviceName() {
         return connection == null ? null : connection.deviceName();
+    }
+
+    public void onTransportFailure(Consumer<Throwable> sink) {
+        transportFailureSink = Objects.requireNonNullElse(sink, cause -> {});
     }
 
     public void onDeviceMessage(Consumer<DeviceMessage> sink) {
