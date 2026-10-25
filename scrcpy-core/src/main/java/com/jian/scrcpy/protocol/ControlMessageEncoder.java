@@ -86,8 +86,8 @@ public final class ControlMessageEncoder extends MessageToByteEncoder<Message> {
             case UhidDestroy x ->
                     o.writeByte(ControlMessageType.UHID_DESTROY.ordinal()).writeShort(x.id());
             case StartApp x -> {
-                byte[] b = utf8(x.name(), 255);
-                o.writeByte(ControlMessageType.START_APP.ordinal()).writeByte(b.length).writeBytes(b);
+                byte[] b = utf8(x.name(), MAX_MESSAGE_SIZE - 5);
+                o.writeByte(ControlMessageType.START_APP.ordinal()).writeInt(b.length).writeBytes(b);
             }
             case CameraSetTorch x ->
                     o.writeByte(ControlMessageType.CAMERA_SET_TORCH.ordinal()).writeByte(x.on() ? 1 : 0);
