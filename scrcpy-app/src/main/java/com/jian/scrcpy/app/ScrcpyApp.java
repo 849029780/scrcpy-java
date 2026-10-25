@@ -6,6 +6,7 @@ import com.jian.scrcpy.adb.AdbDevice;
 import com.jian.scrcpy.media.JavaSoundPlayer;
 import com.jian.scrcpy.control.DeviceController;
 import com.jian.scrcpy.control.UhidController;
+import com.jian.scrcpy.control.ClipboardController;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
@@ -17,6 +18,7 @@ import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.scene.Scene;
 import javafx.scene.Cursor;
+import javafx.scene.input.Clipboard;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
@@ -37,6 +39,8 @@ public final class ScrcpyApp extends Application {
     private final ScrollPane screenScroll = new ScrollPane(screenGrid);
     private final Map<String, DeviceSession> sessions = new ConcurrentHashMap<>();
     private Adb adb;
+    private volatile String lastDesktopClipboard = "";
+    private final java.util.concurrent.atomic.AtomicBoolean applyingRemoteClipboard = new java.util.concurrent.atomic.AtomicBoolean();
 
     @Override
     public void start(Stage stage) {
@@ -92,6 +96,7 @@ public final class ScrcpyApp extends Application {
         stage.show();
 
         scanDevices();
+        startClipboardMonitor();
     }
 
     private ListCell<AdbDevice> deviceCell() {
@@ -109,6 +114,40 @@ public final class ScrcpyApp extends Application {
                 setText(d.displayName() + "  [" + state + "]");
             }
         };
+    }
+
+    private void startClipboardMonitor() {
+        javafx.animation.Timeline timer = new javafx.animation.Timeline(
+                new javafx.animation.KeyFrame(javafx.util.Duration.millis(250), e -> syncDesktopClipboard()));
+        timer.setCycleCount(javafx.animation.Animation.INDEFINITE);
+        timer.play();
+    }
+
+    private void syncDesktopClipboard() {
+        if (applyingRemoteClipboard.get()) return;
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+        if (!clipboard.hasString()) return;
+        String text = clipboard.getString();
+        if (text == null || Objects.equals(text, lastDesktopClipboard)) return;
+        lastDesktopClipboard = text;
+        // PC -> Android: synchronize to every active device, without injecting PASTE.
+        sessions.values().forEach(session -> session.clipboard.setRemoteClipboard(text));
+    }
+
+    private void applyDeviceClipboard(String text) {
+        if (text == null) return;
+        Platform.runLater(() -> {
+            if (Objects.equals(text, lastDesktopClipboard)) return;
+            applyingRemoteClipboard.set(true);
+            try {
+                javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+                content.putString(text);
+                Clipboard.getSystemClipboard().setContent(content);
+                lastDesktopClipboard = text;
+            } finally {
+                applyingRemoteClipboard.set(false);
+            }
+        });
     }
 
     private void scanDevices() {
@@ -192,9 +231,12 @@ public final class ScrcpyApp extends Application {
                     }
 
                     UhidController uhid = new UhidController(runningSession::sendControl);
-                    runningSession.onDeviceMessage(uhid::handle);
+                    ClipboardController clipboard = new ClipboardController(runningSession::sendControl);
+                    runningSession.addDeviceMessageListener(uhid::handle);
+                    runningSession.addDeviceMessageListener(clipboard::handle);
+                    clipboard.onRemoteClipboard(this::applyDeviceClipboard);
                     DeviceSession handle = new DeviceSession(runningSession, player, view,
-                            new DeviceController(runningSession::sendControl), uhid);
+                            new DeviceController(runningSession::sendControl), uhid, clipboard);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
                     devices.refresh();
@@ -362,6 +404,7 @@ public final class ScrcpyApp extends Application {
         private final VideoView view;
         private final DeviceController controller;
         private final UhidController uhid;
+        private final ClipboardController clipboard;
         private VBox tile;
         private AdbDevice device;
 
@@ -370,12 +413,14 @@ public final class ScrcpyApp extends Application {
                 JavaSoundPlayer audioPlayer,
                 VideoView view,
                 DeviceController controller,
-                UhidController uhid) {
+                UhidController uhid,
+                ClipboardController clipboard) {
             this.session = session;
             this.audioPlayer = audioPlayer;
             this.view = view;
             this.controller = controller;
             this.uhid = uhid;
+            this.clipboard = clipboard;
         }
 
         @Override
