@@ -60,6 +60,8 @@ public final class ScrcpyApp extends Application {
     private final Map<String, ConnectionSettings> desiredConnections = new ConcurrentHashMap<>();
     /** Map primary-device absolute coordinates to each target when enabled. */
     private boolean adaptScreenClick = false;
+    /** Device whose absolute touch gesture is currently active. */
+    private volatile DeviceSession activeMouseInput;
     private final Set<String> reconnecting = ConcurrentHashMap.newKeySet();
     private volatile String primarySerial;
     /** Preserve the user's primary-device choice across temporary ADB loss. */
