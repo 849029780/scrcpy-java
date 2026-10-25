@@ -44,6 +44,11 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private void init(CodecId codec) {
+        // A decoder instance should normally receive exactly one Codec message.
+        // Still, make re-initialization safe so a repeated Codec message cannot
+        // leak the previous native decoder state.
+        closeNative();
+
         this.codec = codec;
         AVCodec dec = avcodec_find_decoder(avId(codec));
         if (dec == null) throw new IllegalStateException("decoder unavailable: " + codec);
@@ -108,18 +113,29 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         byte[] bytes = new byte[p.data().readableBytes() + AV_INPUT_BUFFER_PADDING_SIZE];
         int payloadSize = p.data().readableBytes();
         p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
-        try (BytePointer bp = new BytePointer(bytes)) {
-            System.err.printf("[scrcpy-java][audio-debug] #%d packet copied: payload=%d pts=%d%n",
-                    index, payloadSize, p.pts());
-            System.err.flush();
+        System.err.printf("[scrcpy-java][audio-debug] #%d packet copied: payload=%d pts=%d%n",
+                index, payloadSize, p.pts());
+        System.err.flush();
 
-            av_packet_unref(packet);
-            System.err.println("[scrcpy-java][audio-debug] #" + index + " av_packet_unref OK");
-            packet.data(bp).size(payloadSize).pts(p.pts()).dts(p.pts());
-            System.err.println("[scrcpy-java][audio-debug] #" + index + " packet assigned; send_packet BEGIN");
-            System.err.flush();
+        // Let FFmpeg own the packet payload. Do not point AVPacket.data at a
+        // temporary JavaCPP BytePointer whose lifetime ends after send_packet.
+        av_packet_unref(packet);
+        System.err.println("[scrcpy-java][audio-debug] #" + index + " av_packet_unref OK");
 
-            int ret = avcodec_send_packet(ctx, packet);
+        int allocRet = av_new_packet(packet, payloadSize);
+        if (allocRet < 0) {
+            logDecodeError("av_new_packet", allocRet, index, payloadSize, p.pts());
+            return;
+        }
+
+        packet.data().put(bytes, 0, payloadSize);
+        packet.pts(p.pts()).dts(p.pts());
+
+        System.err.println("[scrcpy-java][audio-debug] #" + index
+                + " packet copied into FFmpeg-owned buffer; send_packet BEGIN");
+        System.err.flush();
+
+        int ret = avcodec_send_packet(ctx, packet);
             System.err.printf("[scrcpy-java][audio-debug] #%d send_packet END ret=%d%n", index, ret);
             System.err.flush();
             if (ret == AVERROR_EAGAIN()) {
