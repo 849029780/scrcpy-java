@@ -27,6 +27,7 @@ public final class ScrcpySession implements AutoCloseable {
     private FfmpegVideoDecoder videoDecoder;
     private FfmpegAudioDecoder audioDecoder;
     private volatile Consumer<DeviceMessage> deviceMessageSink = message -> {};
+    private final java.util.concurrent.CopyOnWriteArrayList<Consumer<DeviceMessage>> deviceMessageListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final ClipboardAckTracker clipboardAcks = new ClipboardAckTracker();
     private boolean started;
 
@@ -68,6 +69,7 @@ public final class ScrcpySession implements AutoCloseable {
                                 clipboardAcks.acknowledge(ack.sequence());
                             }
                             deviceMessageSink.accept(message);
+                            deviceMessageListeners.forEach(listener -> listener.accept(message));
                         }
                     } : null,
                     options.video(),
@@ -88,6 +90,12 @@ public final class ScrcpySession implements AutoCloseable {
 
     public void onDeviceMessage(Consumer<DeviceMessage> sink) {
         deviceMessageSink = Objects.requireNonNullElse(sink, message -> {});
+    }
+
+    public AutoCloseable addDeviceMessageListener(Consumer<DeviceMessage> listener) {
+        Objects.requireNonNull(listener, "listener");
+        deviceMessageListeners.add(listener);
+        return () -> deviceMessageListeners.remove(listener);
     }
 
     public boolean controlReady() {
@@ -140,6 +148,7 @@ public final class ScrcpySession implements AutoCloseable {
             server = null;
         }
         clipboardAcks.clear();
+        deviceMessageListeners.clear();
         started = false;
     }
 }
