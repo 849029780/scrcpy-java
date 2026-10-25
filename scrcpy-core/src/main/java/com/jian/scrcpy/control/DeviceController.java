@@ -17,6 +17,8 @@ public final class DeviceController {
     public static final int ACTION_DOWN = 0;
     public static final int ACTION_UP = 1;
     public static final int ACTION_MOVE = 2;
+    public static final int ACTION_HOVER_MOVE = 7;
+    public static final long POINTER_ID_MOUSE = -1L;
 
     private final Consumer<ControlMessages.Message> sink;
 
@@ -36,6 +38,10 @@ public final class DeviceController {
                       float pressure, int actionButton, int buttons) {
         sink.accept(new ControlMessages.Touch(action, pointerId, position.toProtocol(),
                 pressure, actionButton, buttons));
+    }
+
+    public void hover(ScreenPosition position) {
+        touch(ACTION_HOVER_MOVE, POINTER_ID_MOUSE, position, 0f, 0, 0);
     }
 
     public void scroll(ScreenPosition position, float horizontal, float vertical, int buttons) {
