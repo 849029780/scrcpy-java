@@ -14,11 +14,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 public final class ScrcpyConnection implements AutoCloseable {
-    // Keep Netty on its native event-loop model. Blocking/CPU-heavy work is
-    // dispatched away from these threads; virtual threads are used for those
-    // tasks instead of turning the I/O event loop itself into a virtual thread.
+    // Keep all sockets of one scrcpy session on one I/O event loop. ServerBootstrap
+    // invokes child ChannelInitializer on the worker EventLoop, not on the acceptor.
+    // With a multi-thread worker group, video/audio/control initializers may therefore
+    // race and consume the connection-order counter out of order. A single worker
+    // preserves scrcpy's video -> audio -> control socket order. FFmpeg decoding is
+    // already dispatched to dedicated virtual threads, so this EventLoop only does
+    // lightweight socket/protocol work. Every device owns its own ScrcpyConnection,
+    // therefore different devices still run in parallel.
     private final EventLoopGroup group =
-            new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+            new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     private final EventLoopGroup acceptGroup =
             new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     private final int port;
@@ -121,10 +126,12 @@ public final class ScrcpyConnection implements AutoCloseable {
             throw new IllegalArgumentException("At least one scrcpy socket must be enabled");
         }
 
-        // A single acceptor EventLoop owns connection acceptance and therefore
-        // preserves the exact reverse-mode socket order required by scrcpy.
-        // Accepted channels are then registered on the worker group, so media
-        // I/O remains parallel and FFmpeg work stays on virtual threads.
+        // The acceptor and the per-session worker are both single-threaded.
+        // This matters because childHandler.initChannel() executes after the accepted
+        // channel is registered on a worker EventLoop. Merely serializing accept() is
+        // not sufficient when the worker group has multiple threads: initializers can
+        // run in a different order and attach the control decoder to an audio/video
+        // socket (observed as bogus DeviceMessage types such as 78/79).
         java.util.concurrent.atomic.AtomicInteger accepted = new java.util.concurrent.atomic.AtomicInteger();
         listener = new ServerBootstrap()
                 .group(acceptGroup, group)
