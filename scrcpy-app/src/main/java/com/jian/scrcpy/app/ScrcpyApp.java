@@ -1017,10 +1017,12 @@ public final class ScrcpyApp extends Application {
             videoWidth = videoHeight * aspect;
         }
 
+        double controlsWidth = 39;
+        double tileWidth = videoWidth + controlsWidth;
         double tileHeight = videoHeight + 42;
-        handle.tile.setPrefSize(videoWidth, tileHeight);
-        handle.tile.setMinSize(videoWidth, tileHeight);
-        handle.tile.setMaxSize(videoWidth, tileHeight);
+        handle.tile.setPrefSize(tileWidth, tileHeight);
+        handle.tile.setMinSize(tileWidth, tileHeight);
+        handle.tile.setMaxSize(tileWidth, tileHeight);
         handle.viewport.setPrefSize(videoWidth, videoHeight);
         handle.viewport.setMinSize(videoWidth, videoHeight);
         handle.viewport.setMaxSize(videoWidth, videoHeight);
