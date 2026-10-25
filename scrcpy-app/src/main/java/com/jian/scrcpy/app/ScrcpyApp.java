@@ -40,7 +40,6 @@ public final class ScrcpyApp extends Application {
     private final Button disconnect = new Button("断开选中");
     private final Button connectAll = new Button("全部连接");
     private final Button refresh = new Button("刷新设备");
-    private final Button connectionSettings = new Button("连接设置");
     private final Label status = new Label("正在扫描 ADB 设备...");
     private final TilePane screenGrid = new TilePane();
     private final ScrollPane screenScroll = new ScrollPane(screenGrid);
@@ -48,7 +47,6 @@ public final class ScrcpyApp extends Application {
     private final Robot mouseRobot = new Robot();
     private Adb adb;
     private volatile String lastDesktopClipboard = "";
-    private ConnectionSettings connectionSettingsValue = ConnectionSettings.defaults();
     private final java.util.concurrent.atomic.AtomicBoolean applyingRemoteClipboard = new java.util.concurrent.atomic.AtomicBoolean();
 
     @Override
@@ -77,7 +75,6 @@ public final class ScrcpyApp extends Application {
         HBox toolbar = new HBox(8,
                 new Label("设备:"),
                 refresh,
-                connectionSettings,
                 connect,
                 disconnect,
                 connectAll,
@@ -96,7 +93,6 @@ public final class ScrcpyApp extends Application {
         disconnect.setOnAction(e -> disconnectSelected());
         connectAll.setOnAction(e -> connectAll());
         refresh.setOnAction(e -> scanDevices());
-        connectionSettings.setOnAction(e -> showConnectionSettings());
 
         devices.getSelectionModel().getSelectedItems().addListener(
                 (javafx.collections.ListChangeListener<AdbDevice>) c -> updateButtons());
@@ -189,49 +185,35 @@ public final class ScrcpyApp extends Application {
         });
     }
 
-    private void showConnectionSettings() {
+    private Optional<ConnectionSettings> showConnectionSettings() {
         Dialog<ConnectionSettings> dialog = new Dialog<>();
         dialog.setTitle("scrcpy 连接设置");
-        dialog.setHeaderText("设置下一次设备连接使用的参数");
+        dialog.setHeaderText("连接设备前设置本次连接参数");
         dialog.initModality(Modality.APPLICATION_MODAL);
 
-        ConnectionSettings s = connectionSettingsValue;
-
-        CheckBox video = new CheckBox("视频");
-        video.setSelected(s.video());
-        CheckBox audio = new CheckBox("音频");
-        audio.setSelected(s.audio());
-        CheckBox control = new CheckBox("控制");
-        control.setSelected(s.control());
+        CheckBox video = new CheckBox("视频"); video.setSelected(true);
+        CheckBox audio = new CheckBox("音频"); audio.setSelected(true);
+        CheckBox control = new CheckBox("控制"); control.setSelected(true);
         CheckBox showTouches = new CheckBox("显示触摸点");
-        showTouches.setSelected(s.showTouches());
         CheckBox stayAwake = new CheckBox("保持唤醒");
-        stayAwake.setSelected(s.stayAwake());
         CheckBox turnScreenOff = new CheckBox("关闭设备屏幕");
-        turnScreenOff.setSelected(s.turnScreenOff());
 
-        ComboBox<String> videoCodec = new ComboBox<>(FXCollections.observableArrayList("h264", "h265", "av1"));
-        videoCodec.setValue(s.videoCodec());
-        ComboBox<String> audioCodec = new ComboBox<>(FXCollections.observableArrayList("opus", "aac", "flac"));
-        audioCodec.setValue(s.audioCodec());
+        ComboBox<String> videoCodec = combo("h264", "h265", "av1");
+        ComboBox<String> audioCodec = combo("opus", "aac", "flac");
+        ComboBox<String> videoBitRate = combo("2M", "4M", "6M", "8M", "10M", "12M", "16M", "20M");
+        ComboBox<String> audioBitRate = combo("64K", "96K", "128K", "160K", "192K", "256K", "320K");
+        ComboBox<String> maxSize = combo("不限制", "720", "1080", "1440", "1920", "2560", "3840");
+        ComboBox<String> maxFps = combo("不限制", "30", "45", "60", "90", "120", "144");
+        ComboBox<String> crop = combo("不裁剪", "1080:1920:0:0", "1920:1080:0:0", "1440:2560:0:0");
+        TextField startApp = new TextField();
+        startApp.setPromptText("可选：应用包名");
 
-        TextField videoBitRate = new TextField(formatBitRate(s.videoBitRate()));
-        videoBitRate.setPromptText("例如 8M");
-        TextField audioBitRate = new TextField(formatBitRate(s.audioBitRate()));
-        audioBitRate.setPromptText("例如 128K");
-        TextField maxSize = new TextField(s.maxSize() <= 0 ? "" : Integer.toString(s.maxSize()));
-        maxSize.setPromptText("例如 1920");
-        TextField maxFps = new TextField(s.maxFps() == null ? "" : s.maxFps());
-        maxFps.setPromptText("例如 60");
-        TextField crop = new TextField(Objects.requireNonNullElse(s.crop(), ""));
-        crop.setPromptText("例如 1080:1920:0:0");
-        TextField startApp = new TextField(Objects.requireNonNullElse(s.startApp(), ""));
-        startApp.setPromptText("可选：启动应用包名");
+        videoCodec.setValue("h264"); audioCodec.setValue("opus");
+        videoBitRate.setValue("8M"); audioBitRate.setValue("128K");
+        maxSize.setValue("1920"); maxFps.setValue("60"); crop.setValue("不裁剪");
 
         GridPane grid = new GridPane();
-        grid.setHgap(10);
-        grid.setVgap(8);
-        grid.setPadding(new Insets(10));
+        grid.setHgap(10); grid.setVgap(8); grid.setPadding(new Insets(10));
         int row = 0;
         grid.add(video, 0, row); grid.add(audio, 1, row); grid.add(control, 2, row++);
         grid.add(new Label("视频编码"), 0, row); grid.add(videoCodec, 1, row++, 2, 1);
@@ -245,33 +227,26 @@ public final class ScrcpyApp extends Application {
         grid.add(showTouches, 0, row); grid.add(stayAwake, 1, row); grid.add(turnScreenOff, 2, row);
 
         dialog.getDialogPane().setContent(grid);
-        ButtonType ok = new ButtonType("保存", ButtonBar.ButtonData.OK_DONE);
+        ButtonType ok = new ButtonType("连接", ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().addAll(ok, ButtonType.CANCEL);
         dialog.setResultConverter(bt -> {
             if (bt != ok) return null;
-            try {
-                return new ConnectionSettings(
-                        video.isSelected(), audio.isSelected(), control.isSelected(),
-                        videoCodec.getValue(), audioCodec.getValue(),
-                        parseBitRate(videoBitRate.getText()),
-                        parseBitRate(audioBitRate.getText()),
-                        parsePositiveInt(maxSize.getText(), 0),
-                        blankToNull(maxFps.getText()),
-                        showTouches.isSelected(), stayAwake.isSelected(),
-                        turnScreenOff.isSelected(), blankToNull(crop.getText()),
-                        blankToNull(startApp.getText()));
-            } catch (IllegalArgumentException ex) {
-                Alert alert = new Alert(Alert.AlertType.ERROR, ex.getMessage(), ButtonType.OK);
-                alert.setTitle("连接设置无效");
-                alert.setHeaderText(null);
-                alert.showAndWait();
-                return null;
-            }
+            return new ConnectionSettings(video.isSelected(), audio.isSelected(), control.isSelected(),
+                    videoCodec.getValue(), audioCodec.getValue(),
+                    parseBitRate(videoBitRate.getValue()), parseBitRate(audioBitRate.getValue()),
+                    parsePositiveInt(maxSize.getValue(), 0),
+                    "不限制".equals(maxFps.getValue()) ? null : maxFps.getValue(),
+                    showTouches.isSelected(), stayAwake.isSelected(), turnScreenOff.isSelected(),
+                    "不裁剪".equals(crop.getValue()) ? null : crop.getValue(), blankToNull(startApp.getText()));
         });
-        dialog.showAndWait().ifPresent(value -> {
-            connectionSettingsValue = value;
-            status.setText("连接设置已保存");
-        });
+        return dialog.showAndWait();
+    }
+
+    @SafeVarargs
+    private static <T> ComboBox<T> combo(T... values) {
+        ComboBox<T> box = new ComboBox<>(FXCollections.observableArrayList(values));
+        box.setMaxWidth(Double.MAX_VALUE);
+        return box;
     }
 
     private static String formatBitRate(long value) {
@@ -333,16 +308,18 @@ public final class ScrcpyApp extends Application {
             return;
         }
 
-        status.setText("正在连接 " + targets.size() + " 台设备...");
-        targets.forEach(this::connectDevice);
+        showConnectionSettings().ifPresent(settings -> {
+            status.setText("正在连接 " + targets.size() + " 台设备...");
+            targets.forEach(device -> connectDevice(device, settings));
+        });
     }
 
-    private void connectDevice(AdbDevice device) {
+    private void connectDevice(AdbDevice device, ConnectionSettings settings) {
         Thread.startVirtualThread(() -> {
             JavaSoundPlayer audioPlayer = null;
             ScrcpySession session = null;
             try {
-                ScrcpyOptions d = connectionSettingsValue.toOptions(device.serial(), ScrcpyOptions.defaults());
+                ScrcpyOptions d = settings.toOptions(device.serial(), ScrcpyOptions.defaults());
                 ScrcpyOptions options = new ScrcpyOptions(
                         device.serial(), d.scid(), d.localPort(),
                         d.video(), d.audio(), d.control(),
@@ -628,28 +605,12 @@ public final class ScrcpyApp extends Application {
     }
 
     private record ConnectionSettings(
-            boolean video,
-            boolean audio,
-            boolean control,
-            String videoCodec,
-            String audioCodec,
-            long videoBitRate,
-            long audioBitRate,
-            int maxSize,
-            String maxFps,
-            boolean showTouches,
-            boolean stayAwake,
-            boolean turnScreenOff,
-            String crop,
-            String startApp) {
-
-        static ConnectionSettings defaults() {
-            ScrcpyOptions d = ScrcpyOptions.defaults();
-            return new ConnectionSettings(d.video(), d.audio(), d.control(),
-                    d.videoCodec(), d.audioCodec(), d.videoBitRate(), d.audioBitRate(),
-                    d.maxSize(), d.maxFps(), d.showTouches(), d.stayAwake(),
-                    d.turnScreenOff(), d.crop(), d.startApp());
-        }
+            boolean video, boolean audio, boolean control,
+            String videoCodec, String audioCodec,
+            long videoBitRate, long audioBitRate,
+            int maxSize, String maxFps,
+            boolean showTouches, boolean stayAwake,
+            boolean turnScreenOff, String crop, String startApp) {
 
         ScrcpyOptions toOptions(String serial, ScrcpyOptions base) {
             return new ScrcpyOptions(serial, base.scid(), base.localPort(),
