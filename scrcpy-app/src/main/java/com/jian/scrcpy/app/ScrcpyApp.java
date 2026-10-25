@@ -343,7 +343,7 @@ public final class ScrcpyApp extends Application {
         videoDecoder.setValue("硬件解码");
         audioCodec.setValue("opus");
         videoBitRate.setValue("8M"); audioBitRate.setValue("128K");
-        maxSize.setValue("1920"); maxFps.setValue("60"); crop.setValue("不裁剪");
+        maxSize.setValue("1080"); maxFps.setValue("60"); crop.setValue("不裁剪");
 
         Runnable refreshEncoders = () -> {
             String codec = videoCodecName(videoCodec.getValue());
