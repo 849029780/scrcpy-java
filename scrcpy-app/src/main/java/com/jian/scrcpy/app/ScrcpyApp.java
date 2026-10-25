@@ -7,6 +7,7 @@ import com.jian.scrcpy.media.JavaSoundPlayer;
 import com.jian.scrcpy.control.DeviceController;
 import com.jian.scrcpy.control.UhidController;
 import com.jian.scrcpy.control.ClipboardController;
+import com.jian.scrcpy.protocol.ControlMessages;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
@@ -632,6 +633,17 @@ public final class ScrcpyApp extends Application {
     private List<DeviceSession> inputTargets(DeviceSession source) {
         if (!isPrimary(source)) return List.of(source);
         return new ArrayList<>(sessions.values());
+    }
+
+    /**
+     * Route a control operation according to the primary-device policy.
+     * Input is broadcast from the primary device; device-management commands
+     * stay local unless explicitly added to this policy.
+     */
+    private void routeControl(DeviceSession source, ControlMessages.Message message) {
+        for (DeviceSession target : inputTargets(source)) {
+            target.session.sendControl(message);
+        }
     }
 
     private void broadcastKeyboard(DeviceSession source, int usage, boolean down, int modifiers) {
