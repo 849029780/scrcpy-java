@@ -124,7 +124,28 @@ public final class ScrcpyApp extends Application {
                 (javafx.collections.ListChangeListener<AdbDevice>) c -> updateButtons());
 
         stage.setTitle("scrcpy-java - 多设备投屏");
-        stage.setScene(new Scene(content, 1400, 900));
+        Scene scene = new Scene(content, 1400, 900);
+        // A fast drag can cross from one VideoView to another before JavaFX
+        // delivers MOUSE_EXITED/MOUSE_DRAGGED to the original view. Keep a
+        // scene-level gesture guard so a touch is always cancelled as soon as
+        // the pointer leaves the view that started it.
+        scene.addEventFilter(MouseEvent.MOUSE_DRAGGED, e -> {
+            DeviceSession active = activeMouseInput;
+            if (active != null && !isScreenPointInsideView(active.view(), e.getScreenX(), e.getScreenY())) {
+                endMouseInput(active, e);
+                activeMouseInput = null;
+                e.consume();
+            }
+        });
+        scene.addEventFilter(MouseEvent.MOUSE_RELEASED, e -> {
+            DeviceSession active = activeMouseInput;
+            if (active != null) {
+                endMouseInput(active, e);
+                activeMouseInput = null;
+                e.consume();
+            }
+        });
+        stage.setScene(scene);
         stage.setOnCloseRequest(e -> {
             closeAllSessions();
             Platform.exit();
@@ -778,7 +799,10 @@ public final class ScrcpyApp extends Application {
             }
             if (e.getButton() != MouseButton.PRIMARY) return;
             DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
-            if (p != null) broadcastTouch(handle, DeviceController.ACTION_DOWN, p, 1f, 1);
+            if (p != null) {
+                activeMouseInput = handle;
+                broadcastTouch(handle, DeviceController.ACTION_DOWN, p, 1f, 1);
+            }
             e.consume();
         });
         view.addEventHandler(MouseEvent.MOUSE_DRAGGED, e -> {
@@ -809,6 +833,7 @@ public final class ScrcpyApp extends Application {
             if (e.getButton() != MouseButton.PRIMARY) return;
             DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
             if (p != null) broadcastTouch(handle, DeviceController.ACTION_UP, p, 0f, 1);
+            if (activeMouseInput == handle) activeMouseInput = null;
             e.consume();
         });
         view.addEventHandler(ScrollEvent.SCROLL, e -> {
@@ -845,6 +870,18 @@ public final class ScrcpyApp extends Application {
             broadcastKeyboard(handle, usage, false, modifiers);
             e.consume();
         });
+    }
+
+    private boolean isScreenPointInsideView(VideoView view, double screenX, double screenY) {
+        if (view == null) return false;
+        double width = view.getBoundsInLocal().getWidth();
+        double height = view.getBoundsInLocal().getHeight();
+        if (width <= 0 || height <= 0) return false;
+        javafx.geometry.Point2D topLeft = view.localToScreen(0, 0);
+        javafx.geometry.Point2D bottomRight = view.localToScreen(width, height);
+        return topLeft != null && bottomRight != null
+                && screenX >= topLeft.getX() && screenX < bottomRight.getX()
+                && screenY >= topLeft.getY() && screenY < bottomRight.getY();
     }
 
     private boolean isPointerOutsideOrAtEdge(VideoView view, MouseEvent e) {
@@ -896,6 +933,7 @@ public final class ScrcpyApp extends Application {
 
         handle.relativePointerValid = false;
         handle.recentering = false;
+        if (activeMouseInput == handle) activeMouseInput = null;
     }
 
     private boolean isPrimary(DeviceSession handle) {
@@ -1059,6 +1097,7 @@ public final class ScrcpyApp extends Application {
             session.relativePointerValid = false;
             session.recentering = false;
         }
+        activeMouseInput = null;
     }
 
     private void togglePrimary(DeviceSession handle) {
