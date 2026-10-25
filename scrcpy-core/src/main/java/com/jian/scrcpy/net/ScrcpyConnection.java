@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 public final class ScrcpyConnection implements AutoCloseable {
@@ -20,6 +19,8 @@ public final class ScrcpyConnection implements AutoCloseable {
     // tasks instead of turning the I/O event loop itself into a virtual thread.
     private final EventLoopGroup group =
             new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+    private final EventLoopGroup acceptGroup =
+            new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     private final int port;
     private Channel video, audio, control, listener;
     private volatile ControlMessageQueue controlQueue;
@@ -120,28 +121,24 @@ public final class ScrcpyConnection implements AutoCloseable {
             throw new IllegalArgumentException("At least one scrcpy socket must be enabled");
         }
 
-        AtomicInteger index = new AtomicInteger();
+        // A single acceptor EventLoop owns connection acceptance and therefore
+        // preserves the exact reverse-mode socket order required by scrcpy.
+        // Accepted channels are then registered on the worker group, so media
+        // I/O remains parallel and FFmpeg work stays on virtual threads.
+        java.util.concurrent.atomic.AtomicInteger accepted = new java.util.concurrent.atomic.AtomicInteger();
         listener = new ServerBootstrap()
-                .group(group)
+                .group(acceptGroup, group)
                 .channel(NioServerSocketChannel.class)
                 .childOption(ChannelOption.TCP_NODELAY, true)
                 .childHandler(new ChannelInitializer<>() {
                     @Override
                     protected void initChannel(Channel channel) {
-                        // Child initializers may execute concurrently on different
-                        // event loops. Serialize only this tiny classification
-                        // section so reverse-mode socket order remains deterministic
-                        // without forcing video/audio/control onto one event loop.
-                        final int i;
-                        final String name;
-                        synchronized (index) {
-                            i = index.getAndIncrement();
-                            if (i >= names.size()) {
-                                channel.close();
-                                return;
-                            }
-                            name = names.get(i);
+                        int i = accepted.getAndIncrement();
+                        if (i >= names.size()) {
+                            channel.close();
+                            return;
                         }
+                        String name = names.get(i);
                         configure(channel.pipeline(), i == 0, name,
                                 videoHandler, audioHandler, controlHandler);
 
@@ -210,6 +207,7 @@ public final class ScrcpyConnection implements AutoCloseable {
             }
         }
 
+        acceptGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
         group.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
     }
 }
