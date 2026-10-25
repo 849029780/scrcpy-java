@@ -32,6 +32,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // Diagnostic only: bypass all FFmpeg video decode while keeping MediaMessage/ByteBuf flow active.
     private static final boolean DEBUG_SKIP_DECODE =
             Boolean.getBoolean("scrcpy.video.debug.skip-decode");
+    // Diagnostic only: keep decoder/frame conversion setup, but bypass sws_scale().
+    private static final boolean DEBUG_SKIP_SWS_SCALE =
+            Boolean.getBoolean("scrcpy.video.debug.skip-sws-scale");
 
     // Diagnostic only: serialize native FFmpeg video operations across all
     // device decoders to test whether multi-device native concurrency is the cause.
@@ -183,6 +186,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                     continue;
                 }
                 converter(frame.width(), frame.height(), frame.format());
+                if (DEBUG_SKIP_SWS_SCALE) {
+                    continue;
+                }
                 sws_scale(sws, frame.data(), frame.linesize(), 0, height, rgb.data(), rgb.linesize());
                 int stride = rgb.linesize(0), n = width * height * 4;
                 byte[] out = new byte[n];
