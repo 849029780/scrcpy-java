@@ -8,6 +8,9 @@ import org.bytedeco.ffmpeg.avutil.*;
 import org.bytedeco.ffmpeg.swscale.SwsContext;
 import org.bytedeco.javacpp.*;
 
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static org.bytedeco.ffmpeg.global.avcodec.*;
@@ -22,10 +25,14 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private SwsContext sws;
     private BytePointer rgbBuffer;
     private int width, height;
+    private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(120);
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final Thread decodeThread;
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> s) {
         super(false);
         sink = s;
+        decodeThread = Thread.ofVirtual().name("scrcpy-video-decoder").start(this::decodeLoop);
     }
 
     private static int avId(CodecId c) {
@@ -60,37 +67,89 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         av_image_fill_arrays(rgb.data(), rgb.linesize(), rgbBuffer, AV_PIX_FMT_BGRA, w, h, 1);
     }
 
-    protected synchronized void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
+    @Override
+    protected void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
+        // Never run FFmpeg/sws_scale on a Netty I/O event loop. Retain packet
+        // data and hand it to one ordered virtual-thread consumer.
+        if (closed.get()) {
+            releaseMessage(m);
+            return;
+        }
+        if (!decodeQueue.offer(m)) {
+            // Keep latency bounded under overload. Video packets are droppable;
+            // discard the oldest queued packet rather than blocking Netty.
+            MediaMessage dropped = decodeQueue.poll();
+            releaseMessage(dropped);
+            if (!decodeQueue.offer(m)) {
+                releaseMessage(m);
+            }
+        }
+    }
+
+    private void decodeLoop() {
+        try {
+            while (!closed.get() || !decodeQueue.isEmpty()) {
+                MediaMessage m = decodeQueue.take();
+                try {
+                    decodeMessage(m);
+                } finally {
+                    releaseMessage(m);
+                }
+            }
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        } catch (Throwable t) {
+            System.err.println("[scrcpy-java] video decode worker failed: " + t);
+            t.printStackTrace(System.err);
+        } finally {
+            MediaMessage m;
+            while ((m = decodeQueue.poll()) != null) releaseMessage(m);
+        }
+    }
+
+    private synchronized void decodeMessage(MediaMessage m) {
         if (m instanceof MediaMessage.Codec c) {
             init(c.codec());
             return;
         }
-        if (!(m instanceof MediaMessage.Packet p)) return;
-        try {
-            if (p.config()) return;
-            byte[] b = new byte[p.data().readableBytes()];
-            p.data().getBytes(p.data().readerIndex(), b);
-            try (BytePointer bp = new BytePointer(b)) {
-                av_packet_unref(packet);
-                packet.data(bp).size(b.length).pts(p.pts());
-                if (avcodec_send_packet(ctx, packet) < 0) return;
-                while (avcodec_receive_frame(ctx, frame) >= 0) {
-                    converter(frame.width(), frame.height(), frame.format());
-                    sws_scale(sws, frame.data(), frame.linesize(), 0, height, rgb.data(), rgb.linesize());
-                    int stride = rgb.linesize(0), n = width * height * 4;
-                    byte[] out = new byte[n];
-                    if (stride == width * 4) rgb.data(0).get(out);
-                    else for (int y = 0; y < height; y++)
-                        rgb.data(0).position((long) y * stride).get(out, y * width * 4, width * 4);
-                    sink.accept(new VideoFrame(width, height, out, p.pts()));
-                }
+        if (!(m instanceof MediaMessage.Packet p) || p.config()) return;
+        byte[] b = new byte[p.data().readableBytes()];
+        p.data().getBytes(p.data().readerIndex(), b);
+        try (BytePointer bp = new BytePointer(b)) {
+            av_packet_unref(packet);
+            packet.data(bp).size(b.length).pts(p.pts());
+            if (avcodec_send_packet(ctx, packet) < 0) return;
+            while (avcodec_receive_frame(ctx, frame) >= 0) {
+                converter(frame.width(), frame.height(), frame.format());
+                sws_scale(sws, frame.data(), frame.linesize(), 0, height, rgb.data(), rgb.linesize());
+                int stride = rgb.linesize(0), n = width * height * 4;
+                byte[] out = new byte[n];
+                if (stride == width * 4) rgb.data(0).get(out);
+                else for (int y = 0; y < height; y++)
+                    rgb.data(0).position((long) y * stride).get(out, y * width * 4, width * 4);
+                sink.accept(new VideoFrame(width, height, out, p.pts()));
             }
-        } finally {
+        }
+    }
+
+    private static void releaseMessage(MediaMessage m) {
+        if (m instanceof MediaMessage.Packet p) {
             ReferenceCountUtil.release(p.data());
         }
     }
 
-    public synchronized void close() {
+    public void close() {
+        if (!closed.compareAndSet(false, true)) return;
+        decodeThread.interrupt();
+        try {
+            decodeThread.join(2_000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        closeNative();
+    }
+
+    private synchronized void closeNative() {
         if (sws != null) {
             sws_freeContext(sws);
             sws = null;
