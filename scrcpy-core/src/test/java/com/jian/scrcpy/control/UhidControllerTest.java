@@ -36,9 +36,12 @@ final class UhidControllerTest {
         List<ControlMessages.Message> sent = new ArrayList<>();
         UhidMouse mouse = new UhidMouse(sent::add);
 
-        mouse.buttons(1);
+        mouse.button(UhidMouse.BUTTON_LEFT, true);
+        assertEquals(UhidMouse.BUTTON_LEFT, mouse.buttons());
         mouse.move(200, -200);
         mouse.scroll(2, -3);
+        mouse.button(UhidMouse.BUTTON_LEFT, false);
+        assertEquals(0, mouse.buttons());
         mouse.close();
 
         assertEquals(2, assertInstanceOf(ControlMessages.UhidCreate.class, sent.get(0)).id());
