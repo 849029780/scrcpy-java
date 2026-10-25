@@ -20,6 +20,7 @@ class ServerLauncherTest {
                 "h265",
                 null,
                 null,
+                "auto",
                 "aac",
                 8_000_000,
                 192_000,
