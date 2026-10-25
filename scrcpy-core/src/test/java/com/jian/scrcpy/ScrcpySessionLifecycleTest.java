@@ -24,6 +24,6 @@ class ScrcpySessionLifecycleTest {
         ScrcpySession s = new ScrcpySession(new Adb("adb", "test"), ScrcpyOptions.defaults());
         s.close();
         assertThrows(IllegalStateException.class,
-                () -> s.start(java.nio.file.Path.of("missing-server.jar"), f -> {}));
+                () -> s.start(java.nio.file.Path.of("missing-server.jar"), (io.netty.channel.ChannelInboundHandler) null, f -> {}));
     }
 }
