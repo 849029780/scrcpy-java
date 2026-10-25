@@ -546,13 +546,10 @@ public final class ScrcpyApp extends Application {
 
         installControls(handle);
 
-        Button primary = new Button("设为主设备");
-        primary.setOnAction(e -> togglePrimary(handle));
-
         Button close = new Button("断开");
         close.setOnAction(e -> disconnect(device.serial()));
 
-        HBox header = new HBox(6, title, new Region(), primary, close);
+        HBox header = new HBox(6, title, new Region(), close);
         HBox.setHgrow(header.getChildren().get(1), Priority.ALWAYS);
 
         viewport.getChildren().add(deviceMenu);
@@ -561,7 +558,6 @@ public final class ScrcpyApp extends Application {
 
         handle.tile = tile;
         handle.viewport = viewport;
-        handle.primaryButton = primary;
         handle.adaptClickItem = adaptClick;
         handle.device = device;
 
@@ -1074,7 +1070,12 @@ public final class ScrcpyApp extends Application {
             old.primary = false;
             if (old.tile != null) {
                 primaryHost.getChildren().remove(old.tile);
-                secondaryGrid.getChildren().add(old.tile);
+                int index = old.secondaryIndex;
+                if (index < 0 || index > secondaryGrid.getChildren().size()) {
+                    index = secondaryGrid.getChildren().size();
+                }
+                secondaryGrid.getChildren().add(index, old.tile);
+                old.secondaryIndex = -1;
                 resizeTile(old, false);
             }
         }
@@ -1083,6 +1084,7 @@ public final class ScrcpyApp extends Application {
         desiredPrimarySerial = primarySerial;
         handle.primary = true;
         if (handle.tile != null) {
+            handle.secondaryIndex = secondaryGrid.getChildren().indexOf(handle.tile);
             secondaryGrid.getChildren().remove(handle.tile);
             primaryHost.getChildren().setAll(handle.tile);
         }
@@ -1111,7 +1113,12 @@ public final class ScrcpyApp extends Application {
         primarySerial = null;
         old.primary = false;
         primaryHost.getChildren().remove(old.tile);
-        secondaryGrid.getChildren().add(0, old.tile);
+        int index = old.secondaryIndex;
+        if (index < 0 || index > secondaryGrid.getChildren().size()) {
+            index = secondaryGrid.getChildren().size();
+        }
+        secondaryGrid.getChildren().add(index, old.tile);
+        old.secondaryIndex = -1;
         resizeTile(old, false);
         primaryHost.setManaged(false);
         primaryHost.setVisible(false);
@@ -1155,9 +1162,6 @@ public final class ScrcpyApp extends Application {
         handle.viewport.setMaxSize(videoWidth, videoHeight);
         handle.view().setFitWidth(videoWidth);
         handle.view().setFitHeight(videoHeight);
-        if (handle.primaryButton != null) {
-            handle.primaryButton.setText(primary ? "取消主设备" : "设为主设备");
-        }
     }
 
     private void refreshDeviceMenuStates() {
@@ -1177,7 +1181,6 @@ public final class ScrcpyApp extends Application {
             primaryStatus.setText("主设备：" + (s == null || s.device == null ? primarySerial : s.device.displayName()));
         }
         sessions.values().forEach(s -> {
-            if (s.primaryButton != null) s.primaryButton.setText(isPrimary(s) ? "取消主设备" : "设为主设备");
             if (s.primaryScreenButton != null) {
                 updatePrimaryScreenToggle(s.primaryScreenButton, isPrimary(s));
             }
@@ -1400,7 +1403,6 @@ public final class ScrcpyApp extends Application {
         private final ClipboardController clipboard;
         private VBox tile;
         private StackPane viewport;
-        private Button primaryButton;
         private CheckMenuItem adaptClickItem;
         private AdbDevice device;
         private boolean primary;
@@ -1414,6 +1416,8 @@ public final class ScrcpyApp extends Application {
         private ToggleButton mouseModeButton;
         private ToggleButton primaryScreenButton;
         private boolean relativeCaptured;
+        /** Original secondary-grid position while this device is primary. */
+        private int secondaryIndex = -1;
 
         private DeviceSession(
                 ScrcpySession session,
