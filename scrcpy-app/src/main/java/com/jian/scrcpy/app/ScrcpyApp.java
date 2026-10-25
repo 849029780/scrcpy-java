@@ -464,7 +464,7 @@ public final class ScrcpyApp extends Application {
                     runningSession.addDeviceMessageListener(clipboard::handle);
                     clipboard.onRemoteClipboard(this::applyDeviceClipboard);
                     DeviceSession handle = new DeviceSession(runningSession, player, view,
-                            new DeviceController(runningSession::sendControl), uhid, clipboard);
+                            new DeviceController(message -> routeControl(device.serial(), message)), uhid, clipboard);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
                     if (Objects.equals(desiredPrimarySerial, device.serial())) {
@@ -640,7 +640,9 @@ public final class ScrcpyApp extends Application {
      * Input is broadcast from the primary device; device-management commands
      * stay local unless explicitly added to this policy.
      */
-    private void routeControl(DeviceSession source, ControlMessages.Message message) {
+    private void routeControl(String sourceSerial, ControlMessages.Message message) {
+        DeviceSession source = sessions.get(sourceSerial);
+        if (source == null) return;
         for (DeviceSession target : inputTargets(source)) {
             target.session.sendControl(message);
         }
