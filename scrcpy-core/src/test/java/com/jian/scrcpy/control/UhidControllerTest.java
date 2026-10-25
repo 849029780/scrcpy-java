@@ -32,6 +32,45 @@ final class UhidControllerTest {
     }
 
     @Test
+    void controllerReleasesTransientKeyboardAndMouseState() {
+        List<ControlMessages.Message> sent = new ArrayList<>();
+        UhidController controller = new UhidController(sent::add);
+
+        controller.keyboard().key(0x04, true, 0x02);
+        controller.mouse().button(UhidMouse.BUTTON_LEFT, true);
+        int before = sent.size();
+
+        controller.releaseInputState();
+
+        assertTrue(sent.size() >= before + 2);
+        ControlMessages.UhidInput keyboardRelease = assertInstanceOf(ControlMessages.UhidInput.class, sent.get(before));
+        assertArrayEquals(new byte[8], keyboardRelease.data());
+        ControlMessages.UhidInput mouseRelease = assertInstanceOf(ControlMessages.UhidInput.class, sent.get(before + 1));
+        assertArrayEquals(new byte[]{0,0,0,0,0}, mouseRelease.data());
+        controller.close();
+    }
+
+    @Test
+    void keyboardCloseStillDestroysWhenReleaseSendFails() {
+        UhidKeyboard keyboard = new UhidKeyboard(message -> {
+            if (message instanceof ControlMessages.UhidInput) throw new IllegalStateException("send failed");
+        });
+        keyboard.open();
+        assertThrows(IllegalStateException.class, keyboard::close);
+        assertDoesNotThrow(keyboard::close);
+    }
+
+    @Test
+    void mouseCloseStillDestroysWhenReleaseSendFails() {
+        UhidMouse mouse = new UhidMouse(message -> {
+            if (message instanceof ControlMessages.UhidInput) throw new IllegalStateException("send failed");
+        });
+        mouse.open();
+        assertThrows(IllegalStateException.class, mouse::close);
+        assertDoesNotThrow(mouse::close);
+    }
+
+    @Test
     void mouseUsesFiveByteRelativeReportsAndClampsMotion() {
         List<ControlMessages.Message> sent = new ArrayList<>();
         UhidMouse mouse = new UhidMouse(sent::add);
