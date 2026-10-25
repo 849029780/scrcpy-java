@@ -16,6 +16,7 @@ import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
 import com.jian.scrcpy.server.ScrcpyOptions;
 import com.jian.scrcpy.server.ScrcpyServerArtifact;
+import com.jian.scrcpy.server.ServerLauncher;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -310,7 +311,8 @@ public final class ScrcpyApp extends Application {
         });
     }
 
-    private Optional<ConnectionSettings> showConnectionSettings() {
+    private Optional<ConnectionSettings> showConnectionSettings(
+            Map<String, List<ServerLauncher.VideoEncoder>> encoderCapabilities) {
         Dialog<ConnectionSettings> dialog = new Dialog<>();
         dialog.setTitle("scrcpy 连接设置");
         dialog.setHeaderText("连接设备前设置本次连接参数");
@@ -323,11 +325,10 @@ public final class ScrcpyApp extends Application {
         CheckBox stayAwake = new CheckBox("保持唤醒");
         CheckBox turnScreenOff = new CheckBox("关闭设备屏幕");
 
-        ComboBox<String> videoCodec = combo("h264", "h265", "av1");
-        TextField videoEncoder = new TextField();
-        videoEncoder.setPromptText("可选，例如 c2.android.hevc.encoder");
+        ComboBox<String> videoCodec = combo("H.264", "H.265", "AV1");
+        ComboBox<String> videoEncoder = combo("自动（推荐）");
         TextField videoCodecOptions = new TextField();
-        videoCodecOptions.setPromptText("可选，例如 bitrate-mode:int=1,profile:int=1");
+        videoCodecOptions.setPromptText("例如 bitrate-mode:int=1,profile:int=1");
         ComboBox<String> audioCodec = combo("opus", "aac", "flac");
         ComboBox<String> videoBitRate = combo("2M", "4M", "6M", "8M", "10M", "12M", "16M", "20M");
         ComboBox<String> audioBitRate = combo("64K", "96K", "128K", "160K", "192K", "256K", "320K");
@@ -337,9 +338,33 @@ public final class ScrcpyApp extends Application {
         TextField startApp = new TextField();
         startApp.setPromptText("可选：应用包名");
 
-        videoCodec.setValue("h264"); audioCodec.setValue("opus");
+        videoCodec.setValue("H.264");
+        audioCodec.setValue("opus");
         videoBitRate.setValue("8M"); audioBitRate.setValue("128K");
         maxSize.setValue("1920"); maxFps.setValue("60"); crop.setValue("不裁剪");
+
+        Runnable refreshEncoders = () -> {
+            String codec = videoCodecName(videoCodec.getValue());
+            List<String> common = commonVideoEncoderNames(codec, encoderCapabilities);
+            String previous = videoEncoder.getValue();
+            var values = new ArrayList<String>();
+            values.add("自动（推荐）");
+            values.addAll(common);
+            videoEncoder.setItems(FXCollections.observableArrayList(values));
+            if (previous != null && values.contains(previous)) {
+                videoEncoder.setValue(previous);
+            } else {
+                videoEncoder.setValue("自动（推荐）");
+            }
+            videoEncoder.setDisable(!video.isSelected());
+        };
+        videoCodec.valueProperty().addListener((obs, oldValue, newValue) -> refreshEncoders.run());
+        video.selectedProperty().addListener((obs, oldValue, selected) -> {
+            videoCodec.setDisable(!selected);
+            videoEncoder.setDisable(!selected);
+            videoCodecOptions.setDisable(!selected);
+        });
+        refreshEncoders.run();
 
         GridPane grid = new GridPane();
         grid.setHgap(10); grid.setVgap(8); grid.setPadding(new Insets(10));
@@ -347,7 +372,6 @@ public final class ScrcpyApp extends Application {
         grid.add(video, 0, row); grid.add(audio, 1, row); grid.add(control, 2, row++);
         grid.add(new Label("视频编码"), 0, row); grid.add(videoCodec, 1, row++, 2, 1);
         grid.add(new Label("视频编码器"), 0, row); grid.add(videoEncoder, 1, row++, 2, 1);
-        grid.add(new Label("编码器参数"), 0, row); grid.add(videoCodecOptions, 1, row++, 2, 1);
         grid.add(new Label("音频编码"), 0, row); grid.add(audioCodec, 1, row++, 2, 1);
         grid.add(new Label("视频码率"), 0, row); grid.add(videoBitRate, 1, row++, 2, 1);
         grid.add(new Label("音频码率"), 0, row); grid.add(audioBitRate, 1, row++, 2, 1);
@@ -355,15 +379,28 @@ public final class ScrcpyApp extends Application {
         grid.add(new Label("最大帧率"), 0, row); grid.add(maxFps, 1, row++, 2, 1);
         grid.add(new Label("裁剪"), 0, row); grid.add(crop, 1, row++, 2, 1);
         grid.add(new Label("启动应用"), 0, row); grid.add(startApp, 1, row++, 2, 1);
-        grid.add(showTouches, 0, row); grid.add(stayAwake, 1, row); grid.add(turnScreenOff, 2, row);
+        grid.add(showTouches, 0, row); grid.add(stayAwake, 1, row); grid.add(turnScreenOff, 2, row++);
 
-        dialog.getDialogPane().setContent(grid);
+        VBox advancedBox = new VBox(8,
+                new Label("向 Android MediaFormat 传递自定义编码参数。留空使用默认参数。"),
+                videoCodecOptions);
+        advancedBox.setPadding(new Insets(8));
+        TitledPane advanced = new TitledPane("高级编码设置", advancedBox);
+        advanced.setExpanded(false);
+        advanced.setMaxWidth(Double.MAX_VALUE);
+
+        VBox content = new VBox(4, grid, advanced);
+        content.setPadding(new Insets(4));
+        dialog.getDialogPane().setContent(content);
         ButtonType ok = new ButtonType("连接", ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().addAll(ok, ButtonType.CANCEL);
         dialog.setResultConverter(bt -> {
             if (bt != ok) return null;
+            String codec = videoCodecName(videoCodec.getValue());
+            String encoder = "自动（推荐）".equals(videoEncoder.getValue())
+                    ? null : blankToNull(videoEncoder.getValue());
             return new ConnectionSettings(video.isSelected(), audio.isSelected(), control.isSelected(),
-                    videoCodec.getValue(), blankToNull(videoEncoder.getText()), blankToNull(videoCodecOptions.getText()), audioCodec.getValue(),
+                    codec, encoder, blankToNull(videoCodecOptions.getText()), audioCodec.getValue(),
                     parseBitRate(videoBitRate.getValue()), parseBitRate(audioBitRate.getValue()),
                     parsePositiveInt(maxSize.getValue(), 0),
                     "不限制".equals(maxFps.getValue()) ? null : maxFps.getValue(),
@@ -371,6 +408,35 @@ public final class ScrcpyApp extends Application {
                     "不裁剪".equals(crop.getValue()) ? null : crop.getValue(), blankToNull(startApp.getText()));
         });
         return dialog.showAndWait();
+    }
+
+    private static String videoCodecName(String label) {
+        return switch (Objects.requireNonNullElse(label, "H.264")) {
+            case "H.265" -> "h265";
+            case "AV1" -> "av1";
+            default -> "h264";
+        };
+    }
+
+    private static List<String> commonVideoEncoderNames(
+            String codec, Map<String, List<ServerLauncher.VideoEncoder>> capabilities) {
+        if (capabilities.isEmpty()) return List.of();
+        Set<String> common = null;
+        List<String> order = List.of();
+        for (List<ServerLauncher.VideoEncoder> encoders : capabilities.values()) {
+            LinkedHashSet<String> names = encoders.stream()
+                    .filter(e -> codec.equals(e.codec()))
+                    .map(ServerLauncher.VideoEncoder::name)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            if (common == null) {
+                common = new LinkedHashSet<>(names);
+                order = new ArrayList<>(names);
+            } else {
+                common.retainAll(names);
+            }
+        }
+        if (common == null) return List.of();
+        return order.stream().filter(common::contains).toList();
     }
 
     @SafeVarargs
@@ -439,11 +505,39 @@ public final class ScrcpyApp extends Application {
             return;
         }
 
-        showConnectionSettings().ifPresent(settings -> {
-            status.setText("正在连接 " + targets.size() + " 台设备...");
-            targets.forEach(device -> {
-                desiredConnections.put(device.serial(), settings);
-                connectDevice(device, settings, false);
+        status.setText("正在读取设备视频编码器...");
+        Thread.startVirtualThread(() -> {
+            Map<String, List<ServerLauncher.VideoEncoder>> capabilities = new LinkedHashMap<>();
+            List<String> failures = new ArrayList<>();
+            try {
+                var jar = ScrcpyServerArtifact.resolve();
+                for (AdbDevice device : targets) {
+                    try {
+                        var deviceAdb = new Adb(System.getProperty("scrcpy.adb", "adb"), device.serial());
+                        var launcher = new ServerLauncher(deviceAdb, ScrcpyOptions.defaults());
+                        capabilities.put(device.serial(), launcher.listVideoEncoders(jar));
+                    } catch (Throwable t) {
+                        failures.add(device.displayName() + ": " + t.getMessage());
+                        capabilities.put(device.serial(), List.of());
+                    }
+                }
+            } catch (Throwable t) {
+                failures.add("读取编码器失败: " + t.getMessage());
+            }
+
+            Platform.runLater(() -> {
+                if (!failures.isEmpty()) {
+                    status.setText("编码器查询部分失败，将仅提供自动选择");
+                } else {
+                    status.setText("正在连接 " + targets.size() + " 台设备...");
+                }
+                showConnectionSettings(capabilities).ifPresent(settings -> {
+                    status.setText("正在连接 " + targets.size() + " 台设备...");
+                    targets.forEach(device -> {
+                        desiredConnections.put(device.serial(), settings);
+                        connectDevice(device, settings, false);
+                    });
+                });
             });
         });
     }
