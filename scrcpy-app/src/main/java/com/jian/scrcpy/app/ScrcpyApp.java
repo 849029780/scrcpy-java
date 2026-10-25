@@ -70,6 +70,8 @@ public final class ScrcpyApp extends Application {
     private Adb adb;
     private volatile String lastDesktopClipboard = "";
     private final java.util.concurrent.atomic.AtomicBoolean applyingRemoteClipboard = new java.util.concurrent.atomic.AtomicBoolean();
+    /** Last valid Android touch position, retained so an outside release can always emit ACTION_UP. */
+    private final java.util.Map<DeviceSession, DeviceController.ScreenPosition> activeTouchPositions = new java.util.concurrent.ConcurrentHashMap<>();
     // ADB polling spends almost all of its time blocked in Process I/O, so a
     // virtual-thread scheduler avoids dedicating a platform thread to it.
     private final ScheduledExecutorService adbMonitor =
@@ -133,7 +135,7 @@ public final class ScrcpyApp extends Application {
         // the pointer leaves the view that started it.
         scene.addEventFilter(MouseEvent.MOUSE_DRAGGED, e -> {
             DeviceSession active = activeMouseInput;
-            if (active != null && !isScreenPointInsideView(active.view(), e.getScreenX(), e.getScreenY())) {
+            if (active != null && !isScreenPointInsideProjection(active.view(), e.getScreenX(), e.getScreenY())) {
                 endMouseInput(active, e);
                 activeMouseInput = null;
                 e.consume();
@@ -803,6 +805,7 @@ public final class ScrcpyApp extends Application {
             DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
             if (p != null) {
                 activeMouseInput = handle;
+                activeTouchPositions.put(handle, p);
                 broadcastTouch(handle, DeviceController.ACTION_DOWN, p, 1f, 1);
             }
             e.consume();
@@ -822,7 +825,10 @@ public final class ScrcpyApp extends Application {
             }
             if (!e.isPrimaryButtonDown()) return;
             DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
-            if (p != null) broadcastTouch(handle, DeviceController.ACTION_MOVE, p, 1f, 0);
+            if (p != null) {
+                activeTouchPositions.put(handle, p);
+                broadcastTouch(handle, DeviceController.ACTION_MOVE, p, 1f, 0);
+            }
             e.consume();
         });
         view.addEventHandler(MouseEvent.MOUSE_RELEASED, e -> {
@@ -874,16 +880,16 @@ public final class ScrcpyApp extends Application {
         });
     }
 
-    private boolean isScreenPointInsideView(VideoView view, double screenX, double screenY) {
+    /**
+     * Checks the actual displayed projection, not merely the ImageView layout bounds.
+     * This matters when the ImageView contains letterboxing or when the pointer
+     * crosses directly into another device tile during a fast swipe.
+     */
+    private boolean isScreenPointInsideProjection(VideoView view, double screenX, double screenY) {
         if (view == null) return false;
-        double width = view.getBoundsInLocal().getWidth();
-        double height = view.getBoundsInLocal().getHeight();
-        if (width <= 0 || height <= 0) return false;
-        javafx.geometry.Point2D topLeft = view.localToScreen(0, 0);
-        javafx.geometry.Point2D bottomRight = view.localToScreen(width, height);
-        return topLeft != null && bottomRight != null
-                && screenX >= topLeft.getX() && screenX < bottomRight.getX()
-                && screenY >= topLeft.getY() && screenY < bottomRight.getY();
+        javafx.geometry.Point2D local = view.screenToLocal(screenX, screenY);
+        if (local == null) return false;
+        return InputMapper.position(view, local.getX(), local.getY()) != null;
     }
 
     private boolean isPointerOutsideOrAtEdge(VideoView view, MouseEvent e) {
@@ -924,19 +930,22 @@ public final class ScrcpyApp extends Application {
 
         if (handle.mouseMode == MouseMode.ABSOLUTE_TOUCH
                 && (e.isPrimaryButtonDown() || activeMouseInput == handle)) {
-            VideoView view = handle.view();
-            DeviceController.ScreenPosition exit = InputMapper.position(
-                    view,
-                    Math.max(0, Math.min(Math.max(0, view.getBoundsInLocal().getWidth() - 1), e.getX())),
-                    Math.max(0, Math.min(Math.max(0, view.getBoundsInLocal().getHeight() - 1), e.getY())));
-            if (exit != null) {
-                broadcastTouch(handle, DeviceController.ACTION_UP, exit, 0f, 1);
+            DeviceController.ScreenPosition release = activeTouchPositions.remove(handle);
+            if (release == null) {
+                VideoView view = handle.view();
+                release = InputMapper.position(view,
+                        Math.max(0, Math.min(Math.max(0, view.getBoundsInLocal().getWidth() - 1), e.getX())),
+                        Math.max(0, Math.min(Math.max(0, view.getBoundsInLocal().getHeight() - 1), e.getY())));
+            }
+            if (release != null) {
+                broadcastTouch(handle, DeviceController.ACTION_UP, release, 0f, 1);
             }
         }
 
         handle.relativePointerValid = false;
         handle.recentering = false;
         if (activeMouseInput == handle) activeMouseInput = null;
+        activeTouchPositions.remove(handle);
     }
 
     private boolean isPrimary(DeviceSession handle) {
@@ -1101,6 +1110,7 @@ public final class ScrcpyApp extends Application {
             session.recentering = false;
         }
         activeMouseInput = null;
+        activeTouchPositions.clear();
     }
 
     private void togglePrimary(DeviceSession handle) {
