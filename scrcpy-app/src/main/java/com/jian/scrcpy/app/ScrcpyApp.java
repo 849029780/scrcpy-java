@@ -571,7 +571,35 @@ public final class ScrcpyApp extends Application {
             }
         });
         view.addEventHandler(MouseEvent.MOUSE_EXITED, e -> {
-            if (!handle.recentering) handle.relativePointerValid = false;
+            if (handle.recentering) return;
+
+            // Leaving the mapped video area terminates the current mouse
+            // interaction. JavaFX may not deliver MOUSE_RELEASED to this view
+            // once the pointer is outside it, so explicitly release any
+            // remote pressed state and discard queued input here.
+            for (DeviceSession target : inputTargets(handle)) {
+                target.session.clearPendingControlEvents();
+                try {
+                    target.uhid.mouse().clearTransientState();
+                } catch (Throwable ignored) {
+                }
+            }
+
+            // In absolute-touch mode a drag is represented as a touch pointer.
+            // End it at the last valid edge position instead of leaving Android
+            // with a permanently pressed pointer.
+            if (handle.mouseMode == MouseMode.ABSOLUTE_TOUCH && e.isPrimaryButtonDown()) {
+                DeviceController.ScreenPosition exit = InputMapper.position(
+                        view,
+                        Math.max(0, Math.min(view.getBoundsInLocal().getWidth() - 1, e.getX())),
+                        Math.max(0, Math.min(view.getBoundsInLocal().getHeight() - 1, e.getY())));
+                if (exit != null) {
+                    broadcastTouch(handle, DeviceController.ACTION_UP, exit, 0f, 1);
+                }
+            }
+
+            handle.relativePointerValid = false;
+            handle.recentering = false;
         });
         view.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
             if (handle.mouseMode == MouseMode.UHID_RELATIVE && isRelativeMouseAtEdge(handle.view(), e)) {
