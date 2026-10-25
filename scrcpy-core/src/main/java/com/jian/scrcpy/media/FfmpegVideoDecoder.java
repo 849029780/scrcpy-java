@@ -29,6 +29,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private AVCodecContext.Get_format_AVCodecContext_IntPointer getFormatCallback;
     private int hwPixelFormat = AV_PIX_FMT_NONE;
     private String activeHardware;
+    private CodecId activeCodec;
+    private boolean hardwareConfirmed;
     private int width, height;
     private int pixelFormat = -1;
 
@@ -48,7 +50,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private final Thread decodeThread;
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink) {
-        this(sink, "auto");
+        this(sink, "hardware");
     }
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode) {
@@ -59,10 +61,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private static String normalizeMode(String mode) {
-        String value = Objects.requireNonNullElse(mode, "auto").trim().toLowerCase(Locale.ROOT);
+        String value = Objects.requireNonNullElse(mode, "hardware").trim().toLowerCase(Locale.ROOT);
         return switch (value) {
             case "hardware", "software" -> value;
-            default -> "auto";
+            default -> "hardware";
         };
     }
 
@@ -77,6 +79,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     private void init(CodecId codecId) {
         closeNative();
+        activeCodec = codecId;
 
         AVCodec decoder = avcodec_find_decoder(avId(codecId));
         if (decoder == null || decoder.isNull()) {
@@ -90,8 +93,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 }
             }
             if ("hardware".equals(decoderMode)) {
-                throw new IllegalStateException(
-                        "hardware decoder unavailable for " + codecId + " on " + System.getProperty("os.name"));
+                System.out.printf("[scrcpy-java] hardware video decoding unavailable for %s; using software decoder%n", codecId);
             }
         }
 
@@ -166,7 +168,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         getFormatCallback = callback;
         activeHardware = backend.name();
         allocateFramesAndPacket();
-        System.out.printf("[scrcpy-java] video decoder: hardware %s (%s)%n", activeHardware, codecId);
+        System.out.printf("[scrcpy-java] video decoder: trying hardware %s (%s)%n", activeHardware, codecId);
         return true;
     }
 
@@ -289,8 +291,19 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         packet.data().put(b, 0, payloadSize);
         packet.pts(p.pts()).dts(p.pts());
 
-        if (avcodec_send_packet(ctx, packet) < 0) return;
-        while (avcodec_receive_frame(ctx, frame) >= 0) {
+        int sendResult = avcodec_send_packet(ctx, packet);
+        if (sendResult < 0) {
+            if (activeHardware != null && !hardwareConfirmed) {
+                fallbackToSoftware(b, p.pts(), "avcodec_send_packet=" + sendResult);
+            }
+            return;
+        }
+        int receiveResult;
+        while ((receiveResult = avcodec_receive_frame(ctx, frame)) >= 0) {
+            if (activeHardware != null && !hardwareConfirmed) {
+                hardwareConfirmed = true;
+                System.out.printf("[scrcpy-java] video decoder: hardware %s confirmed (%s)%n", activeHardware, activeCodec);
+            }
             if (DEBUG_SKIP_RENDER) continue;
 
             AVFrame source = frame;
@@ -327,6 +340,52 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 }
             }
             sink.accept(new VideoFrame(width, height, out, p.pts()));
+        }
+        if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF
+                && activeHardware != null && !hardwareConfirmed) {
+            fallbackToSoftware(b, p.pts(), "avcodec_receive_frame=" + receiveResult);
+        }
+    }
+
+    private void fallbackToSoftware(byte[] encoded, long pts) {
+        fallbackToSoftware(encoded, pts, "hardware decode failed");
+    }
+
+    private void fallbackToSoftware(byte[] encoded, long pts, String reason) {
+        CodecId codecId = activeCodec;
+        String backend = activeHardware;
+        System.err.printf("[scrcpy-java] hardware decoder %s failed before first frame (%s); falling back to software: %s%n",
+                backend, codecId, reason);
+        closeNative();
+        activeCodec = codecId;
+        AVCodec decoder = avcodec_find_decoder(avId(codecId));
+        if (decoder == null || decoder.isNull()) {
+            throw new IllegalStateException("software decoder unavailable " + codecId);
+        }
+        initSoftware(decoder, codecId);
+
+        av_packet_unref(packet);
+        if (av_new_packet(packet, encoded.length) < 0) return;
+        packet.data().put(encoded, 0, encoded.length);
+        packet.pts(pts).dts(pts);
+        if (avcodec_send_packet(ctx, packet) < 0) return;
+        while (avcodec_receive_frame(ctx, frame) >= 0) {
+            if (DEBUG_SKIP_RENDER) continue;
+            converter(frame.width(), frame.height(), frame.format());
+            if (DEBUG_SKIP_SWS_SCALE) continue;
+            int scaled = sws_scale(sws, frame.data(), frame.linesize(), 0, frame.height(), rgb.data(), rgb.linesize());
+            if (scaled <= 0) continue;
+            int stride = rgb.linesize(0), n = width * height * 4;
+            byte[] out = new byte[n];
+            BytePointer pixels = rgb.data(0);
+            if (stride == width * 4) {
+                pixels.position(0).get(out);
+            } else {
+                for (int y = 0; y < height; y++) {
+                    pixels.position((long) y * stride).get(out, y * width * 4, width * 4);
+                }
+            }
+            sink.accept(new VideoFrame(width, height, out, pts));
         }
     }
 
@@ -379,6 +438,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
         hwPixelFormat = AV_PIX_FMT_NONE;
         activeHardware = null;
+        hardwareConfirmed = false;
         width = height = 0;
         pixelFormat = -1;
     }
