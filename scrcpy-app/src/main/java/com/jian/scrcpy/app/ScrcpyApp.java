@@ -688,7 +688,7 @@ public final class ScrcpyApp extends Application {
     private void broadcastTouch(DeviceSession source, int action, DeviceController.ScreenPosition position,
                                 float pressure, int actionButton) {
         for (DeviceSession target : inputTargets(source)) {
-            DeviceController.ScreenPosition p = scalePosition(position, target.view());
+            DeviceController.ScreenPosition p = adaptScreenClick && source != target ? scalePosition(position, target.view()) : position;
             if (p != null) {
                 int buttons = action == DeviceController.ACTION_UP ? 0 : 1;
                 target.controller.touch(action, DeviceController.POINTER_ID_MOUSE, p, pressure, actionButton, buttons);
