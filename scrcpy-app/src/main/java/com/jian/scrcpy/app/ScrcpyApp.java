@@ -261,7 +261,10 @@ public final class ScrcpyApp extends Application {
                         turnScreenOff.isSelected(), blankToNull(crop.getText()),
                         blankToNull(startApp.getText()));
             } catch (IllegalArgumentException ex) {
-                new Alert(Alert.AlertType.ERROR, "连接设置无效", ex.getMessage(), ButtonType.OK).showAndWait();
+                Alert alert = new Alert(Alert.AlertType.ERROR, ex.getMessage(), ButtonType.OK);
+                alert.setTitle("连接设置无效");
+                alert.setHeaderText(null);
+                alert.showAndWait();
                 return null;
             }
         });
