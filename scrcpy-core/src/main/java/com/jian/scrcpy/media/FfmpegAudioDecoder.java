@@ -22,6 +22,8 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private AVPacket packet;
     private CodecId codec;
     private long packetIndex;
+    /** Diagnostic switch: bypass JavaSound while keeping FFmpeg decode active. */
+    private static final boolean DEBUG_SKIP_AUDIO_OUTPUT = Boolean.getBoolean("scrcpy.audio.debug.skip-output");
     private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(240);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
@@ -51,7 +53,9 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         frame = av_frame_alloc();
         packet = av_packet_alloc();
         if (frame == null || packet == null) throw new IllegalStateException("cannot allocate audio decoder state");
-        System.out.println("[scrcpy-java] audio decoder initialized: " + codec);
+        System.out.println("[scrcpy-java] audio decoder initialized: " + codec
+                + " ffmpeg=" + org.bytedeco.ffmpeg.global.avutil.av_version_info().getString());
+        System.out.flush();
     }
 
     @Override
@@ -105,10 +109,19 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         int payloadSize = p.data().readableBytes();
         p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
         try (BytePointer bp = new BytePointer(bytes)) {
+            System.err.printf("[scrcpy-java][audio-debug] #%d packet copied: payload=%d pts=%d%n",
+                    index, payloadSize, p.pts());
+            System.err.flush();
+
             av_packet_unref(packet);
+            System.err.println("[scrcpy-java][audio-debug] #" + index + " av_packet_unref OK");
             packet.data(bp).size(payloadSize).pts(p.pts()).dts(p.pts());
+            System.err.println("[scrcpy-java][audio-debug] #" + index + " packet assigned; send_packet BEGIN");
+            System.err.flush();
 
             int ret = avcodec_send_packet(ctx, packet);
+            System.err.printf("[scrcpy-java][audio-debug] #%d send_packet END ret=%d%n", index, ret);
+            System.err.flush();
             if (ret == AVERROR_EAGAIN()) {
                 drainFrames(p.pts());
                 ret = avcodec_send_packet(ctx, packet);
@@ -118,6 +131,8 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
                 return;
             }
             drainFrames(p.pts());
+            System.err.println("[scrcpy-java][audio-debug] #" + index + " decodeMessage END");
+            System.err.flush();
         }
     }
 
@@ -127,10 +142,30 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
 
     private void drainFrames(long pts) {
         for (;;) {
+            System.err.println("[scrcpy-java][audio-debug] #" + packetIndex + " receive_frame BEGIN");
             int ret = avcodec_receive_frame(ctx, frame);
+            System.err.printf("[scrcpy-java][audio-debug] #%d receive_frame END ret=%d%n", packetIndex, ret);
+            System.err.flush();
             if (ret >= 0) {
+                System.err.printf("[scrcpy-java][audio-debug] #%d frame: format=%d samples=%d rate=%d channels=%d%n",
+                        packetIndex, frame.format(), frame.nb_samples(), frame.sample_rate(),
+                        frame.ch_layout().nb_channels());
+                System.err.flush();
                 AudioFrame pcm = toPcm(frame, pts);
-                if (pcm != null) sink.accept(pcm);
+                if (pcm != null) {
+                    System.err.printf("[scrcpy-java][audio-debug] #%d PCM ready: samples=%d bytes=%d%n",
+                            packetIndex, pcm.pcm().length, pcm.pcm().length * 2);
+                    if (!DEBUG_SKIP_AUDIO_OUTPUT) {
+                        System.err.println("[scrcpy-java][audio-debug] sink BEGIN");
+                        System.err.flush();
+                        sink.accept(pcm);
+                        System.err.println("[scrcpy-java][audio-debug] sink END");
+                        System.err.flush();
+                    } else {
+                        System.err.println("[scrcpy-java][audio-debug] sink SKIPPED (-Dscrcpy.audio.debug.skip-output=true)");
+                        System.err.flush();
+                    }
+                }
                 continue;
             }
             if (ret != AVERROR_EAGAIN() && ret != AVERROR_EOF) {
