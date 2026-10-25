@@ -574,22 +574,22 @@ public final class ScrcpyApp extends Application {
     }
 
     private VBox createDeviceNavigationBar(DeviceSession handle) {
-        Button back = deviceControlButton("←", "返回", () -> pressAndroidKey(handle, AndroidKeycodes.BACK));
-        Button home = deviceControlButton("⌂", "Home", () -> pressAndroidKey(handle, AndroidKeycodes.HOME));
-        Button recent = deviceControlButton("▣", "多任务", () -> pressAndroidKey(handle, 187));
-        Button power = deviceControlButton("⏻", "电源", () -> pressAndroidKey(handle, AndroidKeycodes.POWER));
+        Button back = deviceControlButton("←", "返回", () -> rightSidebarKey(handle, AndroidKeycodes.BACK));
+        Button home = deviceControlButton("⌂", "Home", () -> rightSidebarKey(handle, AndroidKeycodes.HOME));
+        Button recent = deviceControlButton("▣", "多任务", () -> rightSidebarKey(handle, 187));
+        Button power = deviceControlButton("⏻", "电源", () -> rightSidebarKey(handle, AndroidKeycodes.POWER));
         ToggleButton displayPower = new ToggleButton("◐");
         displayPower.setTooltip(new Tooltip("熄屏 / 亮屏"));
         displayPower.setFocusTraversable(false);
         displayPower.setMinSize(34, 34);
         displayPower.setPrefSize(34, 34);
         displayPower.setMaxSize(34, 34);
-        displayPower.setSelected(true);
+        handle.displayPowerButton = displayPower;
+        displayPower.setSelected(handle.displayPower);
+        updateDisplayPowerToggle(displayPower, handle.displayPower);
         displayPower.setOnAction(e -> {
             boolean on = displayPower.isSelected();
-            handle.controller.setDisplayPower(on);
-            displayPower.setText(on ? "◐" : "○");
-            displayPower.setTooltip(new Tooltip(on ? "熄屏" : "亮屏"));
+            rightSidebarDisplayPower(handle, on);
         });
 
         ToggleButton stayAwake = new ToggleButton("☀");
@@ -598,12 +598,12 @@ public final class ScrcpyApp extends Application {
         stayAwake.setMinSize(34, 34);
         stayAwake.setPrefSize(34, 34);
         stayAwake.setMaxSize(34, 34);
+        handle.stayAwakeButton = stayAwake;
         stayAwake.setSelected(handle.stayAwake);
         updateStayAwakeToggle(stayAwake, handle.stayAwake);
         stayAwake.setOnAction(e -> {
             boolean enabled = stayAwake.isSelected();
-            updateStayAwakeToggle(stayAwake, enabled);
-            setStayAwake(handle, enabled);
+            rightSidebarStayAwake(handle, enabled);
         });
 
         VBox bar = new VBox(5, back, home, recent, power, displayPower, stayAwake);
@@ -611,6 +611,38 @@ public final class ScrcpyApp extends Application {
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
         return bar;
+    }
+
+    private void rightSidebarKey(DeviceSession source, int keyCode) {
+        for (DeviceSession target : inputTargets(source)) {
+            pressAndroidKey(target, keyCode);
+        }
+    }
+
+    private void rightSidebarDisplayPower(DeviceSession source, boolean on) {
+        for (DeviceSession target : inputTargets(source)) {
+            target.controller.setDisplayPower(on);
+            target.displayPower = on;
+            if (target.displayPowerButton != null) {
+                updateDisplayPowerToggle(target.displayPowerButton, on);
+            }
+        }
+    }
+
+    private void rightSidebarStayAwake(DeviceSession source, boolean enabled) {
+        for (DeviceSession target : inputTargets(source)) {
+            target.stayAwake = enabled;
+            if (target.stayAwakeButton != null) {
+                updateStayAwakeToggle(target.stayAwakeButton, enabled);
+            }
+            setStayAwake(target, enabled);
+        }
+    }
+
+    private static void updateDisplayPowerToggle(ToggleButton button, boolean on) {
+        button.setSelected(on);
+        button.setText(on ? "◐" : "○");
+        button.setTooltip(new Tooltip(on ? "熄屏" : "亮屏"));
     }
 
     private static void updateStayAwakeToggle(ToggleButton button, boolean enabled) {
@@ -1310,6 +1342,9 @@ public final class ScrcpyApp extends Application {
         private boolean relativePointerValid;
         private boolean recentering;
         private boolean stayAwake;
+        private boolean displayPower = true;
+        private ToggleButton displayPowerButton;
+        private ToggleButton stayAwakeButton;
 
         private DeviceSession(
                 ScrcpySession session,
