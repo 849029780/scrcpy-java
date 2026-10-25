@@ -79,4 +79,26 @@ class ServerLauncherTest {
         assertThrows(IllegalArgumentException.class,
                 () -> ServerLauncher.buildServerArgs(options, "00000001"));
     }
+    @Test
+    void parsesVideoEncoderList() {
+        String output = """
+                [server] INFO: List of video encoders:
+                    --video-codec=h264 --video-encoder='OMX.qcom.video.encoder.avc' (hw) [vendor]
+                    --video-codec=h264 --video-encoder='c2.android.avc.encoder' (sw)
+                    --video-codec=h265 --video-encoder='c2.android.hevc.encoder' (sw)
+                    --video-codec=av1 --video-encoder='c2.android.av1.encoder' (sw)
+                """;
+
+        List<ServerLauncher.VideoEncoder> encoders = ServerLauncher.parseVideoEncoders(output);
+
+        assertEquals(4, encoders.size());
+        assertEquals("h264", encoders.get(0).codec());
+        assertEquals("OMX.qcom.video.encoder.avc", encoders.get(0).name());
+        assertTrue(encoders.get(0).hardware());
+        assertFalse(encoders.get(1).hardware());
+        assertEquals("h265", encoders.get(2).codec());
+        assertEquals("c2.android.av1.encoder", encoders.get(3).name());
+    }
+
+
 }
