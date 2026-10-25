@@ -4,7 +4,7 @@ import com.jian.scrcpy.ScrcpySession;
 import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.adb.AdbDevice;
 import com.jian.scrcpy.media.JavaSoundPlayer;
-import com.jian.scrcpy.protocol.ControlMessages;
+import com.jian.scrcpy.control.DeviceController;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
@@ -189,7 +189,8 @@ public final class ScrcpyApp extends Application {
                         return;
                     }
 
-                    DeviceSession handle = new DeviceSession(runningSession, player, view);
+                    DeviceSession handle = new DeviceSession(runningSession, player, view,
+                            new DeviceController(runningSession::sendControl));
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
                     devices.refresh();
@@ -263,40 +264,39 @@ public final class ScrcpyApp extends Application {
             e.consume();
         });
         view.addEventHandler(ScrollEvent.SCROLL, e -> {
-            ControlMessages.Position p = InputMapper.position(view, e.getX(), e.getY());
+            DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
             if (p == null) return;
             float h = (float) Math.max(-16, Math.min(16, e.getDeltaX() / 20.0));
             float v = (float) Math.max(-16, Math.min(16, e.getDeltaY() / 20.0));
-            handle.session.sendControl(new ControlMessages.Scroll(p, h, v, 0));
+            handle.controller.scroll(p, h, v, 0);
             e.consume();
         });
         view.addEventHandler(KeyEvent.KEY_PRESSED, e -> {
             int keycode = InputMapper.androidKeyCode(e.getCode());
             if (keycode < 0) return;
-            handle.session.sendControl(new ControlMessages.Keycode(
-                    0, keycode, 0, InputMapper.metaState(e.isShiftDown(), e.isControlDown(), e.isAltDown())));
+            handle.controller.key(DeviceController.ACTION_DOWN, keycode, 0,
+                    InputMapper.metaState(e.isShiftDown(), e.isControlDown(), e.isAltDown()));
             e.consume();
         });
         view.addEventHandler(KeyEvent.KEY_RELEASED, e -> {
             int keycode = InputMapper.androidKeyCode(e.getCode());
             if (keycode < 0) return;
-            handle.session.sendControl(new ControlMessages.Keycode(
-                    1, keycode, 0, InputMapper.metaState(e.isShiftDown(), e.isControlDown(), e.isAltDown())));
+            handle.controller.key(DeviceController.ACTION_UP, keycode, 0,
+                    InputMapper.metaState(e.isShiftDown(), e.isControlDown(), e.isAltDown()));
             e.consume();
         });
         view.addEventHandler(KeyEvent.KEY_TYPED, e -> {
             String text = e.getCharacter();
             if (text == null || text.isEmpty() || text.charAt(0) < 0x20) return;
-            handle.session.sendControl(new ControlMessages.Text(text));
+            handle.controller.text(text);
             e.consume();
         });
     }
 
     private void sendTouch(DeviceSession handle, MouseEvent e, int action, float pressure, int actionButton) {
-        ControlMessages.Position p = InputMapper.position(handle.view(), e.getX(), e.getY());
+        DeviceController.ScreenPosition p = InputMapper.position(handle.view(), e.getX(), e.getY());
         if (p == null) return;
-        handle.session.sendControl(new ControlMessages.Touch(
-                action, ControlMessages.POINTER_ID_MOUSE, p, pressure, actionButton, e.isPrimaryButtonDown() ? 1 : 0));
+        handle.controller.touch(action, -1L, p, pressure, actionButton, e.isPrimaryButtonDown() ? 1 : 0);
     }
 
     private void disconnectSelected() {
@@ -350,16 +350,19 @@ public final class ScrcpyApp extends Application {
         private final ScrcpySession session;
         private final JavaSoundPlayer audioPlayer;
         private final VideoView view;
+        private final DeviceController controller;
         private VBox tile;
         private AdbDevice device;
 
         private DeviceSession(
                 ScrcpySession session,
                 JavaSoundPlayer audioPlayer,
-                VideoView view) {
+                VideoView view,
+                DeviceController controller) {
             this.session = session;
             this.audioPlayer = audioPlayer;
             this.view = view;
+            this.controller = controller;
         }
 
         @Override
