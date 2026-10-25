@@ -76,6 +76,17 @@ final class ControlMessageEncoderTest {
                 new byte[]{1,2,3,4,5,6,7,8,9,10,11})));
     }
 
+
+    @Test
+    void startAppUsesUtf8AndU32LengthLikeScrcpyString16() {
+        assertArrayEquals(new byte[]{
+                16,
+                0, 0, 0, 6,
+                (byte) 0xe5, (byte) 0xbe, (byte) 0xae,
+                (byte) 0xe4, (byte) 0xbf, (byte) 0xa1
+        }, encode(new StartApp("微信")));
+    }
+
     @Test
     void cameraTorchCarriesBooleanPayload() {
         assertArrayEquals(new byte[]{18, 1}, encode(new CameraSetTorch(true)));
