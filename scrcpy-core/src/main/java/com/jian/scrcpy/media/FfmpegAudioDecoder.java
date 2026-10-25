@@ -114,8 +114,6 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         if (!(m instanceof MediaMessage.Packet p)) return;
         long index = ++packetIndex;
         if (p.config()) {
-            System.out.printf("[scrcpy-java] audio config packet: codec=%s packet=%d size=%d%n",
-                    codec, index, p.data().readableBytes());
             return;
         }
         if (DEBUG_SKIP_AUDIO_DECODE) {
@@ -125,15 +123,9 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         byte[] bytes = new byte[p.data().readableBytes() + AV_INPUT_BUFFER_PADDING_SIZE];
         int payloadSize = p.data().readableBytes();
         p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
-        System.err.printf("[scrcpy-java][audio-debug] #%d packet copied: payload=%d pts=%d%n",
-                index, payloadSize, p.pts());
-        System.err.flush();
-
         // Let FFmpeg own the packet payload. Do not point AVPacket.data at a
         // temporary JavaCPP BytePointer whose lifetime ends after send_packet.
         av_packet_unref(packet);
-        System.err.println("[scrcpy-java][audio-debug] #" + index + " av_packet_unref OK");
-
         int allocRet = av_new_packet(packet, payloadSize);
         if (allocRet < 0) {
             logDecodeError("av_new_packet", allocRet, index, payloadSize, p.pts());
@@ -143,13 +135,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         packet.data().put(bytes, 0, payloadSize);
         packet.pts(p.pts()).dts(p.pts());
 
-        System.err.println("[scrcpy-java][audio-debug] #" + index
-                + " packet copied into FFmpeg-owned buffer; send_packet BEGIN");
-        System.err.flush();
-
         int ret = avcodec_send_packet(ctx, packet);
-            System.err.printf("[scrcpy-java][audio-debug] #%d send_packet END ret=%d%n", index, ret);
-            System.err.flush();
             if (ret == AVERROR_EAGAIN()) {
                 drainFrames(p.pts());
                 ret = avcodec_send_packet(ctx, packet);
@@ -159,8 +145,6 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
                 return;
             }
             drainFrames(p.pts());
-        System.err.println("[scrcpy-java][audio-debug] #" + index + " decodeMessage END");
-        System.err.flush();
     }
 
     private static void releaseMessage(MediaMessage m) {
@@ -169,29 +153,11 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
 
     private void drainFrames(long pts) {
         for (;;) {
-            System.err.println("[scrcpy-java][audio-debug] #" + packetIndex + " receive_frame BEGIN");
             int ret = avcodec_receive_frame(ctx, frame);
-            System.err.printf("[scrcpy-java][audio-debug] #%d receive_frame END ret=%d%n", packetIndex, ret);
-            System.err.flush();
             if (ret >= 0) {
-                System.err.printf("[scrcpy-java][audio-debug] #%d frame: format=%d samples=%d rate=%d channels=%d%n",
-                        packetIndex, frame.format(), frame.nb_samples(), frame.sample_rate(),
-                        frame.ch_layout().nb_channels());
-                System.err.flush();
                 AudioFrame pcm = toPcm(frame, pts);
                 if (pcm != null) {
-                    System.err.printf("[scrcpy-java][audio-debug] #%d PCM ready: samples=%d bytes=%d%n",
-                            packetIndex, pcm.pcm().length, pcm.pcm().length * 2);
-                    if (!DEBUG_SKIP_AUDIO_OUTPUT) {
-                        System.err.println("[scrcpy-java][audio-debug] sink BEGIN");
-                        System.err.flush();
-                        sink.accept(pcm);
-                        System.err.println("[scrcpy-java][audio-debug] sink END");
-                        System.err.flush();
-                    } else {
-                        System.err.println("[scrcpy-java][audio-debug] sink SKIPPED (-Dscrcpy.audio.debug.skip-output=true)");
-                        System.err.flush();
-                    }
+                    sink.accept(pcm);
                 }
                 continue;
             }
