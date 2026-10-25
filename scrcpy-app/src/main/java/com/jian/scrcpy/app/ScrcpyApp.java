@@ -743,6 +743,8 @@ public final class ScrcpyApp extends Application {
     }
 
     private void clearMouseInputAtEdge(DeviceSession handle) {
+        // Drop stale queued input first, then emit one clean button-release state.
+        handle.session.clearPendingControlEvents();
         handle.uhid.mouse().clearTransientState();
         handle.relativePointerValid = false;
         handle.recentering = false;
