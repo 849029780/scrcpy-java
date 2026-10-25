@@ -6,6 +6,13 @@ import java.nio.file.*;
 import java.util.*;
 
 public final class ServerLauncher implements AutoCloseable {
+    public record VideoEncoder(String codec, String name, boolean hardware) {
+        @Override
+        public String toString() {
+            return name + (hardware ? "（硬件）" : "（软件）");
+        }
+    }
+
     public static final String REMOTE = "/data/local/tmp/scrcpy-server.jar";
     private final Adb adb;
     private final ScrcpyOptions o;
@@ -20,6 +27,52 @@ public final class ServerLauncher implements AutoCloseable {
     public String socketName() {
         return "scrcpy_%08x".formatted(o.scid());
     }
+
+    /**
+     * Query the official scrcpy-server encoder list without starting a mirroring session.
+     * The returned list is device-specific and contains only video encoders.
+     */
+    public List<VideoEncoder> listVideoEncoders(Path jar) throws Exception {
+        adb.push(jar, REMOTE);
+        String output = adb.run(
+                "shell",
+                "CLASSPATH=" + REMOTE,
+                "app_process",
+                "/",
+                "com.genymobile.scrcpy.Server",
+                "5.0.1",
+                "scid=00000001",
+                "log_level=info",
+                "list_encoders=true",
+                "video=true",
+                "audio=false",
+                "control=false");
+        return parseVideoEncoders(output);
+    }
+
+    static List<VideoEncoder> parseVideoEncoders(String output) {
+        if (output == null || output.isBlank()) {
+            return List.of();
+        }
+        var result = new ArrayList<VideoEncoder>();
+        var seen = new HashSet<String>();
+        var pattern = java.util.regex.Pattern.compile(
+                "--video-codec=([^\\s]+)\\s+--video-encoder='?([^'\\s]+)'?");
+        for (String line : output.lines().toList()) {
+            var m = pattern.matcher(line);
+            if (!m.find()) {
+                continue;
+            }
+            String codec = m.group(1).trim().toLowerCase(Locale.ROOT);
+            String name = m.group(2).trim();
+            if (name.isEmpty() || !seen.add(codec + "\\0" + name)) {
+                continue;
+            }
+            result.add(new VideoEncoder(codec, name, line.contains("(hw)")));
+        }
+        return List.copyOf(result);
+    }
+
 
     public void start(Path jar) throws Exception {
         start(jar, o.localPort());
