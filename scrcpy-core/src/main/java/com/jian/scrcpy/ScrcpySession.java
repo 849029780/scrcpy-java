@@ -88,7 +88,7 @@ public final class ScrcpySession implements AutoCloseable {
                     throw new IllegalArgumentException(
                             "turnScreenOff/startApp require control=true");
                 }
-                awaitControlReady(5_000);
+                awaitControlReady(10_000);
                 if (options.startApp() != null
                         && !sendControl(new ControlMessages.StartApp(options.startApp()))) {
                     throw new IllegalStateException("Could not start app: " + options.startApp());
