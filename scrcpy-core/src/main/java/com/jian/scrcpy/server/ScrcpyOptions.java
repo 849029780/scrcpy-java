@@ -38,7 +38,7 @@ public record ScrcpyOptions(
                 "h264",
                 null,
                 null,
-                "auto",
+                "hardware",
                 "opus",
                 0,
                 0,
