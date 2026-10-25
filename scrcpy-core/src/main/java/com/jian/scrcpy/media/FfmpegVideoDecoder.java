@@ -25,6 +25,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private SwsContext sws;
     private BytePointer rgbBuffer;
     private int width, height;
+
+    // Diagnostic only: bypass swscale/BGRA/JavaFX while keeping H.264 decode active.
+    private static final boolean DEBUG_SKIP_RENDER =
+            Boolean.getBoolean("scrcpy.video.debug.skip-render");
     private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(120);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
@@ -157,15 +161,23 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         if (avcodec_send_packet(ctx, packet) < 0) return;
             while (avcodec_receive_frame(ctx, frame) >= 0) {
+                if (DEBUG_SKIP_RENDER) {
+                    continue;
+                }
                 converter(frame.width(), frame.height(), frame.format());
                 sws_scale(sws, frame.data(), frame.linesize(), 0, height, rgb.data(), rgb.linesize());
                 int stride = rgb.linesize(0), n = width * height * 4;
                 byte[] out = new byte[n];
-                if (stride == width * 4) rgb.data(0).get(out);
-                else for (int y = 0; y < height; y++)
-                    rgb.data(0).position((long) y * stride).get(out, y * width * 4, width * 4);
-            sink.accept(new VideoFrame(width, height, out, p.pts()));
-        }
+                BytePointer pixels = rgb.data(0);
+                if (stride == width * 4) {
+                    pixels.position(0).get(out);
+                } else {
+                    for (int y = 0; y < height; y++) {
+                        pixels.position((long) y * stride).get(out, y * width * 4, width * 4);
+                    }
+                }
+                sink.accept(new VideoFrame(width, height, out, p.pts()));
+            }
     }
 
     private static void releaseMessage(MediaMessage m) {
