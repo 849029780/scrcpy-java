@@ -5,6 +5,7 @@ import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.adb.AdbDevice;
 import com.jian.scrcpy.media.JavaSoundPlayer;
 import com.jian.scrcpy.control.DeviceController;
+import com.jian.scrcpy.control.UhidController;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.InputMethodEvent;
 import javafx.scene.input.MouseButton;
@@ -191,8 +192,10 @@ public final class ScrcpyApp extends Application {
                         return;
                     }
 
+                    UhidController uhid = new UhidController(runningSession::sendControl);
+                    runningSession.onDeviceMessage(uhid::handle);
                     DeviceSession handle = new DeviceSession(runningSession, player, view,
-                            new DeviceController(runningSession::sendControl));
+                            new DeviceController(runningSession::sendControl), uhid);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
                     devices.refresh();
@@ -281,17 +284,17 @@ public final class ScrcpyApp extends Application {
             e.consume();
         });
         view.addEventHandler(KeyEvent.KEY_PRESSED, e -> {
-            int keycode = InputMapper.androidKeyCode(e.getCode());
-            if (keycode < 0) return;
-            handle.controller.key(DeviceController.ACTION_DOWN, keycode, 0,
-                    InputMapper.metaState(e.isShiftDown(), e.isControlDown(), e.isAltDown()));
+            int usage = HidKeyMapper.usage(e.getCode());
+            if (usage < 0) return;
+            handle.uhid.keyboard().key(usage, true,
+                    HidKeyMapper.modifiers(e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown()));
             e.consume();
         });
         view.addEventHandler(KeyEvent.KEY_RELEASED, e -> {
-            int keycode = InputMapper.androidKeyCode(e.getCode());
-            if (keycode < 0) return;
-            handle.controller.key(DeviceController.ACTION_UP, keycode, 0,
-                    InputMapper.metaState(e.isShiftDown(), e.isControlDown(), e.isAltDown()));
+            int usage = HidKeyMapper.usage(e.getCode());
+            if (usage < 0) return;
+            handle.uhid.keyboard().key(usage, false,
+                    HidKeyMapper.modifiers(e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown()));
             e.consume();
         });
         view.setOnInputMethodTextChanged(e -> {
@@ -373,6 +376,7 @@ public final class ScrcpyApp extends Application {
         private final JavaSoundPlayer audioPlayer;
         private final VideoView view;
         private final DeviceController controller;
+        private final UhidController uhid;
         private VBox tile;
         private AdbDevice device;
 
@@ -380,15 +384,18 @@ public final class ScrcpyApp extends Application {
                 ScrcpySession session,
                 JavaSoundPlayer audioPlayer,
                 VideoView view,
-                DeviceController controller) {
+                DeviceController controller,
+                UhidController uhid) {
             this.session = session;
             this.audioPlayer = audioPlayer;
             this.view = view;
             this.controller = controller;
+            this.uhid = uhid;
         }
 
         @Override
         public void close() {
+            uhid.close();
             session.close();
             audioPlayer.close();
         }
