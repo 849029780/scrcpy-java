@@ -57,6 +57,13 @@ public final class UhidMouse implements AutoCloseable {
         if (next != buttons) buttons(next);
     }
 
+    /** Release every pressed mouse button without destroying the UHID device. */
+    public void releaseButtons() {
+        if (!open || buttons == 0) return;
+        buttons = 0;
+        send(0, 0, 0, 0, 0);
+    }
+
     public void buttons(int buttons) {
         open();
         this.buttons = buttons & 0x1f;
@@ -96,10 +103,15 @@ public final class UhidMouse implements AutoCloseable {
     @Override
     public void close() {
         if (!open) return;
-        buttons = 0;
-        send(0, 0, 0, 0, 0);
-        sink.accept(new ControlMessages.UhidDestroy(HID_ID));
-        open = false;
+        try {
+            releaseButtons();
+        } finally {
+            try {
+                sink.accept(new ControlMessages.UhidDestroy(HID_ID));
+            } finally {
+                open = false;
+            }
+        }
     }
 
     private static byte[] bytes(int... values) {
