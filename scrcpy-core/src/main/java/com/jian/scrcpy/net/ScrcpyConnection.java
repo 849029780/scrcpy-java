@@ -41,7 +41,7 @@ public final class ScrcpyConnection implements AutoCloseable {
             if (audioHandler != null) pipeline.addLast("audioHandler", audioHandler);
         } else {
             pipeline.addLast("deviceMessage", new DeviceMessageDecoder());
-            pipeline.addLast("controlEncoder", new ControlMessageEncoder());
+            pipeline.addLast("controlEncoder", new ControlMessageEncoder());\n            controlQueue = new ControlMessageQueue();\n            pipeline.addLast("controlQueue", controlQueue);
             if (controlHandler != null) pipeline.addLast("controlHandler", controlHandler);
         }
 
