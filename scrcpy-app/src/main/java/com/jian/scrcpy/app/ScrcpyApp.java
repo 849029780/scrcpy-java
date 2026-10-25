@@ -108,11 +108,8 @@ public final class ScrcpyApp extends Application {
         deviceManager.setOnAction(e -> showDeviceManager());
         MenuItem refreshDevices = new MenuItem("刷新设备");
         refreshDevices.setOnAction(e -> scanDevices());
-        CheckMenuItem adaptClick = new CheckMenuItem("主设备点击坐标适配");
-        adaptClick.setSelected(adaptScreenClick);
-        adaptClick.setOnAction(e -> adaptScreenClick = adaptClick.isSelected());
         MenuButton deviceMenu = new MenuButton("设备");
-        deviceMenu.getItems().addAll(deviceManager, refreshDevices, adaptClick);
+        deviceMenu.getItems().addAll(deviceManager, refreshDevices);
 
         HBox toolbar = new HBox(12, deviceMenu, primaryStatus, status);
         toolbar.setAlignment(Pos.CENTER_LEFT);
@@ -508,6 +505,20 @@ public final class ScrcpyApp extends Application {
         StackPane viewport = new StackPane(handle.view());
         viewport.setStyle("-fx-background-color: #222222;");
 
+        // Per-device overflow menu. The click-coordinate adaptation is a
+        // global broadcast policy, but is exposed from every device tile.
+        MenuButton deviceMenu = new MenuButton("⋮");
+        deviceMenu.setFocusTraversable(false);
+        deviceMenu.setTooltip(new Tooltip("设备菜单"));
+        CheckMenuItem adaptClick = new CheckMenuItem("主设备点击坐标适配");
+        adaptClick.setSelected(adaptScreenClick);
+        adaptClick.setOnAction(e -> {
+            adaptScreenClick = adaptClick.isSelected();
+            refreshDeviceMenuStates();
+        });
+        deviceMenu.getItems().add(adaptClick);
+        StackPane.setAlignment(deviceMenu, Pos.TOP_RIGHT);
+        StackPane.setMargin(deviceMenu, new Insets(6));
         handle.view().setPreserveRatio(true);
         handle.view().setSmooth(true);
 
@@ -527,12 +538,14 @@ public final class ScrcpyApp extends Application {
         HBox header = new HBox(6, title, new Region(), mouseMode, primary, close);
         HBox.setHgrow(header.getChildren().get(1), Priority.ALWAYS);
 
+        viewport.getChildren().add(deviceMenu);
         tile.getChildren().addAll(header, viewport);
         VBox.setVgrow(viewport, Priority.ALWAYS);
 
         handle.tile = tile;
         handle.viewport = viewport;
         handle.primaryButton = primary;
+        handle.adaptClickItem = adaptClick;
         handle.device = device;
 
         resizeTile(handle, false);
@@ -875,6 +888,15 @@ public final class ScrcpyApp extends Application {
         }
     }
 
+    private void refreshDeviceMenuStates() {
+        sessions.values().forEach(session -> {
+            if (session.adaptClickItem != null
+                    && session.adaptClickItem.isSelected() != adaptScreenClick) {
+                session.adaptClickItem.setSelected(adaptScreenClick);
+            }
+        });
+    }
+
     private void refreshPrimaryUi() {
         if (primarySerial == null) {
             primaryStatus.setText("主设备：无");
@@ -885,6 +907,7 @@ public final class ScrcpyApp extends Application {
         sessions.values().forEach(s -> {
             if (s.primaryButton != null) s.primaryButton.setText(isPrimary(s) ? "取消主设备" : "设为主设备");
         });
+        refreshDeviceMenuStates();
     }
 
     private void setMouseMode(DeviceSession handle, MouseMode mode) {
@@ -1086,6 +1109,7 @@ public final class ScrcpyApp extends Application {
         private VBox tile;
         private StackPane viewport;
         private Button primaryButton;
+        private CheckMenuItem adaptClickItem;
         private AdbDevice device;
         private boolean primary;
         private MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
