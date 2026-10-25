@@ -52,6 +52,9 @@ public final class ScrcpyApp extends Application {
     private final StackPane primaryHost = new StackPane();
     private final BorderPane screenArea = new BorderPane();
     private final Map<String, DeviceSession> sessions = new ConcurrentHashMap<>();
+    /** User-selected connections survive temporary ADB disconnects. */
+    private final Map<String, ConnectionSettings> desiredConnections = new ConcurrentHashMap<>();
+    private final Set<String> reconnecting = ConcurrentHashMap.newKeySet();
     private volatile String primarySerial;
     private final Robot mouseRobot = new Robot();
     private Adb adb;
@@ -187,18 +190,29 @@ public final class ScrcpyApp extends Application {
             List<String> lost = new ArrayList<>();
             sessions.forEach((serial, handle) -> {
                 AdbDevice d = current.get(serial);
-                if (d == null || !d.ready()) {
-                    lost.add(serial);
-                }
+                if (d == null || !d.ready()) lost.add(serial);
             });
             if (!lost.isEmpty()) {
                 Platform.runLater(() -> lost.forEach(serial -> {
                     if (sessions.containsKey(serial)) {
-                        status.setText("设备已离线: " + serial);
-                        disconnect(serial);
+                        status.setText("设备已离线: " + serial + "，等待自动重连");
+                        disconnectForReconnect(serial);
                     }
                 }));
             }
+            current.values().stream()
+                    .filter(AdbDevice::ready)
+                    .filter(d -> desiredConnections.containsKey(d.serial()))
+                    .filter(d -> !sessions.containsKey(d.serial()))
+                    .forEach(d -> {
+                        if (reconnecting.add(d.serial())) {
+                            ConnectionSettings settings = desiredConnections.get(d.serial());
+                            Platform.runLater(() -> {
+                                status.setText("设备已恢复，正在重连: " + d.displayName());
+                                connectDevice(d, settings, true);
+                            });
+                        }
+                    });
         } catch (Throwable ignored) {
             // A transient ADB restart must not tear down active sessions.
         }
@@ -388,11 +402,18 @@ public final class ScrcpyApp extends Application {
 
         showConnectionSettings().ifPresent(settings -> {
             status.setText("正在连接 " + targets.size() + " 台设备...");
-            targets.forEach(device -> connectDevice(device, settings));
+            targets.forEach(device -> {
+                desiredConnections.put(device.serial(), settings);
+                connectDevice(device, settings, false);
+            });
         });
     }
 
     private void connectDevice(AdbDevice device, ConnectionSettings settings) {
+        connectDevice(device, settings, false);
+    }
+
+    private void connectDevice(AdbDevice device, ConnectionSettings settings, boolean reconnect) {
         Thread.startVirtualThread(() -> {
             JavaSoundPlayer audioPlayer = null;
             ScrcpySession session = null;
@@ -422,6 +443,12 @@ public final class ScrcpyApp extends Application {
                         player::accept);
 
                 Platform.runLater(() -> {
+                    reconnecting.remove(device.serial());
+                    if (!desiredConnections.containsKey(device.serial())) {
+                        runningSession.close();
+                        player.close();
+                        return;
+                    }
                     if (sessions.containsKey(device.serial())) {
                         runningSession.close();
                         player.close();
@@ -442,10 +469,11 @@ public final class ScrcpyApp extends Application {
                     updateButtons();
                 });
             } catch (Throwable e) {
+                reconnecting.remove(device.serial());
                 if (session != null) session.close();
                 if (audioPlayer != null) audioPlayer.close();
                 Platform.runLater(() -> {
-                    status.setText("连接 " + device.displayName() + " 失败: " + e.getMessage());
+                    status.setText((reconnect ? "自动重连 " : "连接 ") + device.displayName() + " 失败: " + e.getMessage());
                     devices.refresh();
                     updateButtons();
                 });
@@ -861,13 +889,20 @@ public final class ScrcpyApp extends Application {
     }
 
     private void disconnect(String serial) {
+        desiredConnections.remove(serial);
+        reconnecting.remove(serial);
+        disconnectSession(serial);
+    }
+
+    private void disconnectForReconnect(String serial) {
+        reconnecting.remove(serial);
+        disconnectSession(serial);
+    }
+
+    private void disconnectSession(String serial) {
         DeviceSession handle = sessions.remove(serial);
         if (handle == null) return;
 
-        // Do not close Netty/audio resources on the JavaFX Application Thread.
-        // In particular, closing the per-device EventLoopGroup can block while
-        // channels are being torn down. The UI tile is removed immediately,
-        // while the actual session shutdown happens in a virtual thread.
         if (handle.tile != null) {
             primaryHost.getChildren().remove(handle.tile);
             secondaryGrid.getChildren().remove(handle.tile);
@@ -934,6 +969,8 @@ public final class ScrcpyApp extends Application {
     @Override
     public void stop() {
         adbMonitor.shutdownNow();
+        desiredConnections.clear();
+        reconnecting.clear();
         closeAllSessions();
     }
 
