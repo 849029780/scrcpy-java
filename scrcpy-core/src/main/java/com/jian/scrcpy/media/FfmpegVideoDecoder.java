@@ -23,8 +23,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private AVFrame frame, rgb;
     private AVPacket packet;
     private SwsContext sws;
-    private BytePointer rgbBuffer;
     private int width, height;
+    private int pixelFormat = -1;
 
     // Diagnostic only: bypass swscale/BGRA/JavaFX while keeping H.264 decode active.
     private static final boolean DEBUG_SKIP_RENDER =
@@ -74,18 +74,18 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private void converter(int w, int h, int fmt) {
-        if (w == width && h == height && sws != null) return;
+        if (w == width && h == height && fmt == pixelFormat && sws != null) {
+            return;
+        }
+
         if (sws != null) {
             sws_freeContext(sws);
             sws = null;
         }
-        if (rgbBuffer != null) {
-            rgbBuffer.close();
-            rgbBuffer = null;
-        }
 
         width = w;
         height = h;
+        pixelFormat = fmt;
 
         sws = sws_getContext(
                 w, h, fmt,
@@ -93,20 +93,24 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 SWS_BILINEAR,
                 null, null, (DoublePointer) null);
         if (sws == null) {
-            throw new IllegalStateException("cannot create swscale context: " + w + "x" + h);
+            throw new IllegalStateException(
+                    "cannot create swscale context: "
+                            + w + "x" + h + " fmt=" + fmt);
         }
 
-        int size = av_image_get_buffer_size(AV_PIX_FMT_BGRA, w, h, 1);
-        if (size <= 0) {
-            throw new IllegalStateException("invalid BGRA buffer size: " + size);
-        }
+        // Let FFmpeg allocate and own the destination frame buffer.
+        // This avoids mixing JavaCPP-owned raw memory with AVFrame data
+        // while sws_scale() is writing to the destination.
+        av_frame_unref(rgb);
+        rgb.width(w);
+        rgb.height(h);
+        rgb.format(AV_PIX_FMT_BGRA);
 
-        // Allocate through JavaCPP so the BytePointer owns the buffer.
-        // Do not mix JavaCPP deallocation with av_free() for the same block.
-        rgbBuffer = new BytePointer(size);
-        av_image_fill_arrays(
-                rgb.data(), rgb.linesize(), rgbBuffer,
-                AV_PIX_FMT_BGRA, w, h, 1);
+        if (av_frame_get_buffer(rgb, 32) < 0) {
+            throw new IllegalStateException(
+                    "cannot allocate BGRA frame buffer: "
+                            + w + "x" + h);
+        }
     }
 
     @Override
@@ -189,7 +193,31 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 if (DEBUG_SKIP_SWS_SCALE) {
                     continue;
                 }
-                sws_scale(sws, frame.data(), frame.linesize(), 0, height, rgb.data(), rgb.linesize());
+                System.out.printf(
+                        "[scrcpy-video] sws_scale begin "
+                                + "src=%dx%d fmt=%d dst=%dx%d "
+                                + "srcStride=[%d,%d,%d,%d] dstStride=%d%n",
+                        frame.width(), frame.height(), frame.format(),
+                        width, height,
+                        frame.linesize(0), frame.linesize(1),
+                        frame.linesize(2), frame.linesize(3),
+                        rgb.linesize(0));
+
+                int scaled = sws_scale(
+                        sws,
+                        frame.data(),
+                        frame.linesize(),
+                        0,
+                        frame.height(),
+                        rgb.data(),
+                        rgb.linesize());
+
+                System.out.printf("[scrcpy-video] sws_scale end: %d%n", scaled);
+
+                if (scaled <= 0) {
+                    continue;
+                }
+
                 int stride = rgb.linesize(0), n = width * height * 4;
                 byte[] out = new byte[n];
                 BytePointer pixels = rgb.data(0);
