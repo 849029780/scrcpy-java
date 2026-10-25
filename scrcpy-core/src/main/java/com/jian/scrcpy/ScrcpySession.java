@@ -3,7 +3,6 @@ package com.jian.scrcpy;
 import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.media.AudioFrame;
 import com.jian.scrcpy.media.FfmpegAudioDecoder;
-import com.jian.scrcpy.media.FfmpegVideoDecoder;
 import com.jian.scrcpy.net.ScrcpyConnection;
 import com.jian.scrcpy.protocol.ControlMessages;
 import com.jian.scrcpy.protocol.ClipboardAckTracker;
@@ -27,7 +26,6 @@ public final class ScrcpySession implements AutoCloseable {
     private final ScrcpyOptions options;
     private ServerLauncher server;
     private ScrcpyConnection connection;
-    private FfmpegVideoDecoder videoDecoder;
     private FfmpegAudioDecoder audioDecoder;
     private volatile Consumer<DeviceMessage> deviceMessageSink = message -> {};
     private final CopyOnWriteArrayList<Consumer<DeviceMessage>> deviceMessageListeners = new CopyOnWriteArrayList<>();
@@ -40,13 +38,8 @@ public final class ScrcpySession implements AutoCloseable {
         this.options = options;
     }
 
-    public void start(Path serverJar, Consumer<com.jian.scrcpy.media.VideoFrame> videoSink)
-            throws Exception {
-        start(serverJar, videoSink, null);
-    }
-
     public synchronized void start(Path serverJar,
-                      Consumer<com.jian.scrcpy.media.VideoFrame> videoSink,
+                      ChannelInboundHandler videoHandler,
                       Consumer<AudioFrame> audioSink)
             throws Exception {
         if (state == State.RUNNING) return;
@@ -57,15 +50,12 @@ public final class ScrcpySession implements AutoCloseable {
         connection.onTransportFailure(cause -> transportFailureSink.accept(cause));
 
         try {
-            if (options.video()) {
-                videoDecoder = new FfmpegVideoDecoder(videoSink, options.videoDecoder());
-            }
             if (options.audio()) {
                 audioDecoder = new FfmpegAudioDecoder(audioSink == null ? f -> {} : audioSink);
             }
 
             connection.listen(
-                    videoDecoder,
+                    videoHandler,
                     audioDecoder,
                     options.control() ? new SimpleChannelInboundHandler<DeviceMessage>() {
                         @Override
@@ -188,10 +178,6 @@ public final class ScrcpySession implements AutoCloseable {
             if (connection != null) {
                 connection.close();
                 connection = null;
-            }
-            if (videoDecoder != null) {
-                videoDecoder.close();
-                videoDecoder = null;
             }
             if (audioDecoder != null) {
                 audioDecoder.close();
