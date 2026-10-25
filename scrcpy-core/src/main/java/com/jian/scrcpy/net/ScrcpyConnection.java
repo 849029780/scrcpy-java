@@ -16,7 +16,7 @@ public final class ScrcpyConnection implements AutoCloseable {
     private final EventLoopGroup group =
             new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
     private final int port;
-    private Channel video, audio, control, listener;
+    private Channel video, audio, control, listener;\n    private volatile ControlMessageQueue controlQueue;
     private volatile int localPort;
     private volatile String deviceName;
 
