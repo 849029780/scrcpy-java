@@ -24,6 +24,8 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private long packetIndex;
     /** Diagnostic switch: bypass JavaSound while keeping FFmpeg decode active. */
     private static final boolean DEBUG_SKIP_AUDIO_OUTPUT = Boolean.getBoolean("scrcpy.audio.debug.skip-output");
+    /** Diagnostic switch: bypass all FFmpeg audio decode while keeping MediaMessage/ByteBuf flow active. */
+    private static final boolean DEBUG_SKIP_AUDIO_DECODE = Boolean.getBoolean("scrcpy.audio.debug.skip-decode");
     private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(240);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
@@ -102,7 +104,13 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private synchronized void decodeMessage(MediaMessage m) {
-        if (m instanceof MediaMessage.Codec c) { init(c.codec()); return; }
+        if (m instanceof MediaMessage.Codec c) {
+            codec = c.codec();
+            if (!DEBUG_SKIP_AUDIO_DECODE) {
+                init(c.codec());
+            }
+            return;
+        }
         if (!(m instanceof MediaMessage.Packet p)) return;
         long index = ++packetIndex;
         if (p.config()) {
@@ -110,6 +118,10 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
                     codec, index, p.data().readableBytes());
             return;
         }
+        if (DEBUG_SKIP_AUDIO_DECODE) {
+            return;
+        }
+
         byte[] bytes = new byte[p.data().readableBytes() + AV_INPUT_BUFFER_PADDING_SIZE];
         int payloadSize = p.data().readableBytes();
         p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
