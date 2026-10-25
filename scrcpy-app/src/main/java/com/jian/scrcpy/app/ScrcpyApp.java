@@ -670,6 +670,7 @@ public final class ScrcpyApp extends Application {
             if (old.tile != null) {
                 primaryHost.getChildren().remove(old.tile);
                 secondaryGrid.getChildren().add(old.tile);
+                resizeTile(old, false);
             }
         }
 
@@ -679,6 +680,7 @@ public final class ScrcpyApp extends Application {
             secondaryGrid.getChildren().remove(handle.tile);
             primaryHost.getChildren().setAll(handle.tile);
         }
+        screenArea.setLeft(primaryHost);
         primaryHost.setManaged(true);
         primaryHost.setVisible(true);
         primaryHost.setPrefWidth(620);
@@ -687,9 +689,10 @@ public final class ScrcpyApp extends Application {
     }
 
     private void clearPrimary() {
-        DeviceSession old = sessions.remove(primarySerial);
+        DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
         if (old == null) {
             primarySerial = null;
+            screenArea.setLeft(null);
             primaryHost.getChildren().clear();
             primaryHost.setManaged(false);
             primaryHost.setVisible(false);
@@ -705,6 +708,7 @@ public final class ScrcpyApp extends Application {
         primaryHost.setManaged(false);
         primaryHost.setVisible(false);
         primaryHost.setPrefWidth(0);
+        screenArea.setLeft(null);
         refreshPrimaryUi();
     }
 
