@@ -147,9 +147,8 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
                 return;
             }
             drainFrames(p.pts());
-            System.err.println("[scrcpy-java][audio-debug] #" + index + " decodeMessage END");
-            System.err.flush();
-        }
+        System.err.println("[scrcpy-java][audio-debug] #" + index + " decodeMessage END");
+        System.err.flush();
     }
 
     private static void releaseMessage(MediaMessage m) {
