@@ -620,6 +620,11 @@ public final class ScrcpyApp extends Application {
             e.consume();
         });
         view.addEventHandler(MouseEvent.MOUSE_DRAGGED, e -> {
+            if (isPointerOutsideOrAtEdge(view, e)) {
+                endMouseInput(handle, e);
+                e.consume();
+                return;
+            }
             if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
                 double dx = relativeDeltaX(handle, e);
                 double dy = relativeDeltaY(handle, e);
@@ -677,9 +682,23 @@ public final class ScrcpyApp extends Application {
         double width = view.getBoundsInLocal().getWidth();
         double height = view.getBoundsInLocal().getHeight();
         if (width <= 0 || height <= 0) return true;
-        // A small symmetric guard catches fast crossings on every side,
-        // especially the left edge where JavaFX may skip MOUSE_EXITED.
-        double margin = 1.0;
+
+        // Use screen coordinates for boundary detection. JavaFX local X may
+        // stop at a small positive value when the native Windows pointer exits
+        // through the left edge, so checking only e.getX() is asymmetric.
+        javafx.geometry.Point2D topLeft = view.localToScreen(0, 0);
+        javafx.geometry.Point2D bottomRight = view.localToScreen(width, height);
+        if (topLeft != null && bottomRight != null) {
+            double margin = 2.0;
+            double screenX = e.getScreenX();
+            double screenY = e.getScreenY();
+            return screenX <= topLeft.getX() + margin
+                    || screenX >= bottomRight.getX() - margin
+                    || screenY <= topLeft.getY() + margin
+                    || screenY >= bottomRight.getY() - margin;
+        }
+
+        double margin = 2.0;
         return e.getX() <= margin || e.getY() <= margin
                 || e.getX() >= width - margin || e.getY() >= height - margin;
     }
