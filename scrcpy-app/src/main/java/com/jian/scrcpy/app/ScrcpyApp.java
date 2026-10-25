@@ -10,6 +10,7 @@ import com.jian.scrcpy.control.ClipboardController;
 import com.jian.scrcpy.input.AndroidKeycodes;
 import com.jian.scrcpy.protocol.ControlMessages;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
