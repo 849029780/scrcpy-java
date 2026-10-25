@@ -137,8 +137,8 @@ public final class ScrcpySession implements AutoCloseable {
 
     /** Clear queued droppable input/events for an immediate input-state reset. */
     public synchronized void clearPendingControlEvents() {
-        if (connection != null && controlQueue != null) {
-            controlQueue.clearDroppable();
+        if (connection != null && connection.controlQueue() != null) {
+            connection.controlQueue().clearDroppable();
         }
     }
 
