@@ -34,6 +34,16 @@ public final class DeviceController {
         if (text != null && !text.isEmpty()) sink.accept(new ControlMessages.Text(text));
     }
 
+    /**
+     * Unicode-safe text entry through Android clipboard + paste.
+     * scrcpy SDK INJECT_TEXT cannot reliably inject CJK characters.
+     */
+    public void pasteText(String text) {
+        if (text != null && !text.isEmpty()) {
+            sink.accept(new ControlMessages.ClipboardSet(0, true, text));
+        }
+    }
+
     public void touch(int action, long pointerId, ScreenPosition position,
                       float pressure, int actionButton, int buttons) {
         sink.accept(new ControlMessages.Touch(action, pointerId, position.toProtocol(),
