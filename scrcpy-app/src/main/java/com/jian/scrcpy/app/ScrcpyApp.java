@@ -538,7 +538,6 @@ public final class ScrcpyApp extends Application {
         HBox header = new HBox(6, title, new Region(), close);
         HBox.setHgrow(header.getChildren().get(1), Priority.ALWAYS);
 
-        viewport.getChildren().add(deviceMenu);
         tile.getChildren().addAll(header, videoAndNavigation);
         VBox.setVgrow(videoAndNavigation, Priority.ALWAYS);
 
