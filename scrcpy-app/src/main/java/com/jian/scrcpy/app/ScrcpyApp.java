@@ -599,13 +599,23 @@ public final class ScrcpyApp extends Application {
         stayAwake.setPrefSize(34, 34);
         stayAwake.setMaxSize(34, 34);
         stayAwake.setSelected(handle.stayAwake);
-        stayAwake.setOnAction(e -> setStayAwake(handle, stayAwake.isSelected()));
+        updateStayAwakeToggle(stayAwake, handle.stayAwake);
+        stayAwake.setOnAction(e -> {
+            boolean enabled = stayAwake.isSelected();
+            updateStayAwakeToggle(stayAwake, enabled);
+            setStayAwake(handle, enabled);
+        });
 
         VBox bar = new VBox(5, back, home, recent, power, displayPower, stayAwake);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
         return bar;
+    }
+
+    private static void updateStayAwakeToggle(ToggleButton button, boolean enabled) {
+        button.setText(enabled ? "☀" : "☾");
+        button.setTooltip(new Tooltip(enabled ? "关闭屏幕常亮" : "开启屏幕常亮"));
     }
 
     private void setStayAwake(DeviceSession handle, boolean enabled) {
