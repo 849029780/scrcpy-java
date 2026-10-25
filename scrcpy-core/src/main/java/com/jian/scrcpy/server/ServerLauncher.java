@@ -61,6 +61,11 @@ public final class ServerLauncher implements AutoCloseable {
         if (!o.audio()) a.add("audio=false");
         if (!o.control()) a.add("control=false");
 
+        // Forward Android-side display/power options to the scrcpy 5.0.1 server.
+        if (o.showTouches()) a.add("show_touches=true");
+        if (o.stayAwake()) a.add("stay_awake=true");
+        if (o.turnScreenOff()) a.add("turn_screen_off=true");
+
         System.out.println("[scrcpy-java] server args: " + String.join(" ", a));
         process = adb.shellAsync(a);
     }
