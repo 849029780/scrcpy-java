@@ -60,7 +60,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         av_image_fill_arrays(rgb.data(), rgb.linesize(), rgbBuffer, AV_PIX_FMT_BGRA, w, h, 1);
     }
 
-    protected void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
+    protected synchronized void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
         if (m instanceof MediaMessage.Codec c) {
             init(c.codec());
             return;
@@ -90,8 +90,11 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
     }
 
-    public void close() {
-        if (sws != null) sws_freeContext(sws);
+    public synchronized void close() {
+        if (sws != null) {
+            sws_freeContext(sws);
+            sws = null;
+        }
         if (rgbBuffer != null) {
             av_free(rgbBuffer);
             rgbBuffer = null;
@@ -99,6 +102,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         if (packet != null) av_packet_free(packet);
         if (rgb != null) av_frame_free(rgb);
         if (frame != null) av_frame_free(frame);
-        if (ctx != null) avcodec_free_context(ctx);
+        if (ctx != null) {
+            avcodec_free_context(ctx);
+            ctx = null;
+        }
     }
 }
