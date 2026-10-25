@@ -529,9 +529,8 @@ public final class ScrcpyApp extends Application {
         }
 
         private void resetRelativePointer(double x, double y) {
-            lastMouseX = x;
-            lastMouseY = y;
             relativePointerValid = true;
+            recentering = false;
         }
 
         public VideoView view() {
