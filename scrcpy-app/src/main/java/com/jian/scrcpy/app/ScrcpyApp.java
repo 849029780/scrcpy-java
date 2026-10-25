@@ -336,7 +336,7 @@ public final class ScrcpyApp extends Application {
         ComboBox<String> maxFps = combo("不限制", "30", "45", "60", "90", "120", "144");
         ComboBox<String> crop = combo("不裁剪", "1080:1920:0:0", "1920:1080:0:0", "1440:2560:0:0");
         TextField startApp = new TextField();
-        startApp.setPromptText("可选：应用包名");
+        startApp.setPromptText("可选：应用名称或包名，例如 抖音 / com.ss.android.ugc.aweme");
 
         videoCodec.setValue("H.264");
         audioCodec.setValue("opus");
