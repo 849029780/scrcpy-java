@@ -276,10 +276,15 @@ public final class ScrcpyApp extends Application {
         handle.view().setFitHeight(TILE_HEIGHT - 42);
         installControls(handle);
 
+        ComboBox<MouseMode> mouseMode = new ComboBox<>(FXCollections.observableArrayList(MouseMode.values()));
+        mouseMode.setValue(MouseMode.ABSOLUTE_TOUCH);
+        mouseMode.setPrefWidth(112);
+        mouseMode.setOnAction(e -> setMouseMode(handle, mouseMode.getValue()));
+
         Button close = new Button("断开");
         close.setOnAction(e -> disconnect(device.serial()));
 
-        HBox header = new HBox(6, title, new Region(), close);
+        HBox header = new HBox(6, title, new Region(), mouseMode, close);
         HBox.setHgrow(header.getChildren().get(1), Priority.ALWAYS);
 
         tile.getChildren().addAll(header, viewport);
@@ -292,31 +297,64 @@ public final class ScrcpyApp extends Application {
     private void installControls(DeviceSession handle) {
         VideoView view = handle.view();
         view.setFocusTraversable(true);
-        // Keep the normal pointer while dragging; do not expose JavaFX's move/drag cursor.
         view.setCursor(Cursor.DEFAULT);
 
+        view.addEventHandler(MouseEvent.MOUSE_ENTERED, e -> {
+            if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
+                handle.resetRelativePointer(e.getX(), e.getY());
+            }
+        });
+        view.addEventHandler(MouseEvent.MOUSE_EXITED, e -> handle.relativePointerValid = false);
         view.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
+            if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
+                sendRelativeMove(handle, e);
+                return;
+            }
             DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
-            if (p == null) return;
-            handle.controller.hover(p);
+            if (p != null) handle.controller.hover(p);
         });
         view.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
-            if (e.getButton() != MouseButton.PRIMARY) return;
             view.requestFocus();
+            if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
+                int button = MouseInputMapper.uhidButton(e.getButton());
+                if (button != 0) handle.uhid.mouse().button(button, true);
+                handle.resetRelativePointer(e.getX(), e.getY());
+                e.consume();
+                return;
+            }
+            if (e.getButton() != MouseButton.PRIMARY) return;
             sendTouch(handle, e, 0, 1f, 1);
             e.consume();
         });
         view.addEventHandler(MouseEvent.MOUSE_DRAGGED, e -> {
+            if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
+                sendRelativeMove(handle, e);
+                e.consume();
+                return;
+            }
             if (!e.isPrimaryButtonDown()) return;
             sendTouch(handle, e, 2, 1f, 0);
             e.consume();
         });
         view.addEventHandler(MouseEvent.MOUSE_RELEASED, e -> {
+            if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
+                int button = MouseInputMapper.uhidButton(e.getButton());
+                if (button != 0) handle.uhid.mouse().button(button, false);
+                e.consume();
+                return;
+            }
             if (e.getButton() != MouseButton.PRIMARY) return;
             sendTouch(handle, e, 1, 0f, 1);
             e.consume();
         });
         view.addEventHandler(ScrollEvent.SCROLL, e -> {
+            if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
+                // JavaFX deltas are pixels; convert to HID wheel detents while
+                // preserving small deltas in UhidMouse's residual accumulator.
+                handle.uhid.mouse().scroll(e.getDeltaX() / 40.0, e.getDeltaY() / 40.0);
+                e.consume();
+                return;
+            }
             DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
             if (p == null) return;
             float h = (float) Math.max(-16, Math.min(16, e.getDeltaX() / 20.0));
@@ -338,11 +376,30 @@ public final class ScrcpyApp extends Application {
                     HidKeyMapper.modifiers(e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown()));
             e.consume();
         });
-        // UHID is a physical keyboard: forward physical key events only.
-        // Do not forward JavaFX KEY_TYPED/InputMethodEvent, otherwise printable
-        // keys are injected twice and PC IME committed text would fall back to
-        // clipboard paste. Chinese is composed directly by the Android IME from
-        // the UHID key stream (PC keyboard/input source should be in Latin mode).
+    }
+
+    private void setMouseMode(DeviceSession handle, MouseMode mode) {
+        handle.mouseMode = mode == null ? MouseMode.ABSOLUTE_TOUCH : mode;
+        handle.relativePointerValid = false;
+        handle.view().setCursor(Cursor.DEFAULT);
+        if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
+            handle.uhid.openMouse();
+            handle.view().requestFocus();
+        } else {
+            handle.uhid.mouse().buttons(0);
+        }
+    }
+
+    private void sendRelativeMove(DeviceSession handle, MouseEvent e) {
+        if (!handle.relativePointerValid) {
+            handle.resetRelativePointer(e.getX(), e.getY());
+            return;
+        }
+        double dx = e.getX() - handle.lastMouseX;
+        double dy = e.getY() - handle.lastMouseY;
+        handle.lastMouseX = e.getX();
+        handle.lastMouseY = e.getY();
+        handle.uhid.mouse().move(dx, dy);
     }
 
     private void sendTouch(DeviceSession handle, MouseEvent e, int action, float pressure, int actionButton) {
@@ -398,6 +455,15 @@ public final class ScrcpyApp extends Application {
         launch(args);
     }
 
+    private enum MouseMode {
+        ABSOLUTE_TOUCH("触控"),
+        UHID_RELATIVE("UHID 鼠标");
+
+        private final String label;
+        MouseMode(String label) { this.label = label; }
+        @Override public String toString() { return label; }
+    }
+
     private static final class DeviceSession implements AutoCloseable {
         private final ScrcpySession session;
         private final JavaSoundPlayer audioPlayer;
@@ -407,6 +473,10 @@ public final class ScrcpyApp extends Application {
         private final ClipboardController clipboard;
         private VBox tile;
         private AdbDevice device;
+        private MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
+        private boolean relativePointerValid;
+        private double lastMouseX;
+        private double lastMouseY;
 
         private DeviceSession(
                 ScrcpySession session,
@@ -428,6 +498,12 @@ public final class ScrcpyApp extends Application {
             uhid.close();
             session.close();
             audioPlayer.close();
+        }
+
+        private void resetRelativePointer(double x, double y) {
+            lastMouseX = x;
+            lastMouseY = y;
+            relativePointerValid = true;
         }
 
         public VideoView view() {
