@@ -30,6 +30,9 @@ import javafx.scene.control.TextInputDialog;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public final class ScrcpyApp extends Application {
     private static final double TILE_WIDTH = 360;
@@ -54,6 +57,11 @@ public final class ScrcpyApp extends Application {
     private Adb adb;
     private volatile String lastDesktopClipboard = "";
     private final java.util.concurrent.atomic.AtomicBoolean applyingRemoteClipboard = new java.util.concurrent.atomic.AtomicBoolean();
+    private final ScheduledExecutorService adbMonitor = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "scrcpy-adb-monitor");
+        t.setDaemon(true);
+        return t;
+    });
 
     @Override
     public void start(Stage stage) {
@@ -120,6 +128,7 @@ public final class ScrcpyApp extends Application {
 
         scanDevices();
         startClipboardMonitor();
+        startAdbMonitor();
     }
 
     private ListCell<AdbDevice> deviceCell() {
@@ -165,6 +174,34 @@ public final class ScrcpyApp extends Application {
         dialog.getDialogPane().setContent(box);
         dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
         dialog.show();
+    }
+
+    private void startAdbMonitor() {
+        adbMonitor.scheduleWithFixedDelay(this::pollAdbState, 1500, 1500, TimeUnit.MILLISECONDS);
+    }
+
+    private void pollAdbState() {
+        try {
+            Map<String, AdbDevice> current = new HashMap<>();
+            adb.devices().forEach(d -> current.put(d.serial(), d));
+            List<String> lost = new ArrayList<>();
+            sessions.forEach((serial, handle) -> {
+                AdbDevice d = current.get(serial);
+                if (d == null || !d.ready()) {
+                    lost.add(serial);
+                }
+            });
+            if (!lost.isEmpty()) {
+                Platform.runLater(() -> lost.forEach(serial -> {
+                    if (sessions.containsKey(serial)) {
+                        status.setText("设备已离线: " + serial);
+                        disconnect(serial);
+                    }
+                }));
+            }
+        } catch (Throwable ignored) {
+            // A transient ADB restart must not tear down active sessions.
+        }
     }
 
     private void startClipboardMonitor() {
@@ -896,6 +933,7 @@ public final class ScrcpyApp extends Application {
 
     @Override
     public void stop() {
+        adbMonitor.shutdownNow();
         closeAllSessions();
     }
 
