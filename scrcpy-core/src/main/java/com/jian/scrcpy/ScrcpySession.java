@@ -46,15 +46,13 @@ public final class ScrcpySession implements AutoCloseable {
                       Consumer<AudioFrame> audioSink)
             throws Exception {
         if (started) return;
-        if (!options.video()) {
-            throw new IllegalArgumentException("Current mode requires video=true");
-        }
-
         server = new ServerLauncher(adb, options);
         connection = new ScrcpyConnection(options.localPort());
 
         try {
-            videoDecoder = new FfmpegVideoDecoder(videoSink);
+            if (options.video()) {
+                videoDecoder = new FfmpegVideoDecoder(videoSink);
+            }
             if (options.audio()) {
                 audioDecoder = new FfmpegAudioDecoder(audioSink == null ? f -> {} : audioSink);
             }
@@ -84,13 +82,13 @@ public final class ScrcpySession implements AutoCloseable {
                             "turnScreenOff/startApp require control=true");
                 }
                 awaitControlReady(5_000);
-                if (options.turnScreenOff()
-                        && !sendControl(new ControlMessages.DisplayPower(false))) {
-                    throw new IllegalStateException("Could not request device screen off");
-                }
                 if (options.startApp() != null
                         && !sendControl(new ControlMessages.StartApp(options.startApp()))) {
                     throw new IllegalStateException("Could not start app: " + options.startApp());
+                }
+                if (options.turnScreenOff()
+                        && !sendControl(new ControlMessages.DisplayPower(false))) {
+                    throw new IllegalStateException("Could not request device screen off");
                 }
             }
 
