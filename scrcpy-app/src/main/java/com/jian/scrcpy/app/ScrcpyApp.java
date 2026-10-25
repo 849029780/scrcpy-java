@@ -7,6 +7,7 @@ import com.jian.scrcpy.media.JavaSoundPlayer;
 import com.jian.scrcpy.control.DeviceController;
 import com.jian.scrcpy.control.UhidController;
 import com.jian.scrcpy.control.ClipboardController;
+import com.jian.scrcpy.input.AndroidKeycodes;
 import com.jian.scrcpy.protocol.ControlMessages;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
@@ -521,6 +522,10 @@ public final class ScrcpyApp extends Application {
         viewport.setStyle("-fx-background-color: transparent;");
         viewport.setAlignment(Pos.TOP_CENTER);
 
+        VBox navigationBar = createDeviceNavigationBar(handle);
+        HBox videoAndNavigation = new HBox(3, viewport, navigationBar);
+        videoAndNavigation.setAlignment(Pos.TOP_LEFT);
+
         // Per-device overflow menu. The click-coordinate adaptation is a
         // global broadcast policy, but is exposed from every device tile.
         MenuButton deviceMenu = new MenuButton("⋮");
@@ -555,8 +560,8 @@ public final class ScrcpyApp extends Application {
         HBox.setHgrow(header.getChildren().get(1), Priority.ALWAYS);
 
         viewport.getChildren().add(deviceMenu);
-        tile.getChildren().addAll(header, viewport);
-        VBox.setVgrow(viewport, Priority.ALWAYS);
+        tile.getChildren().addAll(header, videoAndNavigation);
+        VBox.setVgrow(videoAndNavigation, Priority.ALWAYS);
 
         handle.tile = tile;
         handle.viewport = viewport;
@@ -566,6 +571,36 @@ public final class ScrcpyApp extends Application {
 
         resizeTile(handle, false);
         secondaryGrid.getChildren().add(tile);
+    }
+
+    private VBox createDeviceNavigationBar(DeviceSession handle) {
+        Button back = deviceControlButton("←", "返回", () -> pressAndroidKey(handle, AndroidKeycodes.BACK));
+        Button home = deviceControlButton("⌂", "Home", () -> pressAndroidKey(handle, AndroidKeycodes.HOME));
+        Button recent = deviceControlButton("▣", "多任务", () -> pressAndroidKey(handle, 187));
+        Button power = deviceControlButton("⏻", "电源", () -> pressAndroidKey(handle, AndroidKeycodes.POWER));
+        Button screenOff = deviceControlButton("◐", "熄屏", () -> handle.controller.setDisplayPower(false));
+
+        VBox bar = new VBox(5, back, home, recent, power, screenOff);
+        bar.setAlignment(Pos.TOP_CENTER);
+        bar.setPadding(new Insets(3, 2, 3, 2));
+        bar.setStyle("-fx-background-color: #181818;");
+        return bar;
+    }
+
+    private Button deviceControlButton(String text, String tooltip, Runnable action) {
+        Button button = new Button(text);
+        button.setTooltip(new Tooltip(tooltip));
+        button.setFocusTraversable(false);
+        button.setMinSize(34, 34);
+        button.setPrefSize(34, 34);
+        button.setMaxSize(34, 34);
+        button.setOnAction(e -> action.run());
+        return button;
+    }
+
+    private void pressAndroidKey(DeviceSession handle, int keyCode) {
+        handle.controller.key(DeviceController.ACTION_DOWN, keyCode, 0, 0);
+        handle.controller.key(DeviceController.ACTION_UP, keyCode, 0, 0);
     }
 
     private void installControls(DeviceSession handle) {
