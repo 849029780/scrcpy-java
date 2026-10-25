@@ -660,7 +660,7 @@ public final class ScrcpyApp extends Application {
     }
 
     private void addScreen(DeviceSession handle, AdbDevice device) {
-        VBox tile = new VBox(4);
+        VBox tile = new VBox(0);
         tile.setStyle("-fx-background-color: #202020; -fx-border-color: #444444; -fx-border-width: 1;");
         tile.setPrefSize(TILE_WIDTH, TILE_HEIGHT);
         tile.setMinSize(TILE_WIDTH, TILE_HEIGHT);
@@ -668,7 +668,7 @@ public final class ScrcpyApp extends Application {
 
         Label title = new Label(device.displayName());
         title.setMaxWidth(Double.MAX_VALUE);
-        title.setStyle("-fx-font-weight: bold; -fx-padding: 4 6 4 6;");
+        title.setStyle("-fx-font-weight: bold; -fx-text-fill: black; -fx-background-color: white; -fx-padding: 4 6 4 6;");
 
         StackPane viewport = new StackPane(handle.view());
         viewport.setStyle("-fx-background-color: transparent;");
@@ -1329,7 +1329,7 @@ public final class ScrcpyApp extends Application {
         if (handle.tile == null || handle.view() == null) return;
 
         double maxWidth = primary ? 620 : TILE_WIDTH;
-        double maxVideoHeight = (primary ? 820 : TILE_HEIGHT) - 42;
+        double maxVideoHeight = primary ? 820 : TILE_HEIGHT;
         int frameWidth = handle.view().frameWidth();
         int frameHeight = handle.view().frameHeight();
 
@@ -1348,7 +1348,7 @@ public final class ScrcpyApp extends Application {
         // fixed padding estimates. This keeps the viewport flush with the
         // decoded frame and avoids unused black space on the right/bottom.
         double controlsWidth = 38;
-        double headerHeight = 31;
+        double headerHeight = 29;
         double tileWidth = Math.ceil(videoWidth + controlsWidth);
         double tileHeight = Math.ceil(videoHeight + headerHeight);
 
