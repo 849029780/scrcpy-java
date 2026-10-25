@@ -464,7 +464,7 @@ public final class ScrcpyApp extends Application {
                     runningSession.addDeviceMessageListener(clipboard::handle);
                     clipboard.onRemoteClipboard(this::applyDeviceClipboard);
                     DeviceSession handle = new DeviceSession(runningSession, player, view,
-                            new DeviceController(message -> routeControl(device.serial(), message)), uhid, clipboard);
+                            new DeviceController(runningSession::sendControl), uhid, clipboard);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
                     if (Objects.equals(desiredPrimarySerial, device.serial())) {
