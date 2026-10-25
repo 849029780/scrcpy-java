@@ -15,13 +15,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 public final class ScrcpyConnection implements AutoCloseable {
-    // scrcpy reverse mode assigns sockets strictly by connection order:
-    // video -> audio -> control. ChannelInitializer callbacks may otherwise run
-    // concurrently on different Netty event-loop threads and reorder that
-    // assignment (for example, routing an "opus" audio stream into the control
-    // DeviceMessageDecoder). Keep registration/initialization ordered.
+    // Keep Netty on its native event-loop model. Blocking/CPU-heavy work is
+    // dispatched away from these threads; virtual threads are used for those
+    // tasks instead of turning the I/O event loop itself into a virtual thread.
     private final EventLoopGroup group =
-            new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+            new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
     private final int port;
     private Channel video, audio, control, listener;
     private volatile ControlMessageQueue controlQueue;
@@ -130,13 +128,20 @@ public final class ScrcpyConnection implements AutoCloseable {
                 .childHandler(new ChannelInitializer<>() {
                     @Override
                     protected void initChannel(Channel channel) {
-                        int i = index.getAndIncrement();
-                        if (i >= names.size()) {
-                            channel.close();
-                            return;
+                        // Child initializers may execute concurrently on different
+                        // event loops. Serialize only this tiny classification
+                        // section so reverse-mode socket order remains deterministic
+                        // without forcing video/audio/control onto one event loop.
+                        final int i;
+                        final String name;
+                        synchronized (index) {
+                            i = index.getAndIncrement();
+                            if (i >= names.size()) {
+                                channel.close();
+                                return;
+                            }
+                            name = names.get(i);
                         }
-
-                        String name = names.get(i);
                         configure(channel.pipeline(), i == 0, name,
                                 videoHandler, audioHandler, controlHandler);
 
