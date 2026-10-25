@@ -18,6 +18,8 @@ class ServerLauncherTest {
                 true,
                 true,
                 "h265",
+                null,
+                null,
                 "aac",
                 8_000_000,
                 192_000,
@@ -69,7 +71,7 @@ class ServerLauncherTest {
         ScrcpyOptions options = new ScrcpyOptions(
                 null, 1, 27183,
                 true, true, true,
-                "h264", "opus",
+                "h264", null, null, "opus",
                 (long) Integer.MAX_VALUE + 1,
                 0, 0, null,
                 false, false, false, null, null);
