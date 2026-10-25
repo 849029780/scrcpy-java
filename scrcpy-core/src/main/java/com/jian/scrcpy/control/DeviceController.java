@@ -1,6 +1,7 @@
 package com.jian.scrcpy.control;
 
 import com.jian.scrcpy.protocol.ControlMessages;
+import com.jian.scrcpy.protocol.ControlMessageType;
 
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -46,7 +47,7 @@ public final class DeviceController {
     }
 
     public void rotateDevice() {
-        sink.accept(new ControlMessages.Simple(ControlMessages.ControlMessageType.ROTATE_DEVICE));
+        sink.accept(new ControlMessages.Simple(ControlMessageType.ROTATE_DEVICE));
     }
 
     public void setDisplayPower(boolean on) {
