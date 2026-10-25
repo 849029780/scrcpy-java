@@ -738,8 +738,14 @@ public final class ScrcpyApp extends Application {
         if (adaptScreenClick) return scalePosition(position, target.view());
         int width = target.view().frameWidth();
         int height = target.view().frameHeight();
-        if (width <= 0 || height <= 0) return position;
-        return new DeviceController.ScreenPosition(position.x(), position.y(), width, height);
+        if (width <= 0 || height <= 0) return null;
+
+        // Raw-coordinate mode preserves the primary device's coordinates, but
+        // the target screen may be smaller (different resolution/orientation).
+        // Scrcpy positions must always satisfy 0 <= x < width, 0 <= y < height.
+        int x = Math.min(width - 1, Math.max(0, position.x()));
+        int y = Math.min(height - 1, Math.max(0, position.y()));
+        return new DeviceController.ScreenPosition(x, y, width, height);
     }
 
     private static DeviceController.ScreenPosition scalePosition(DeviceController.ScreenPosition source,
