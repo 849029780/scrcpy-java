@@ -802,7 +802,7 @@ public final class ScrcpyApp extends Application {
 
         VBox bar = new VBox(5, close, primaryScreen, back, home, recent, power, displayPower, stayAwake, mouseModeButton, adaptClickButton);
         bar.setAlignment(Pos.TOP_CENTER);
-        bar.setPadding(new Insets(3, 2, 3, 2));
+        bar.setPadding(new Insets(0, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
         return bar;
     }
