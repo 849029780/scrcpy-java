@@ -45,6 +45,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private void init(CodecId c) {
+        // A decoder instance should normally receive one Codec message.
+        // Make repeated initialization safe and deterministic.
+        closeNative();
+
         AVCodec dec = avcodec_find_decoder(avId(c));
         if (dec == null) throw new IllegalStateException("decoder unavailable " + c);
         ctx = avcodec_alloc_context3(dec);
@@ -104,6 +108,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         } finally {
             MediaMessage m;
             while ((m = decodeQueue.poll()) != null) releaseMessage(m);
+            // Native FFmpeg/sws state is released by the decode worker itself,
+            // never concurrently with decodeMessage().
+            closeNative();
         }
     }
 
@@ -114,11 +121,17 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
         if (!(m instanceof MediaMessage.Packet p) || p.config()) return;
         byte[] b = new byte[p.data().readableBytes()];
+        int payloadSize = b.length;
         p.data().getBytes(p.data().readerIndex(), b);
-        try (BytePointer bp = new BytePointer(b)) {
-            av_packet_unref(packet);
-            packet.data(bp).size(b.length).pts(p.pts());
-            if (avcodec_send_packet(ctx, packet) < 0) return;
+
+        // Let FFmpeg own the packet payload. The previous implementation
+        // pointed AVPacket.data at a temporary JavaCPP BytePointer.
+        av_packet_unref(packet);
+        if (av_new_packet(packet, payloadSize) < 0) return;
+        packet.data().put(b, 0, payloadSize);
+        packet.pts(p.pts()).dts(p.pts());
+
+        if (avcodec_send_packet(ctx, packet) < 0) return;
             while (avcodec_receive_frame(ctx, frame) >= 0) {
                 converter(frame.width(), frame.height(), frame.format());
                 sws_scale(sws, frame.data(), frame.linesize(), 0, height, rgb.data(), rgb.linesize());
