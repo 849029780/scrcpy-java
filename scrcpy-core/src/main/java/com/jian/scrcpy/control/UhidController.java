@@ -22,13 +22,23 @@ public final class UhidController implements AutoCloseable {
     public UhidKeyboard keyboard() { return keyboard; }
     public UhidMouse mouse() { return mouse; }
 
+    /** Release transient input state when the desktop window loses focus. */
+    public void releaseInputState() {
+        keyboard.releaseAll();
+        mouse.releaseButtons();
+    }
+
     public void handle(DeviceMessage message) {
         keyboard.handle(message);
     }
 
     @Override
     public void close() {
-        mouse.close();
-        keyboard.close();
+        Throwable first = null;
+        try { mouse.close(); } catch (Throwable t) { first = t; }
+        try { keyboard.close(); } catch (Throwable t) {
+            if (first == null) first = t; else first.addSuppressed(t);
+        }
+        if (first != null) throw new IllegalStateException("Failed to close UHID devices", first);
     }
 }
