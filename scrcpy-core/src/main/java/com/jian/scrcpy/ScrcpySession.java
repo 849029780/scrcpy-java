@@ -29,7 +29,8 @@ public final class ScrcpySession implements AutoCloseable {
     private volatile Consumer<DeviceMessage> deviceMessageSink = message -> {};
     private final java.util.concurrent.CopyOnWriteArrayList<Consumer<DeviceMessage>> deviceMessageListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final ClipboardAckTracker clipboardAcks = new ClipboardAckTracker();
-    private boolean started;
+    private volatile boolean started;
+    private boolean closing;
 
     public ScrcpySession(Adb adb, ScrcpyOptions options) {
         this.adb = adb;
@@ -41,7 +42,7 @@ public final class ScrcpySession implements AutoCloseable {
         start(serverJar, videoSink, null);
     }
 
-    public void start(Path serverJar,
+    public synchronized void start(Path serverJar,
                       Consumer<com.jian.scrcpy.media.VideoFrame> videoSink,
                       Consumer<AudioFrame> audioSink)
             throws Exception {
@@ -130,6 +131,7 @@ public final class ScrcpySession implements AutoCloseable {
 
     public boolean sendControl(ControlMessages.Message message) {
         Objects.requireNonNull(message, "message");
+        if (closing) return false;
         Channel channel = connection == null ? null : connection.control();
         ControlMessageQueue queue = connection == null ? null : connection.controlQueue();
         if (channel == null || !channel.isActive() || queue == null) return false;
@@ -155,7 +157,10 @@ public final class ScrcpySession implements AutoCloseable {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
+        if (closing) return;
+        closing = true;
+        try {
         if (connection != null) {
             connection.close();
             connection = null;
@@ -175,5 +180,8 @@ public final class ScrcpySession implements AutoCloseable {
         clipboardAcks.clear();
         deviceMessageListeners.clear();
         started = false;
+        } finally {
+            closing = false;
+        }
     }
 }
