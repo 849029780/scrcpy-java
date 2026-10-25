@@ -647,7 +647,7 @@ public final class ScrcpyApp extends Application {
             rightSidebarStayAwake(handle, enabled);
         });
 
-        VBox bar = new VBox(5, primaryScreen, adaptClickButton, back, home, recent, power, displayPower, stayAwake, mouseModeButton);
+        VBox bar = new VBox(5, primaryScreen, back, home, recent, power, displayPower, stayAwake, mouseModeButton, adaptClickButton);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
