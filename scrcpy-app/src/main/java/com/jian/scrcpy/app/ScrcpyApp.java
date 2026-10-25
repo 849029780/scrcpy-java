@@ -35,15 +35,21 @@ public final class ScrcpyApp extends Application {
     private static final double TILE_WIDTH = 360;
     private static final double TILE_HEIGHT = 680;
 
+    // Device management is intentionally kept out of the main workspace and
+    // shown from the "设备" menu as a modal popup.
     private final ListView<AdbDevice> devices = new ListView<>();
     private final Button connect = new Button("连接选中");
     private final Button disconnect = new Button("断开选中");
     private final Button connectAll = new Button("全部连接");
     private final Button refresh = new Button("刷新设备");
     private final Label status = new Label("正在扫描 ADB 设备...");
-    private final TilePane screenGrid = new TilePane();
-    private final ScrollPane screenScroll = new ScrollPane(screenGrid);
+    private final Label primaryStatus = new Label("主设备：无");
+    private final TilePane secondaryGrid = new TilePane();
+    private final ScrollPane secondaryScroll = new ScrollPane(secondaryGrid);
+    private final StackPane primaryHost = new StackPane();
+    private final BorderPane screenArea = new BorderPane();
     private final Map<String, DeviceSession> sessions = new ConcurrentHashMap<>();
+    private volatile String primarySerial;
     private final Robot mouseRobot = new Robot();
     private Adb adb;
     private volatile String lastDesktopClipboard = "";
@@ -57,42 +63,43 @@ public final class ScrcpyApp extends Application {
         devices.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         devices.setCellFactory(v -> deviceCell());
         devices.setPlaceholder(new Label("未发现 ADB 设备"));
+        devices.setPrefHeight(420);
 
-        screenGrid.setHgap(10);
-        screenGrid.setVgap(10);
-        screenGrid.setPrefColumns(3);
-        screenGrid.setPrefTileWidth(TILE_WIDTH);
-        screenGrid.setPrefTileHeight(TILE_HEIGHT);
-        screenGrid.setPadding(new javafx.geometry.Insets(10));
-        screenGrid.setTileAlignment(javafx.geometry.Pos.TOP_LEFT);
+        secondaryGrid.setHgap(10);
+        secondaryGrid.setVgap(10);
+        secondaryGrid.setPrefColumns(3);
+        secondaryGrid.setPrefTileWidth(TILE_WIDTH);
+        secondaryGrid.setPrefTileHeight(TILE_HEIGHT);
+        secondaryGrid.setPadding(new Insets(10));
+        secondaryGrid.setTileAlignment(Pos.TOP_LEFT);
 
-        screenScroll.setFitToWidth(true);
-        screenScroll.setFitToHeight(false);
-        screenScroll.setPannable(true);
+        secondaryScroll.setFitToWidth(true);
+        secondaryScroll.setFitToHeight(true);
+        secondaryScroll.setPannable(true);
 
-        disconnect.setDisable(true);
+        primaryHost.setPadding(new Insets(10));
+        primaryHost.setStyle("-fx-background-color: #1b1b1b;");
+        primaryHost.setMinWidth(0);
+        primaryHost.setPrefWidth(0);
+        primaryHost.setManaged(false);
+        primaryHost.setVisible(false);
 
-        HBox toolbar = new HBox(8,
-                new Label("设备:"),
-                refresh,
-                connect,
-                disconnect,
-                connectAll,
-                status);
+        screenArea.setCenter(secondaryScroll);
+        screenArea.setStyle("-fx-background-color: #181818;");
+
+        MenuItem deviceManager = new MenuItem("设备列表 / 连接");
+        deviceManager.setOnAction(e -> showDeviceManager());
+        MenuItem refreshDevices = new MenuItem("刷新设备");
+        refreshDevices.setOnAction(e -> scanDevices());
+        MenuButton deviceMenu = new MenuButton("设备");
+        deviceMenu.getItems().addAll(deviceManager, refreshDevices);
+
+        HBox toolbar = new HBox(12, deviceMenu, primaryStatus, status);
         toolbar.setAlignment(Pos.CENTER_LEFT);
+        toolbar.setPadding(new Insets(8));
 
-        SplitPane root = new SplitPane();
-        root.setDividerPositions(0.22);
-        root.getItems().addAll(devices, screenScroll);
-
-        BorderPane content = new BorderPane(root);
+        BorderPane content = new BorderPane(screenArea);
         content.setTop(toolbar);
-        BorderPane.setMargin(toolbar, new javafx.geometry.Insets(8));
-
-        connect.setOnAction(e -> connectSelected());
-        disconnect.setOnAction(e -> disconnectSelected());
-        connectAll.setOnAction(e -> connectAll());
-        refresh.setOnAction(e -> scanDevices());
 
         devices.getSelectionModel().getSelectedItems().addListener(
                 (javafx.collections.ListChangeListener<AdbDevice>) c -> updateButtons());
@@ -124,6 +131,34 @@ public final class ScrcpyApp extends Application {
                 setText(d.displayName() + "  [" + state + "]");
             }
         };
+    }
+
+    private void showDeviceManager() {
+        Dialog<Void> dialog = new Dialog<>();
+        dialog.setTitle("设备管理");
+        dialog.setHeaderText("选择设备进行连接、断开或刷新");
+        dialog.initModality(Modality.APPLICATION_MODAL);
+
+        Button refreshButton = new Button("刷新");
+        Button connectButton = new Button("连接选中");
+        Button connectAllButton = new Button("全部连接");
+        Button disconnectButton = new Button("断开选中");
+
+        refreshButton.setOnAction(e -> scanDevices());
+        connectButton.setOnAction(e -> connectSelected());
+        connectAllButton.setOnAction(e -> connectAll());
+        disconnectButton.setOnAction(e -> disconnectSelected());
+
+        HBox actions = new HBox(8, refreshButton, connectButton, connectAllButton, disconnectButton);
+        actions.setAlignment(Pos.CENTER_LEFT);
+
+        VBox box = new VBox(10, devices, actions);
+        box.setPadding(new Insets(8));
+        box.setPrefSize(620, 520);
+
+        dialog.getDialogPane().setContent(box);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        dialog.show();
     }
 
     private void startClipboardMonitor() {
@@ -378,6 +413,7 @@ public final class ScrcpyApp extends Application {
 
     private void addScreen(DeviceSession handle, AdbDevice device) {
         VBox tile = new VBox(4);
+        tile.setStyle("-fx-background-color: #202020; -fx-border-color: #444444; -fx-border-width: 1;");
         tile.setPrefSize(TILE_WIDTH, TILE_HEIGHT);
         tile.setMinSize(TILE_WIDTH, TILE_HEIGHT);
         tile.setMaxSize(TILE_WIDTH, TILE_HEIGHT);
@@ -387,13 +423,11 @@ public final class ScrcpyApp extends Application {
         title.setStyle("-fx-font-weight: bold; -fx-padding: 4 6 4 6;");
 
         StackPane viewport = new StackPane(handle.view());
-        viewport.setPrefSize(TILE_WIDTH, TILE_HEIGHT - 34);
         viewport.setStyle("-fx-background-color: #222222;");
 
         handle.view().setPreserveRatio(true);
         handle.view().setSmooth(true);
-        handle.view().setFitWidth(TILE_WIDTH - 8);
-        handle.view().setFitHeight(TILE_HEIGHT - 42);
+
         installControls(handle);
 
         ComboBox<MouseMode> mouseMode = new ComboBox<>(FXCollections.observableArrayList(MouseMode.values()));
@@ -401,17 +435,25 @@ public final class ScrcpyApp extends Application {
         mouseMode.setPrefWidth(112);
         mouseMode.setOnAction(e -> setMouseMode(handle, mouseMode.getValue()));
 
+        Button primary = new Button("设为主设备");
+        primary.setOnAction(e -> togglePrimary(handle));
+
         Button close = new Button("断开");
         close.setOnAction(e -> disconnect(device.serial()));
 
-        HBox header = new HBox(6, title, new Region(), mouseMode, close);
+        HBox header = new HBox(6, title, new Region(), mouseMode, primary, close);
         HBox.setHgrow(header.getChildren().get(1), Priority.ALWAYS);
 
         tile.getChildren().addAll(header, viewport);
+        VBox.setVgrow(viewport, Priority.ALWAYS);
+
         handle.tile = tile;
+        handle.viewport = viewport;
+        handle.primaryButton = primary;
         handle.device = device;
 
-        screenGrid.getChildren().add(tile);
+        resizeTile(handle, false);
+        secondaryGrid.getChildren().add(tile);
     }
 
     private void installControls(DeviceSession handle) {
@@ -429,51 +471,58 @@ public final class ScrcpyApp extends Application {
         });
         view.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
             if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
-                sendRelativeMove(handle, e);
+                double dx = relativeDeltaX(handle, e);
+                double dy = relativeDeltaY(handle, e);
+                if (dx != 0 || dy != 0) {
+                    broadcastRelativeMove(handle, dx, dy);
+                }
                 return;
             }
             DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
-            if (p != null) handle.controller.hover(p);
+            if (p != null) broadcastHover(handle, p);
         });
         view.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
             view.requestFocus();
             if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
                 int button = MouseInputMapper.uhidButton(e.getButton());
-                if (button != 0) handle.uhid.mouse().button(button, true);
+                if (button != 0) broadcastMouseButton(handle, button, true);
                 handle.resetRelativePointer(e.getX(), e.getY());
                 e.consume();
                 return;
             }
             if (e.getButton() != MouseButton.PRIMARY) return;
-            sendTouch(handle, e, 0, 1f, 1);
+            DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
+            if (p != null) broadcastTouch(handle, DeviceController.ACTION_DOWN, p, 1f, 1);
             e.consume();
         });
         view.addEventHandler(MouseEvent.MOUSE_DRAGGED, e -> {
             if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
-                sendRelativeMove(handle, e);
+                double dx = relativeDeltaX(handle, e);
+                double dy = relativeDeltaY(handle, e);
+                if (dx != 0 || dy != 0) broadcastRelativeMove(handle, dx, dy);
                 e.consume();
                 return;
             }
             if (!e.isPrimaryButtonDown()) return;
-            sendTouch(handle, e, 2, 1f, 0);
+            DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
+            if (p != null) broadcastTouch(handle, DeviceController.ACTION_MOVE, p, 1f, 0);
             e.consume();
         });
         view.addEventHandler(MouseEvent.MOUSE_RELEASED, e -> {
             if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
                 int button = MouseInputMapper.uhidButton(e.getButton());
-                if (button != 0) handle.uhid.mouse().button(button, false);
+                if (button != 0) broadcastMouseButton(handle, button, false);
                 e.consume();
                 return;
             }
             if (e.getButton() != MouseButton.PRIMARY) return;
-            sendTouch(handle, e, 1, 0f, 1);
+            DeviceController.ScreenPosition p = InputMapper.position(view, e.getX(), e.getY());
+            if (p != null) broadcastTouch(handle, DeviceController.ACTION_UP, p, 0f, 1);
             e.consume();
         });
         view.addEventHandler(ScrollEvent.SCROLL, e -> {
             if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
-                // JavaFX deltas are pixels; convert to HID wheel detents while
-                // preserving small deltas in UhidMouse's residual accumulator.
-                handle.uhid.mouse().scroll(e.getDeltaX() / 40.0, e.getDeltaY() / 40.0);
+                broadcastMouseScroll(handle, e.getDeltaX() / 40.0, e.getDeltaY() / 40.0);
                 e.consume();
                 return;
             }
@@ -481,22 +530,208 @@ public final class ScrcpyApp extends Application {
             if (p == null) return;
             float h = (float) Math.max(-16, Math.min(16, e.getDeltaX() / 20.0));
             float v = (float) Math.max(-16, Math.min(16, e.getDeltaY() / 20.0));
-            handle.controller.scroll(p, h, v, 0);
+            broadcastScroll(handle, p, h, v);
             e.consume();
         });
         view.addEventHandler(KeyEvent.KEY_PRESSED, e -> {
             int usage = HidKeyMapper.usage(e.getCode());
             if (usage < 0) return;
-            handle.uhid.keyboard().key(usage, true,
-                    HidKeyMapper.modifiers(e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown()));
+            int modifiers = HidKeyMapper.modifiers(e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown());
+            broadcastKeyboard(handle, usage, true, modifiers);
             e.consume();
         });
         view.addEventHandler(KeyEvent.KEY_RELEASED, e -> {
             int usage = HidKeyMapper.usage(e.getCode());
             if (usage < 0) return;
-            handle.uhid.keyboard().key(usage, false,
-                    HidKeyMapper.modifiers(e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown()));
+            int modifiers = HidKeyMapper.modifiers(e.isShiftDown(), e.isControlDown(), e.isAltDown(), e.isMetaDown());
+            broadcastKeyboard(handle, usage, false, modifiers);
             e.consume();
+        });
+    }
+
+    private boolean isPrimary(DeviceSession handle) {
+        return primarySerial != null && handle.device != null && primarySerial.equals(handle.device.serial());
+    }
+
+    private List<DeviceSession> inputTargets(DeviceSession source) {
+        if (!isPrimary(source)) return List.of(source);
+        return new ArrayList<>(sessions.values());
+    }
+
+    private void broadcastKeyboard(DeviceSession source, int usage, boolean down, int modifiers) {
+        for (DeviceSession target : inputTargets(source)) {
+            target.uhid.keyboard().key(usage, down, modifiers);
+        }
+    }
+
+    private void broadcastMouseButton(DeviceSession source, int button, boolean down) {
+        for (DeviceSession target : inputTargets(source)) {
+            target.uhid.mouse().button(button, down);
+        }
+    }
+
+    private void broadcastMouseScroll(DeviceSession source, double horizontal, double vertical) {
+        for (DeviceSession target : inputTargets(source)) {
+            target.uhid.mouse().scroll(horizontal, vertical);
+        }
+    }
+
+    private void broadcastRelativeMove(DeviceSession source, double dx, double dy) {
+        for (DeviceSession target : inputTargets(source)) {
+            target.uhid.mouse().move(dx, dy);
+        }
+        recenterRelativePointer(source);
+    }
+
+    private void broadcastHover(DeviceSession source, DeviceController.ScreenPosition position) {
+        for (DeviceSession target : inputTargets(source)) {
+            DeviceController.ScreenPosition p = scalePosition(position, target.view());
+            if (p != null) target.controller.hover(p);
+        }
+    }
+
+    private void broadcastTouch(DeviceSession source, int action, DeviceController.ScreenPosition position,
+                                float pressure, int actionButton) {
+        for (DeviceSession target : inputTargets(source)) {
+            DeviceController.ScreenPosition p = scalePosition(position, target.view());
+            if (p != null) {
+                int buttons = action == DeviceController.ACTION_UP ? 0 : 1;
+                target.controller.touch(action, DeviceController.POINTER_ID_MOUSE, p, pressure, actionButton, buttons);
+            }
+        }
+    }
+
+    private void broadcastScroll(DeviceSession source, DeviceController.ScreenPosition position,
+                                 float horizontal, float vertical) {
+        for (DeviceSession target : inputTargets(source)) {
+            DeviceController.ScreenPosition p = scalePosition(position, target.view());
+            if (p != null) target.controller.scroll(p, horizontal, vertical, 0);
+        }
+    }
+
+    private static DeviceController.ScreenPosition scalePosition(DeviceController.ScreenPosition source,
+                                                                  VideoView targetView) {
+        int width = targetView.frameWidth();
+        int height = targetView.frameHeight();
+        if (width <= 0 || height <= 0) return null;
+        int x = Math.min(width - 1, Math.max(0,
+                (int) Math.round((source.x() / (double) Math.max(1, source.screenWidth() - 1)) * (width - 1))));
+        int y = Math.min(height - 1, Math.max(0,
+                (int) Math.round((source.y() / (double) Math.max(1, source.screenHeight() - 1)) * (height - 1))));
+        return new DeviceController.ScreenPosition(x, y, width, height);
+    }
+
+    private double relativeDeltaX(DeviceSession handle, MouseEvent e) {
+        if (handle.recentering || handle.mouseMode != MouseMode.UHID_RELATIVE || !handle.relativePointerValid) return 0;
+        javafx.geometry.Point2D center = handle.view().localToScreen(
+                handle.view().getBoundsInLocal().getWidth() / 2.0,
+                handle.view().getBoundsInLocal().getHeight() / 2.0);
+        javafx.geometry.Point2D screen = handle.view().localToScreen(e.getX(), e.getY());
+        if (center == null || screen == null) return 0;
+        return screen.getX() - center.getX();
+    }
+
+    private double relativeDeltaY(DeviceSession handle, MouseEvent e) {
+        if (handle.recentering || handle.mouseMode != MouseMode.UHID_RELATIVE || !handle.relativePointerValid) return 0;
+        javafx.geometry.Point2D center = handle.view().localToScreen(
+                handle.view().getBoundsInLocal().getWidth() / 2.0,
+                handle.view().getBoundsInLocal().getHeight() / 2.0);
+        javafx.geometry.Point2D screen = handle.view().localToScreen(e.getX(), e.getY());
+        if (center == null || screen == null) return 0;
+        return screen.getY() - center.getY();
+    }
+
+    private void recenterRelativePointer(DeviceSession handle) {
+        javafx.geometry.Point2D center = handle.view().localToScreen(
+                handle.view().getBoundsInLocal().getWidth() / 2.0,
+                handle.view().getBoundsInLocal().getHeight() / 2.0);
+        if (center == null) return;
+        handle.recentering = true;
+        handle.relativePointerValid = true;
+        mouseRobot.mouseMove(center.getX(), center.getY());
+        handle.recentering = false;
+    }
+
+    private void togglePrimary(DeviceSession handle) {
+        if (isPrimary(handle)) {
+            clearPrimary();
+        } else {
+            setPrimary(handle);
+        }
+    }
+
+    private void setPrimary(DeviceSession handle) {
+        if (handle.device == null) return;
+        if (primarySerial != null && primarySerial.equals(handle.device.serial())) return;
+
+        DeviceSession old = sessions.get(primarySerial);
+        if (old != null) {
+            old.primary = false;
+            if (old.tile != null) {
+                primaryHost.getChildren().remove(old.tile);
+                secondaryGrid.getChildren().add(old.tile);
+            }
+        }
+
+        primarySerial = handle.device.serial();
+        handle.primary = true;
+        if (handle.tile != null) {
+            secondaryGrid.getChildren().remove(handle.tile);
+            primaryHost.getChildren().setAll(handle.tile);
+        }
+        primaryHost.setManaged(true);
+        primaryHost.setVisible(true);
+        primaryHost.setPrefWidth(620);
+        resizeTile(handle, true);
+        refreshPrimaryUi();
+    }
+
+    private void clearPrimary() {
+        DeviceSession old = sessions.remove(primarySerial);
+        if (old == null) {
+            primarySerial = null;
+            primaryHost.getChildren().clear();
+            primaryHost.setManaged(false);
+            primaryHost.setVisible(false);
+            refreshPrimaryUi();
+            return;
+        }
+
+        primarySerial = null;
+        old.primary = false;
+        primaryHost.getChildren().remove(old.tile);
+        secondaryGrid.getChildren().add(0, old.tile);
+        resizeTile(old, false);
+        primaryHost.setManaged(false);
+        primaryHost.setVisible(false);
+        primaryHost.setPrefWidth(0);
+        refreshPrimaryUi();
+    }
+
+    private void resizeTile(DeviceSession handle, boolean primary) {
+        if (handle.tile == null || handle.view() == null) return;
+        double width = primary ? 620 : TILE_WIDTH;
+        double height = primary ? 820 : TILE_HEIGHT;
+        handle.tile.setPrefSize(width, height);
+        handle.tile.setMinSize(width, height);
+        handle.tile.setMaxSize(width, height);
+        handle.viewport.setPrefSize(width, height - 34);
+        handle.view().setFitWidth(width - 8);
+        handle.view().setFitHeight(height - 42);
+        if (handle.primaryButton != null) {
+            handle.primaryButton.setText(primary ? "取消主设备" : "设为主设备");
+        }
+    }
+
+    private void refreshPrimaryUi() {
+        if (primarySerial == null) {
+            primaryStatus.setText("主设备：无");
+        } else {
+            DeviceSession s = sessions.get(primarySerial);
+            primaryStatus.setText("主设备：" + (s == null || s.device == null ? primarySerial : s.device.displayName()));
+        }
+        sessions.values().forEach(s -> {
+            if (s.primaryButton != null) s.primaryButton.setText(isPrimary(s) ? "取消主设备" : "设为主设备");
         });
     }
 
@@ -569,7 +804,15 @@ public final class ScrcpyApp extends Application {
         // channels are being torn down. The UI tile is removed immediately,
         // while the actual session shutdown happens in a virtual thread.
         if (handle.tile != null) {
-            screenGrid.getChildren().remove(handle.tile);
+            primaryHost.getChildren().remove(handle.tile);
+            secondaryGrid.getChildren().remove(handle.tile);
+        }
+        if (isPrimary(handle)) {
+            primarySerial = null;
+            primaryHost.setManaged(false);
+            primaryHost.setVisible(false);
+            primaryHost.setPrefWidth(0);
+            refreshPrimaryUi();
         }
 
         devices.refresh();
@@ -594,16 +837,27 @@ public final class ScrcpyApp extends Application {
         disconnect.setDisable(!hasSelection);
         connectAll.setDisable(!hasReady);
         refresh.setDisable(false);
+        refreshPrimaryUi();
     }
 
     private void closeAllSessions() {
         new ArrayList<>(sessions.values()).forEach(handle -> {
-            handle.close();
+            try {
+                handle.close();
+            } catch (Throwable t) {
+                t.printStackTrace(System.err);
+            }
             if (handle.tile != null) {
-                screenGrid.getChildren().remove(handle.tile);
+                primaryHost.getChildren().remove(handle.tile);
+                secondaryGrid.getChildren().remove(handle.tile);
             }
         });
         sessions.clear();
+        primarySerial = null;
+        primaryHost.getChildren().clear();
+        primaryHost.setManaged(false);
+        primaryHost.setVisible(false);
+        primaryHost.setPrefWidth(0);
     }
 
     @Override
@@ -648,7 +902,10 @@ public final class ScrcpyApp extends Application {
         private final UhidController uhid;
         private final ClipboardController clipboard;
         private VBox tile;
+        private StackPane viewport;
+        private Button primaryButton;
         private AdbDevice device;
+        private boolean primary;
         private MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
         private boolean relativePointerValid;
         private boolean recentering;
