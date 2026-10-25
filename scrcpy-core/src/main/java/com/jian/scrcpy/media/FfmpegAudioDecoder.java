@@ -45,7 +45,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
+    protected synchronized void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
         if (m instanceof MediaMessage.Codec c) { init(c.codec()); return; }
         if (!(m instanceof MediaMessage.Packet p)) return;
         try {
@@ -140,7 +140,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         return (short) Math.round(v * 32767f);
     }
 
-    @Override public void close() {
+    @Override public synchronized void close() {
         if (packet != null) { av_packet_free(packet); packet = null; }
         if (frame != null) { av_frame_free(frame); frame = null; }
         if (ctx != null) { avcodec_free_context(ctx); ctx = null; }
