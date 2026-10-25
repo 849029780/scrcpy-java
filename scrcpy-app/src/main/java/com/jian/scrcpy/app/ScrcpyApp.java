@@ -4,6 +4,11 @@ import com.jian.scrcpy.ScrcpySession;
 import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.adb.AdbDevice;
 import com.jian.scrcpy.media.JavaSoundPlayer;
+import com.jian.scrcpy.protocol.ControlMessages;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.input.ScrollEvent;
 import com.jian.scrcpy.server.ScrcpyOptions;
 import com.jian.scrcpy.server.ScrcpyServerArtifact;
 import javafx.application.Application;
@@ -156,7 +161,7 @@ public final class ScrcpyApp extends Application {
                 ScrcpyOptions d = ScrcpyOptions.defaults();
                 ScrcpyOptions options = new ScrcpyOptions(
                         device.serial(), d.scid(), d.localPort(),
-                        true, true, false,
+                        true, true, true,
                         d.videoCodec(), d.audioCodec(),
                         d.videoBitRate(), d.audioBitRate(),
                         d.maxSize(), d.maxFps(),
@@ -222,6 +227,7 @@ public final class ScrcpyApp extends Application {
         handle.view().setSmooth(true);
         handle.view().setFitWidth(TILE_WIDTH - 8);
         handle.view().setFitHeight(TILE_HEIGHT - 42);
+        installControls(handle);
 
         Button close = new Button("断开");
         close.setOnAction(e -> disconnect(device.serial()));
@@ -234,6 +240,63 @@ public final class ScrcpyApp extends Application {
         handle.device = device;
 
         screenGrid.getChildren().add(tile);
+    }
+
+    private void installControls(DeviceSession handle) {
+        VideoView view = handle.view();
+        view.setFocusTraversable(true);
+
+        view.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
+            if (e.getButton() != MouseButton.PRIMARY) return;
+            view.requestFocus();
+            sendTouch(handle, e, 0, 1f, 1);
+            e.consume();
+        });
+        view.addEventHandler(MouseEvent.MOUSE_DRAGGED, e -> {
+            if (!e.isPrimaryButtonDown()) return;
+            sendTouch(handle, e, 2, 1f, 0);
+            e.consume();
+        });
+        view.addEventHandler(MouseEvent.MOUSE_RELEASED, e -> {
+            if (e.getButton() != MouseButton.PRIMARY) return;
+            sendTouch(handle, e, 1, 0f, 1);
+            e.consume();
+        });
+        view.addEventHandler(ScrollEvent.SCROLL, e -> {
+            ControlMessages.Position p = InputMapper.position(view, e.getX(), e.getY());
+            if (p == null) return;
+            float h = (float) Math.max(-16, Math.min(16, e.getDeltaX() / 20.0));
+            float v = (float) Math.max(-16, Math.min(16, e.getDeltaY() / 20.0));
+            handle.session.sendControl(new ControlMessages.Scroll(p, h, v, 0));
+            e.consume();
+        });
+        view.addEventHandler(KeyEvent.KEY_PRESSED, e -> {
+            int keycode = InputMapper.androidKeyCode(e.getCode());
+            if (keycode < 0) return;
+            handle.session.sendControl(new ControlMessages.Keycode(
+                    0, keycode, 0, InputMapper.metaState(e.isShiftDown(), e.isControlDown(), e.isAltDown())));
+            e.consume();
+        });
+        view.addEventHandler(KeyEvent.KEY_RELEASED, e -> {
+            int keycode = InputMapper.androidKeyCode(e.getCode());
+            if (keycode < 0) return;
+            handle.session.sendControl(new ControlMessages.Keycode(
+                    1, keycode, 0, InputMapper.metaState(e.isShiftDown(), e.isControlDown(), e.isAltDown())));
+            e.consume();
+        });
+        view.addEventHandler(KeyEvent.KEY_TYPED, e -> {
+            String text = e.getCharacter();
+            if (text == null || text.isEmpty() || text.charAt(0) < 0x20) return;
+            handle.session.sendControl(new ControlMessages.Text(text));
+            e.consume();
+        });
+    }
+
+    private void sendTouch(DeviceSession handle, MouseEvent e, int action, float pressure, int actionButton) {
+        ControlMessages.Position p = InputMapper.position(handle.view(), e.getX(), e.getY());
+        if (p == null) return;
+        handle.session.sendControl(new ControlMessages.Touch(
+                action, ControlMessages.POINTER_ID_MOUSE, p, pressure, actionButton, e.isPrimaryButtonDown() ? 1 : 0));
     }
 
     private void disconnectSelected() {
