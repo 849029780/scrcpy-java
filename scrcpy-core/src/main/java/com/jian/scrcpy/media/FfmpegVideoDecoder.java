@@ -32,6 +32,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // Diagnostic only: bypass all FFmpeg video decode while keeping MediaMessage/ByteBuf flow active.
     private static final boolean DEBUG_SKIP_DECODE =
             Boolean.getBoolean("scrcpy.video.debug.skip-decode");
+
+    // Diagnostic only: serialize native FFmpeg video operations across all
+    // device decoders to test whether multi-device native concurrency is the cause.
+    private static final Object FFMPEG_VIDEO_LOCK = new Object();
     private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(120);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
@@ -145,7 +149,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
     }
 
-    private synchronized void decodeMessage(MediaMessage m) {
+    private void decodeMessage(MediaMessage m) {
+        synchronized (FFMPEG_VIDEO_LOCK) {
+            decodeMessage0(m);
+        }
+    }
+
+    private void decodeMessage0(MediaMessage m) {
         if (m instanceof MediaMessage.Codec c) {
             if (!DEBUG_SKIP_DECODE) {
                 init(c.codec());
