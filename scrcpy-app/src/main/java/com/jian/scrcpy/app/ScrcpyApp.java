@@ -578,7 +578,19 @@ public final class ScrcpyApp extends Application {
         Button home = deviceControlButton("⌂", "Home", () -> pressAndroidKey(handle, AndroidKeycodes.HOME));
         Button recent = deviceControlButton("▣", "多任务", () -> pressAndroidKey(handle, 187));
         Button power = deviceControlButton("⏻", "电源", () -> pressAndroidKey(handle, AndroidKeycodes.POWER));
-        Button screenOff = deviceControlButton("◐", "熄屏", () -> handle.controller.setDisplayPower(false));
+        ToggleButton displayPower = new ToggleButton("◐");
+        displayPower.setTooltip(new Tooltip("熄屏 / 亮屏"));
+        displayPower.setFocusTraversable(false);
+        displayPower.setMinSize(34, 34);
+        displayPower.setPrefSize(34, 34);
+        displayPower.setMaxSize(34, 34);
+        displayPower.setSelected(true);
+        displayPower.setOnAction(e -> {
+            boolean on = displayPower.isSelected();
+            handle.controller.setDisplayPower(on);
+            displayPower.setText(on ? "◐" : "○");
+            displayPower.setTooltip(new Tooltip(on ? "熄屏" : "亮屏"));
+        });
 
         ToggleButton stayAwake = new ToggleButton("☀");
         stayAwake.setTooltip(new Tooltip("保持屏幕常亮"));
@@ -589,7 +601,7 @@ public final class ScrcpyApp extends Application {
         stayAwake.setSelected(handle.stayAwake);
         stayAwake.setOnAction(e -> setStayAwake(handle, stayAwake.isSelected()));
 
-        VBox bar = new VBox(5, back, home, recent, power, screenOff, stayAwake);
+        VBox bar = new VBox(5, back, home, recent, power, displayPower, stayAwake);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
