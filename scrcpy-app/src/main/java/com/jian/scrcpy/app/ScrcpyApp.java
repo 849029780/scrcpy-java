@@ -1328,8 +1328,8 @@ public final class ScrcpyApp extends Application {
     private void resizeTile(DeviceSession handle, boolean primary) {
         if (handle.tile == null || handle.view() == null) return;
 
-        double maxWidth = primary ? 620 : TILE_WIDTH;
-        double maxVideoHeight = primary ? 820 : TILE_HEIGHT;
+        double maxWidth = primary ? 760 : TILE_WIDTH;
+        double maxVideoHeight = primary ? 960 : TILE_HEIGHT;
         int frameWidth = handle.view().frameWidth();
         int frameHeight = handle.view().frameHeight();
 
