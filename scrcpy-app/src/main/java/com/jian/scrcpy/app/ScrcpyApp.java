@@ -527,20 +527,6 @@ public final class ScrcpyApp extends Application {
         HBox videoAndNavigation = new HBox(3, viewport, navigationBar);
         videoAndNavigation.setAlignment(Pos.TOP_LEFT);
 
-        // Per-device overflow menu. The click-coordinate adaptation is a
-        // global broadcast policy, but is exposed from every device tile.
-        MenuButton deviceMenu = new MenuButton("⋮");
-        deviceMenu.setFocusTraversable(false);
-        deviceMenu.setTooltip(new Tooltip("设备菜单"));
-        CheckMenuItem adaptClick = new CheckMenuItem("主设备点击坐标适配");
-        adaptClick.setSelected(adaptScreenClick);
-        adaptClick.setOnAction(e -> {
-            adaptScreenClick = adaptClick.isSelected();
-            refreshDeviceMenuStates();
-        });
-        deviceMenu.getItems().add(adaptClick);
-        StackPane.setAlignment(deviceMenu, Pos.TOP_RIGHT);
-        StackPane.setMargin(deviceMenu, new Insets(6));
         handle.view().setPreserveRatio(true);
         handle.view().setSmooth(true);
 
@@ -558,11 +544,34 @@ public final class ScrcpyApp extends Application {
 
         handle.tile = tile;
         handle.viewport = viewport;
-        handle.adaptClickItem = adaptClick;
         handle.device = device;
 
         resizeTile(handle, false);
         secondaryGrid.getChildren().add(tile);
+    }
+
+    private ToggleButton createAdaptClickButton(DeviceSession handle) {
+        ToggleButton button = new ToggleButton();
+        button.setFocusTraversable(false);
+        button.setMinSize(34, 34);
+        button.setPrefSize(34, 34);
+        button.setMaxSize(34, 34);
+        updateAdaptClickButton(button, adaptScreenClick);
+        button.setOnAction(e -> setAdaptScreenClick(button.isSelected()));
+        return button;
+    }
+
+    private static void updateAdaptClickButton(ToggleButton button, boolean enabled) {
+        button.setSelected(enabled);
+        button.setText(enabled ? "↔" : "↕");
+        button.setTooltip(new Tooltip(enabled
+                ? "关闭主设备点击坐标适配"
+                : "开启主设备点击坐标适配"));
+    }
+
+    private void setAdaptScreenClick(boolean enabled) {
+        adaptScreenClick = enabled;
+        refreshAdaptClickButtons();
     }
 
     private ToggleButton createMouseModeButton(DeviceSession handle) {
@@ -601,6 +610,9 @@ public final class ScrcpyApp extends Application {
         updatePrimaryScreenToggle(primaryScreen, isPrimary(handle));
         primaryScreen.setOnAction(e -> togglePrimary(handle));
 
+        ToggleButton adaptClickButton = createAdaptClickButton(handle);
+        handle.adaptClickButton = adaptClickButton;
+
         ToggleButton mouseModeButton = createMouseModeButton(handle);
         handle.mouseModeButton = mouseModeButton;
         Button back = deviceControlButton("←", "返回", () -> rightSidebarKey(handle, AndroidKeycodes.BACK));
@@ -635,7 +647,7 @@ public final class ScrcpyApp extends Application {
             rightSidebarStayAwake(handle, enabled);
         });
 
-        VBox bar = new VBox(5, primaryScreen, back, home, recent, power, displayPower, stayAwake, mouseModeButton);
+        VBox bar = new VBox(5, primaryScreen, adaptClickButton, back, home, recent, power, displayPower, stayAwake, mouseModeButton);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(3, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
@@ -1164,11 +1176,10 @@ public final class ScrcpyApp extends Application {
         handle.view().setFitHeight(videoHeight);
     }
 
-    private void refreshDeviceMenuStates() {
+    private void refreshAdaptClickButtons() {
         sessions.values().forEach(session -> {
-            if (session.adaptClickItem != null
-                    && session.adaptClickItem.isSelected() != adaptScreenClick) {
-                session.adaptClickItem.setSelected(adaptScreenClick);
+            if (session.adaptClickButton != null) {
+                updateAdaptClickButton(session.adaptClickButton, adaptScreenClick);
             }
         });
     }
@@ -1185,7 +1196,7 @@ public final class ScrcpyApp extends Application {
                 updatePrimaryScreenToggle(s.primaryScreenButton, isPrimary(s));
             }
         });
-        refreshDeviceMenuStates();
+        refreshAdaptClickButtons();
     }
 
     private void setMouseMode(DeviceSession handle, MouseMode mode) {
@@ -1403,7 +1414,7 @@ public final class ScrcpyApp extends Application {
         private final ClipboardController clipboard;
         private VBox tile;
         private StackPane viewport;
-        private CheckMenuItem adaptClickItem;
+        private ToggleButton adaptClickButton;
         private AdbDevice device;
         private boolean primary;
         private MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
