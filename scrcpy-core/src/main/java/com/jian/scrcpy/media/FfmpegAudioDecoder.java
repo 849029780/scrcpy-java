@@ -17,6 +17,8 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private AVCodecContext ctx;
     private AVFrame frame;
     private AVPacket packet;
+    private CodecId codec;
+    private long packetIndex;
 
     public FfmpegAudioDecoder(Consumer<AudioFrame> s) { super(false); sink = s; }
 
@@ -30,6 +32,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private void init(CodecId codec) {
+        this.codec = codec;
         AVCodec dec = avcodec_find_decoder(avId(codec));
         if (dec == null) throw new IllegalStateException("decoder unavailable: " + codec);
         ctx = avcodec_alloc_context3(dec);
@@ -46,24 +49,58 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         if (m instanceof MediaMessage.Codec c) { init(c.codec()); return; }
         if (!(m instanceof MediaMessage.Packet p)) return;
         try {
-            if (p.config()) return;
-            byte[] bytes = new byte[p.data().readableBytes()];
-            p.data().getBytes(p.data().readerIndex(), bytes);
+            long index = ++packetIndex;
+            // scrcpy 5.0.1 only merges config packets for H.264/H.265 video.
+            // Audio config packets are metadata for recording and must not be
+            // submitted to the audio decoder as compressed frames.
+            if (p.config()) {
+                System.out.printf("[scrcpy-java] audio config packet: codec=%s packet=%d size=%d%n",
+                        codec, index, p.data().readableBytes());
+                return;
+            }
+            byte[] bytes = new byte[p.data().readableBytes() + AV_INPUT_BUFFER_PADDING_SIZE];
+            int payloadSize = p.data().readableBytes();
+            p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
             try (BytePointer bp = new BytePointer(bytes)) {
                 av_packet_unref(packet);
-                packet.data(bp).size(bytes.length).pts(p.pts());
+                packet.data(bp).size(payloadSize).pts(p.pts()).dts(p.pts());
+
                 int ret = avcodec_send_packet(ctx, packet);
+                if (ret == AVERROR_EAGAIN()) {
+                    drainFrames(p.pts());
+                    ret = avcodec_send_packet(ctx, packet);
+                }
                 if (ret < 0) {
-                    System.err.printf("[scrcpy-java] audio packet decode failed: %d%n", ret);
+                    logDecodeError("send_packet", ret, index, payloadSize, p.pts());
                     return;
                 }
-                while ((ret = avcodec_receive_frame(ctx, frame)) >= 0) {
-                    AudioFrame pcm = toPcm(frame, p.pts());
-                    if (pcm != null) sink.accept(pcm);
-                }
+                drainFrames(p.pts());
             }
         } finally {
             ReferenceCountUtil.release(p.data());
+        }
+    }
+
+    private void drainFrames(long pts) {
+        for (;;) {
+            int ret = avcodec_receive_frame(ctx, frame);
+            if (ret >= 0) {
+                AudioFrame pcm = toPcm(frame, pts);
+                if (pcm != null) sink.accept(pcm);
+                continue;
+            }
+            if (ret != AVERROR_EAGAIN() && ret != AVERROR_EOF) {
+                logDecodeError("receive_frame", ret, packetIndex, packet == null ? 0 : packet.size(), pts);
+            }
+            return;
+        }
+    }
+
+    private void logDecodeError(String operation, int error, long index, long size, long pts) {
+        try (BytePointer errorText = new BytePointer(256)) {
+            av_strerror(error, errorText, 256);
+            System.err.printf("[scrcpy-java] audio %s failed: codec=%s packet=%d size=%d pts=%d error=%d (%s)%n",
+                    operation, codec, index, size, pts, error, errorText.getString());
         }
     }
 
