@@ -920,7 +920,8 @@ public final class ScrcpyApp extends Application {
             }
         }
 
-        if (handle.mouseMode == MouseMode.ABSOLUTE_TOUCH && e.isPrimaryButtonDown()) {
+        if (handle.mouseMode == MouseMode.ABSOLUTE_TOUCH
+                && (e.isPrimaryButtonDown() || activeMouseInput == handle)) {
             VideoView view = handle.view();
             DeviceController.ScreenPosition exit = InputMapper.position(
                     view,
