@@ -107,6 +107,19 @@ public final class ControlMessageQueue extends ChannelDuplexHandler {
         }
     }
 
+    /** Remove pending droppable input/events while preserving UHID lifecycle messages. */
+    public void clearDroppable() {
+        Runnable action = () -> {
+            queue.removeIf(ControlMessageQueue::isDroppable);
+            pendingResize = null;
+            drain();
+        };
+        ChannelHandlerContext current = ctx;
+        if (current == null || closed) return;
+        if (current.executor().inEventLoop()) action.run();
+        else current.executor().execute(action);
+    }
+
     public int queuedMessages() {
         return queue.size() + (pendingResize == null ? 0 : 1);
     }
