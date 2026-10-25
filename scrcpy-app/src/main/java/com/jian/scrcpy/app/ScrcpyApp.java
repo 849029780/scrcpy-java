@@ -405,9 +405,25 @@ public final class ScrcpyApp extends Application {
                     parsePositiveInt(maxSize.getValue(), 0),
                     "不限制".equals(maxFps.getValue()) ? null : maxFps.getValue(),
                     showTouches.isSelected(), stayAwake.isSelected(), turnScreenOff.isSelected(),
-                    "不裁剪".equals(crop.getValue()) ? null : crop.getValue(), blankToNull(startApp.getText()));
+                    "不裁剪".equals(crop.getValue()) ? null : crop.getValue(), normalizeStartApp(startApp.getText()));
         });
         return dialog.showAndWait();
+    }
+
+    /**
+     * scrcpy START_APP treats a plain value as an exact package name.
+     * Prefix human-readable app names with '?' so the server searches by label.
+     */
+    private static String normalizeStartApp(String value) {
+        String name = blankToNull(value);
+        if (name == null) return null;
+
+        boolean forceStop = name.startsWith("+");
+        String target = forceStop ? name.substring(1) : name;
+        if (!target.startsWith("?") && !target.contains(".")) {
+            target = "?" + target;
+        }
+        return forceStop ? "+" + target : target;
     }
 
     private static String videoCodecName(String label) {
