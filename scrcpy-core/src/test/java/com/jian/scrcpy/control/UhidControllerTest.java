@@ -56,6 +56,7 @@ final class UhidControllerTest {
             if (message instanceof ControlMessages.UhidInput) throw new IllegalStateException("send failed");
         });
         keyboard.open();
+        keyboard.key(0x04, true, 0);
         assertThrows(IllegalStateException.class, keyboard::close);
         assertDoesNotThrow(keyboard::close);
     }
@@ -66,6 +67,7 @@ final class UhidControllerTest {
             if (message instanceof ControlMessages.UhidInput) throw new IllegalStateException("send failed");
         });
         mouse.open();
+        mouse.button(UhidMouse.BUTTON_LEFT, true);
         assertThrows(IllegalStateException.class, mouse::close);
         assertDoesNotThrow(mouse::close);
     }
