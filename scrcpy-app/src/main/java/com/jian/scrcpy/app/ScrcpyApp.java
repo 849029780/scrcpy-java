@@ -56,7 +56,7 @@ public final class ScrcpyApp extends Application {
     /** User-selected connections survive temporary ADB disconnects. */
     private final Map<String, ConnectionSettings> desiredConnections = new ConcurrentHashMap<>();
     /** Map primary-device absolute coordinates to each target when enabled. */
-    private boolean adaptScreenClick = true;
+    private boolean adaptScreenClick = false;
     private final Set<String> reconnecting = ConcurrentHashMap.newKeySet();
     private volatile String primarySerial;
     /** Preserve the user's primary-device choice across temporary ADB loss. */
