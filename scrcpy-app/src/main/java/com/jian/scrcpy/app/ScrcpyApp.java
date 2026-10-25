@@ -55,6 +55,8 @@ public final class ScrcpyApp extends Application {
     private final Map<String, DeviceSession> sessions = new ConcurrentHashMap<>();
     /** User-selected connections survive temporary ADB disconnects. */
     private final Map<String, ConnectionSettings> desiredConnections = new ConcurrentHashMap<>();
+    /** Map primary-device absolute coordinates to each target when enabled. */
+    private boolean adaptScreenClick = true;
     private final Set<String> reconnecting = ConcurrentHashMap.newKeySet();
     private volatile String primarySerial;
     /** Preserve the user's primary-device choice across temporary ADB loss. */
@@ -675,7 +677,7 @@ public final class ScrcpyApp extends Application {
 
     private void broadcastHover(DeviceSession source, DeviceController.ScreenPosition position) {
         for (DeviceSession target : inputTargets(source)) {
-            DeviceController.ScreenPosition p = scalePosition(position, target.view());
+            DeviceController.ScreenPosition p = adaptScreenClick && source != target ? scalePosition(position, target.view()) : position;
             if (p != null) target.controller.hover(p);
         }
     }
