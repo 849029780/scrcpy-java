@@ -4,6 +4,7 @@ import com.jian.scrcpy.ScrcpySession;
 import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.adb.AdbDevice;
 import com.jian.scrcpy.media.JavaSoundPlayer;
+import com.jian.scrcpy.media.FfmpegVideoDecoder;
 import com.jian.scrcpy.control.DeviceController;
 import com.jian.scrcpy.control.UhidController;
 import com.jian.scrcpy.control.ClipboardController;
@@ -588,6 +589,9 @@ public final class ScrcpyApp extends Application {
                         d.turnScreenOff(), d.crop(), d.startApp());
 
                 VideoView view = new VideoView();
+                FfmpegVideoDecoder videoDecoder = d.video()
+                        ? new FfmpegVideoDecoder(view::accept, d.videoDecoder())
+                        : null;
                 audioPlayer = new JavaSoundPlayer();
                 JavaSoundPlayer player = audioPlayer;
 
@@ -608,23 +612,20 @@ public final class ScrcpyApp extends Application {
                 }));
                 runningSession.start(
                         ScrcpyServerArtifact.resolve(),
-                        frame -> {
-                            view.accept(frame);
-                            if (firstFrameLayout.compareAndSet(false, true)) {
-                                Platform.runLater(() -> resizeTileForCurrentRole(device.serial()));
-                            }
-                        },
+                        videoDecoder,
                         player::accept);
 
                 Platform.runLater(() -> {
                     reconnecting.remove(device.serial());
                     if (!desiredConnections.containsKey(device.serial())) {
                         runningSession.close();
+                        if (videoDecoder != null) videoDecoder.close();
                         player.close();
                         return;
                     }
                     if (sessions.containsKey(device.serial())) {
                         runningSession.close();
+                        if (videoDecoder != null) videoDecoder.close();
                         player.close();
                         return;
                     }
@@ -634,7 +635,7 @@ public final class ScrcpyApp extends Application {
                     runningSession.addDeviceMessageListener(uhid::handle);
                     runningSession.addDeviceMessageListener(clipboard::handle);
                     clipboard.onRemoteClipboard(this::applyDeviceClipboard);
-                    DeviceSession handle = new DeviceSession(runningSession, player, view,
+                    DeviceSession handle = new DeviceSession(runningSession, player, videoDecoder, view,
                             new DeviceController(runningSession::sendControl), uhid, clipboard);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
@@ -648,6 +649,7 @@ public final class ScrcpyApp extends Application {
             } catch (Throwable e) {
                 reconnecting.remove(device.serial());
                 if (session != null) session.close();
+                if (videoDecoder != null) videoDecoder.close();
                 if (audioPlayer != null) audioPlayer.close();
                 Platform.runLater(() -> {
                     status.setText((reconnect ? "自动重连 " : "连接 ") + device.displayName() + " 失败: " + e.getMessage());
@@ -1595,6 +1597,7 @@ public final class ScrcpyApp extends Application {
     private static final class DeviceSession implements AutoCloseable {
         private final ScrcpySession session;
         private final JavaSoundPlayer audioPlayer;
+        private final FfmpegVideoDecoder videoDecoder;
         private final VideoView view;
         private final DeviceController controller;
         private final UhidController uhid;
@@ -1620,12 +1623,14 @@ public final class ScrcpyApp extends Application {
         private DeviceSession(
                 ScrcpySession session,
                 JavaSoundPlayer audioPlayer,
+                FfmpegVideoDecoder videoDecoder,
                 VideoView view,
                 DeviceController controller,
                 UhidController uhid,
                 ClipboardController clipboard) {
             this.session = session;
             this.audioPlayer = audioPlayer;
+            this.videoDecoder = videoDecoder;
             this.view = view;
             this.controller = controller;
             this.uhid = uhid;
@@ -1641,6 +1646,12 @@ public final class ScrcpyApp extends Application {
             // and audio resources from being closed.
             try {
                 uhid.close();
+            } catch (Throwable t) {
+                first = t;
+            }
+
+            try {
+                if (videoDecoder != null) videoDecoder.close();
             } catch (Throwable t) {
                 first = t;
             }
