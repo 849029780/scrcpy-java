@@ -85,6 +85,10 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         } finally {
             MediaMessage m;
             while ((m = decodeQueue.poll()) != null) releaseMessage(m);
+            // Native FFmpeg state is owned and freed by the decode worker.
+            // This prevents close() from freeing it while decodeMessage() is
+            // still executing on this thread.
+            closeNative();
         }
     }
 
@@ -182,13 +186,15 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
 
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;
+        // Interrupt the worker so it stops waiting for more packets. Native
+        // FFmpeg resources are released by the worker itself after it exits,
+        // never concurrently with decodeMessage().
         decodeThread.interrupt();
         try {
             decodeThread.join(2_000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        closeNative();
     }
 
     private synchronized void closeNative() {
