@@ -135,6 +135,13 @@ public final class ScrcpySession implements AutoCloseable {
         return channel != null && channel.isActive();
     }
 
+    /** Clear queued droppable input/events for an immediate input-state reset. */
+    public synchronized void clearPendingControlEvents() {
+        if (connection != null && controlQueue != null) {
+            controlQueue.clearDroppable();
+        }
+    }
+
     public synchronized boolean sendControl(ControlMessages.Message message) {
         Objects.requireNonNull(message, "message");
         if (state != State.CONNECTING && state != State.RUNNING) return false;
