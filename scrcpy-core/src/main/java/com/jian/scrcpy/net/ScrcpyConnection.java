@@ -16,7 +16,8 @@ public final class ScrcpyConnection implements AutoCloseable {
     private final EventLoopGroup group =
             new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
     private final int port;
-    private Channel video, audio, control, listener;\n    private volatile ControlMessageQueue controlQueue;
+    private Channel video, audio, control, listener;
+    private volatile ControlMessageQueue controlQueue;
     private volatile int localPort;
     private volatile String deviceName;
 
@@ -41,7 +42,9 @@ public final class ScrcpyConnection implements AutoCloseable {
             if (audioHandler != null) pipeline.addLast("audioHandler", audioHandler);
         } else {
             pipeline.addLast("deviceMessage", new DeviceMessageDecoder());
-            pipeline.addLast("controlEncoder", new ControlMessageEncoder());\n            controlQueue = new ControlMessageQueue();\n            pipeline.addLast("controlQueue", controlQueue);
+            pipeline.addLast("controlEncoder", new ControlMessageEncoder());
+            controlQueue = new ControlMessageQueue();
+            pipeline.addLast("controlQueue", controlQueue);
             if (controlHandler != null) pipeline.addLast("controlHandler", controlHandler);
         }
 
@@ -148,6 +151,10 @@ public final class ScrcpyConnection implements AutoCloseable {
 
     public Channel control() {
         return control;
+    }
+
+    public ControlMessageQueue controlQueue() {
+        return controlQueue;
     }
 
     @Override
