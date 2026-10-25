@@ -582,7 +582,6 @@ public final class ScrcpyApp extends Application {
         disconnect.setDisable(!hasSelection);
         connectAll.setDisable(!hasReady);
         refresh.setDisable(false);
-        connectionSettings.setDisable(false);
     }
 
     private void closeAllSessions() {
