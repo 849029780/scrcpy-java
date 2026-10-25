@@ -327,7 +327,7 @@ public final class ScrcpyApp extends Application {
 
         ComboBox<String> videoCodec = combo("H.264", "H.265", "AV1");
         ComboBox<String> videoEncoder = combo("自动（推荐）");
-        ComboBox<String> videoDecoder = combo("自动（推荐）", "硬件解码", "软件解码");
+        ComboBox<String> videoDecoder = combo("硬件解码", "软件解码");
         TextField videoCodecOptions = new TextField();
         videoCodecOptions.setPromptText("例如 bitrate-mode:int=1,profile:int=1");
         ComboBox<String> audioCodec = combo("opus", "aac", "flac");
@@ -340,7 +340,7 @@ public final class ScrcpyApp extends Application {
         startApp.setPromptText("可选：应用名称或包名，例如 抖音 / com.ss.android.ugc.aweme");
 
         videoCodec.setValue("H.264");
-        videoDecoder.setValue("自动（推荐）");
+        videoDecoder.setValue("硬件解码");
         audioCodec.setValue("opus");
         videoBitRate.setValue("8M"); audioBitRate.setValue("128K");
         maxSize.setValue("1920"); maxFps.setValue("60"); crop.setValue("不裁剪");
@@ -430,10 +430,9 @@ public final class ScrcpyApp extends Application {
     }
 
     private static String videoDecoderMode(String label) {
-        return switch (Objects.requireNonNullElse(label, "自动（推荐）")) {
-            case "硬件解码" -> "hardware";
+        return switch (Objects.requireNonNullElse(label, "硬件解码")) {
             case "软件解码" -> "software";
-            default -> "auto";
+            default -> "hardware";
         };
     }
 
