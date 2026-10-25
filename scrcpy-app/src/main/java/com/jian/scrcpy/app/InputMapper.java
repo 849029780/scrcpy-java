@@ -1,8 +1,12 @@
 package com.jian.scrcpy.app;
 
-import com.jian.scrcpy.protocol.ControlMessages;
+import com.jian.scrcpy.control.DeviceController;
 import javafx.scene.input.KeyCode;
 
+/**
+ * JavaFX adapter only. It converts JavaFX-specific key codes and viewport
+ * coordinates to frontend-neutral control values.
+ */
 final class InputMapper {
     private InputMapper() {}
 
@@ -38,13 +42,13 @@ final class InputMapper {
 
     static int metaState(boolean shift, boolean ctrl, boolean alt) {
         int state = 0;
-        if (shift) state |= 0x1;   // AMETA_SHIFT_ON
-        if (alt) state |= 0x2;     // AMETA_ALT_ON
-        if (ctrl) state |= 0x1000; // AMETA_CTRL_ON
+        if (shift) state |= 0x1;
+        if (alt) state |= 0x2;
+        if (ctrl) state |= 0x1000;
         return state;
     }
 
-    static ControlMessages.Position position(VideoView view, double x, double y) {
+    static DeviceController.ScreenPosition position(VideoView view, double x, double y) {
         int width = view.frameWidth();
         int height = view.frameHeight();
         if (width <= 0 || height <= 0) return null;
@@ -62,6 +66,6 @@ final class InputMapper {
 
         int px = Math.min(width - 1, Math.max(0, (int) ((x - left) / scale)));
         int py = Math.min(height - 1, Math.max(0, (int) ((y - top) / scale)));
-        return new ControlMessages.Position(px, py, width, height);
+        return new DeviceController.ScreenPosition(px, py, width, height);
     }
 }
