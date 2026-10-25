@@ -29,6 +29,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // Diagnostic only: bypass swscale/BGRA/JavaFX while keeping H.264 decode active.
     private static final boolean DEBUG_SKIP_RENDER =
             Boolean.getBoolean("scrcpy.video.debug.skip-render");
+    // Diagnostic only: bypass all FFmpeg video decode while keeping MediaMessage/ByteBuf flow active.
+    private static final boolean DEBUG_SKIP_DECODE =
+            Boolean.getBoolean("scrcpy.video.debug.skip-decode");
     private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(120);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
@@ -144,10 +147,15 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     private synchronized void decodeMessage(MediaMessage m) {
         if (m instanceof MediaMessage.Codec c) {
-            init(c.codec());
+            if (!DEBUG_SKIP_DECODE) {
+                init(c.codec());
+            }
             return;
         }
         if (!(m instanceof MediaMessage.Packet p) || p.config()) return;
+        if (DEBUG_SKIP_DECODE) {
+            return;
+        }
         byte[] b = new byte[p.data().readableBytes()];
         int payloadSize = b.length;
         p.data().getBytes(p.data().readerIndex(), b);
