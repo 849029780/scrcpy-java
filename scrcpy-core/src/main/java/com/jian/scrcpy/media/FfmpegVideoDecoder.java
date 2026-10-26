@@ -344,23 +344,18 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             init(announcedCodec);
         }
 
-        int payloadSize = p.data().readableBytes();
+        byte[] encoded = new byte[p.data().readableBytes()];
+        int payloadSize = encoded.length;
+        p.data().getBytes(p.data().readerIndex(), encoded);
+
         av_packet_unref(packet);
         if (av_new_packet(packet, payloadSize) < 0) return;
-
-        // Copy directly from Netty's ByteBuf into FFmpeg's packet buffer.
-        // Avoid a temporary byte[] for every video packet (especially costly
-        // at 60/120 fps and with multiple devices).
-        p.data().getBytes(
-                p.data().readerIndex(),
-                packet.data().asBuffer(),
-                payloadSize);
+        packet.data().put(encoded, 0, payloadSize);
         packet.pts(p.pts()).dts(p.pts());
 
         int sendResult = avcodec_send_packet(ctx, packet);
         if (sendResult < 0) {
             if (activeHardware != null && !hardwareConfirmed) {
-                byte[] encoded = copyPacketPayload(p);
                 logHardwarePacketFailure("avcodec_send_packet", sendResult, encoded, p.pts());
                 fallbackToSoftware(encoded, p.pts(), "avcodec_send_packet=" + sendResult);
             }
@@ -411,7 +406,6 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
         if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF
                 && activeHardware != null && !hardwareConfirmed) {
-            byte[] encoded = copyPacketPayload(p);
             fallbackToSoftware(encoded, p.pts(), "avcodec_receive_frame=" + receiveResult);
         }
     }
