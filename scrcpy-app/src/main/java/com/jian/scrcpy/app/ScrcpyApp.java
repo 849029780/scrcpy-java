@@ -786,6 +786,7 @@ public final class ScrcpyApp extends Application {
         Button back = deviceControlButton("←", "返回", () -> rightSidebarKey(handle, AndroidKeycodes.BACK));
         Button home = deviceControlButton("⌂", "Home", () -> rightSidebarKey(handle, AndroidKeycodes.HOME));
         Button recent = deviceControlButton("▣", "多任务", () -> rightSidebarKey(handle, 187));
+        Button taskbar = deviceControlButton("▾", "打开任务栏", () -> rightSidebarTaskbar(handle));
         Button power = deviceControlButton("⏻", "电源", () -> rightSidebarKey(handle, AndroidKeycodes.POWER));
         ToggleButton displayPower = new ToggleButton("◐");
         displayPower.setCursor(Cursor.DEFAULT);
@@ -817,7 +818,7 @@ public final class ScrcpyApp extends Application {
             rightSidebarStayAwake(handle, enabled);
         });
 
-        VBox bar = new VBox(5, close, primaryScreen, back, home, recent, power, displayPower, stayAwake, mouseModeButton, adaptClickButton);
+        VBox bar = new VBox(5, close, primaryScreen, back, home, recent, taskbar, power, displayPower, stayAwake, mouseModeButton, adaptClickButton);
         bar.setAlignment(Pos.TOP_CENTER);
         bar.setPadding(new Insets(0, 2, 3, 2));
         bar.setStyle("-fx-background-color: #181818;");
@@ -827,6 +828,12 @@ public final class ScrcpyApp extends Application {
     private void rightSidebarKey(DeviceSession source, int keyCode) {
         for (DeviceSession target : inputTargets(source)) {
             pressAndroidKey(target, keyCode);
+        }
+    }
+
+    private void rightSidebarTaskbar(DeviceSession source) {
+        for (DeviceSession target : inputTargets(source)) {
+            target.controller.expandNotificationPanel();
         }
     }
 
