@@ -144,10 +144,9 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             // AAC must have its config packet before media packets can be decoded.
             return;
         }
-        int payloadSize = p.data().readableBytes();
-        // Let FFmpeg own the packet payload. Copy directly from Netty into the
-        // native FFmpeg packet to avoid a temporary heap byte[] for every
-        // encoded audio packet.
+        byte[] bytes = new byte[p.data().readableBytes()];
+        int payloadSize = bytes.length;
+        p.data().getBytes(p.data().readerIndex(), bytes);
         av_packet_unref(packet);
         int allocRet = av_new_packet(packet, payloadSize);
         if (allocRet < 0) {
@@ -155,10 +154,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             return;
         }
 
-        p.data().getBytes(
-                p.data().readerIndex(),
-                packet.data().asBuffer(),
-                payloadSize);
+        packet.data().put(bytes, 0, payloadSize);
         packet.pts(p.pts()).dts(p.pts());
 
         int ret = avcodec_send_packet(ctx, packet);
