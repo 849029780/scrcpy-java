@@ -38,6 +38,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private int width, height;
     private int pixelFormat = -1;
     private boolean hardwareFormatLogged;
+    private boolean hardwareContextLogged;
 
     private static final boolean DEBUG_SKIP_RENDER =
             Boolean.getBoolean("scrcpy.video.debug.skip-render");
@@ -176,6 +177,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                             if (offered.length() > 0) offered.append(',');
                             offered.append(format);
                             if (format == selectedPixelFormat) {
+                                logHardwareCodecContext("get_format/select", ignored);
                                 if (!hardwareFormatLogged) {
                                     hardwareFormatLogged = true;
                                     System.out.printf("[scrcpy-java] hardware %s get_format: offered=[%s], selected=%d%n",
@@ -191,8 +193,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 };
 
         candidate.get_format(callback);
-        candidate.hw_device_ctx(av_buffer_ref(device));
+        AVBufferRef codecDeviceRef = av_buffer_ref(device);
+        candidate.hw_device_ctx(codecDeviceRef);
         candidate.hwaccel_flags(candidate.hwaccel_flags() | AV_HWACCEL_FLAG_IGNORE_LEVEL);
+        logHardwareCodecContext("before-avcodec_open2", candidate);
 
         if (avcodec_open2(candidate, decoder, (AVDictionary) null) < 0) {
             avcodec_free_context(candidate);
@@ -209,6 +213,42 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         allocateFramesAndPacket();
         System.out.printf("[scrcpy-java] video decoder: trying hardware %s (%s)%n", activeHardware, codecId);
         return true;
+    }
+
+    private void logHardwareCodecContext(String stage, AVCodecContext codecContext) {
+        if (codecContext == null || codecContext.isNull()) return;
+        AVBufferRef deviceRef = codecContext.hw_device_ctx();
+        AVBufferRef framesRef = codecContext.hw_frames_ctx();
+        String pixFmtName = pixelFormatName(codecContext.pix_fmt());
+        String swPixFmtName = pixelFormatName(codecContext.sw_pix_fmt());
+        String profileName = profileName(codecContext);
+        System.err.printf(
+                "[scrcpy-java] hardware context diagnostic: stage=%s backend=%s codec=%s profile=%d(%s) level=%d " +
+                        "size=%dx%d coded=%dx%d pixFmt=%d(%s) swPixFmt=%d(%s) hwPixelFmt=%d(%s) " +
+                        "hwDeviceCtx=%s hwFramesCtx=%s hwaccelFlags=0x%x%n",
+                stage, activeHardware, activeCodec,
+                codecContext.profile(), profileName, codecContext.level(),
+                codecContext.width(), codecContext.height(),
+                codecContext.coded_width(), codecContext.coded_height(),
+                codecContext.pix_fmt(), pixFmtName,
+                codecContext.sw_pix_fmt(), swPixFmtName,
+                hwPixelFormat, pixelFormatName(hwPixelFormat),
+                deviceRef != null && !deviceRef.isNull(),
+                framesRef != null && !framesRef.isNull(),
+                codecContext.hwaccel_flags());
+    }
+
+    private static String pixelFormatName(int format) {
+        if (format == AV_PIX_FMT_NONE) return "none";
+        BytePointer name = av_get_pix_fmt_name(format);
+        return name == null || name.isNull() ? "unknown" : name.getString();
+    }
+
+    private static String profileName(AVCodecContext codecContext) {
+        AVCodec codec = codecContext.codec();
+        if (codec == null || codec.isNull()) return "unknown";
+        BytePointer name = av_get_profile_name(codec, codecContext.profile());
+        return name == null || name.isNull() ? "unknown" : name.getString();
     }
 
     private void configureCodecContext(AVCodecContext codecContext, boolean hardware) {
@@ -547,6 +587,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         activeHardware = null;
         hardwareConfirmed = false;
         hardwareFormatLogged = false;
+        hardwareContextLogged = false;
         width = height = 0;
         pixelFormat = -1;
     }
