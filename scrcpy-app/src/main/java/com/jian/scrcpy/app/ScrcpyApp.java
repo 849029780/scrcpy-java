@@ -1101,8 +1101,7 @@ public final class ScrcpyApp extends Application {
         Button back = deviceControlButton("back.jpg", "返回", () -> rightSidebarKey(handle, AndroidKeycodes.BACK));
         Button home = deviceControlButton("home.jpg", "Home", () -> rightSidebarKey(handle, AndroidKeycodes.HOME));
         Button recent = deviceControlButton("recent-apps.jpg", "多任务", () -> rightSidebarKey(handle, 187));
-        Button taskbar = deviceControlButton(null, "打开任务栏", () -> rightSidebarTaskbar(handle));
-        taskbar.setText("▾");
+        Button taskbar = deviceControlButton("notification-panel.jpg", "打开通知栏", () -> rightSidebarTaskbar(handle));
         Button volumeUp = deviceControlButton("volume-up.jpg", "音量加", () -> rightSidebarKey(handle, AndroidKeycodes.VOLUME_UP));
         Button volumeDown = deviceControlButton("volume-down.jpg", "音量减", () -> rightSidebarKey(handle, AndroidKeycodes.VOLUME_DOWN));
         Button power = deviceControlButton("power.jpg", "电源", () -> rightSidebarKey(handle, AndroidKeycodes.POWER));
@@ -1222,10 +1221,14 @@ public final class ScrcpyApp extends Application {
             return;
         }
         ImageView view = new ImageView(new Image(resource.toExternalForm()));
-        view.setFitWidth(22);
-        view.setFitHeight(22);
+        // These source JPGs are raster images. Scaling them to a fractional
+        // JavaFX size makes thin icon strokes look soft, especially on HiDPI.
+        // Use an integer 24 px box and disable interpolation for crisper controls.
+        view.setFitWidth(24);
+        view.setFitHeight(24);
         view.setPreserveRatio(true);
-        view.setSmooth(true);
+        view.setSmooth(false);
+        view.setCache(true);
         button.setGraphic(view);
     }
 
@@ -1233,7 +1236,9 @@ public final class ScrcpyApp extends Application {
         Button button = new Button();
         setButtonIcon(button, iconName);
         button.setCursor(Cursor.DEFAULT);
-        button.setTooltip(new Tooltip(tooltip));
+        Tooltip tip = new Tooltip(tooltip);
+        tip.setShowDelay(javafx.util.Duration.millis(250));
+        button.setTooltip(tip);
         button.setFocusTraversable(false);
         button.setMinSize(34, 34);
         button.setPrefSize(34, 34);
