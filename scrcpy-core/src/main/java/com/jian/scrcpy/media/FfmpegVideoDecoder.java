@@ -107,7 +107,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private void initSoftware(AVCodec decoder, CodecId codecId) {
         ctx = avcodec_alloc_context3(decoder);
         if (ctx != null && !ctx.isNull()) {
-            configureCodecContext(ctx);
+            configureCodecContext(ctx, false);
         }
         if (ctx == null || ctx.isNull() || avcodec_open2(ctx, decoder, (AVDictionary) null) < 0) {
             closeNative();
@@ -144,7 +144,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             return false;
         }
 
-        configureCodecContext(candidate);
+        configureCodecContext(candidate, true);
 
         int selectedPixelFormat = selected.pix_fmt();
         AVCodecContext.Get_format_AVCodecContext_IntPointer callback =
@@ -181,14 +181,14 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         return true;
     }
 
-    private void configureCodecContext(AVCodecContext codecContext) {
-        // Match scrcpy's demuxer setup: dimensions and the expected software
-        // pixel format are known from the session header before avcodec_open2().
-        // Some hardware backends (notably D3D11VA) use this information while
-        // negotiating the decoder.
+    private void configureCodecContext(AVCodecContext codecContext, boolean hardware) {
+        // The session dimensions are known before avcodec_open2(). Keep the
+        // software pixel format unset for hardware decoders: FFmpeg must choose
+        // the hardware surface format (for example AV_PIX_FMT_D3D11) through
+        // get_format(). Pre-setting YUV420P can interfere with that negotiation.
         if (sessionWidth > 0) codecContext.width(sessionWidth);
         if (sessionHeight > 0) codecContext.height(sessionHeight);
-        codecContext.pix_fmt(AV_PIX_FMT_YUV420P);
+        if (!hardware) codecContext.pix_fmt(AV_PIX_FMT_YUV420P);
         codecContext.flags(codecContext.flags() | AV_CODEC_FLAG_LOW_DELAY);
     }
 
