@@ -58,6 +58,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode) {
+        av_log_set_level(AV_LOG_WARNING);
         super(false);
         this.sink = sink;
         this.decoderMode = normalizeMode(decoderMode);
