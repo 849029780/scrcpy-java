@@ -37,6 +37,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private int sessionWidth, sessionHeight;
     private int width, height;
     private int pixelFormat = -1;
+    private boolean hardwareFormatLogged;
 
     private static final boolean DEBUG_SKIP_RENDER =
             Boolean.getBoolean("scrcpy.video.debug.skip-render");
@@ -151,11 +152,23 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 new AVCodecContext.Get_format_AVCodecContext_IntPointer() {
                     @Override
                     public int call(AVCodecContext ignored, IntPointer formats) {
+                        StringBuilder offered = new StringBuilder();
                         for (long i = 0; ; i++) {
                             int format = formats.get(i);
                             if (format == AV_PIX_FMT_NONE) break;
-                            if (format == selectedPixelFormat) return format;
+                            if (offered.length() > 0) offered.append(',');
+                            offered.append(format);
+                            if (format == selectedPixelFormat) {
+                                if (!hardwareFormatLogged) {
+                                    hardwareFormatLogged = true;
+                                    System.out.printf("[scrcpy-java] hardware %s get_format: offered=[%s], selected=%d%n",
+                                            backend.name(), offered, selectedPixelFormat);
+                                }
+                                return format;
+                            }
                         }
+                        System.err.printf("[scrcpy-java] hardware %s get_format: requested=%d not offered; offered=[%s]%n",
+                                backend.name(), selectedPixelFormat, offered);
                         return AV_PIX_FMT_NONE;
                     }
                 };
@@ -338,6 +351,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         int sendResult = avcodec_send_packet(ctx, packet);
         if (sendResult < 0) {
             if (activeHardware != null && !hardwareConfirmed) {
+                logHardwarePacketFailure("avcodec_send_packet", sendResult, b, p.pts());
                 fallbackToSoftware(b, p.pts(), "avcodec_send_packet=" + sendResult);
             }
             return;
@@ -389,6 +403,33 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 && activeHardware != null && !hardwareConfirmed) {
             fallbackToSoftware(b, p.pts(), "avcodec_receive_frame=" + receiveResult);
         }
+    }
+
+    private void logHardwarePacketFailure(String operation, int error, byte[] encoded, long pts) {
+        byte[] errorBuffer = new byte[256];
+        BytePointer errorPointer = new BytePointer(errorBuffer);
+        String errorText;
+        try {
+            int result = av_strerror(error, errorPointer, errorBuffer.length);
+            errorText = result >= 0 ? errorPointer.getString() : "unknown";
+        } finally {
+            errorPointer.close();
+        }
+
+        int previewLength = Math.min(encoded.length, 48);
+        StringBuilder hex = new StringBuilder(previewLength * 3);
+        for (int i = 0; i < previewLength; i++) {
+            if (i > 0) hex.append(' ');
+            hex.append(String.format("%02x", encoded[i] & 0xff));
+        }
+
+        System.err.printf(
+                "[scrcpy-java] hardware decode diagnostic: backend=%s codec=%s op=%s error=%d (%s) packetBytes=%d pts=%d session=%dx%d ctx=%dx%d pixFmt=%d hwPixelFmt=%d hwDevice=%s firstBytes=%s%n",
+                activeHardware, activeCodec, operation, error, errorText, encoded.length, pts,
+                sessionWidth, sessionHeight,
+                ctx != null ? ctx.width() : -1, ctx != null ? ctx.height() : -1,
+                ctx != null ? ctx.pix_fmt() : AV_PIX_FMT_NONE, hwPixelFormat,
+                hwDevice != null && !hwDevice.isNull(), hex);
     }
 
     private void fallbackToSoftware(byte[] encoded, long pts) {
@@ -488,6 +529,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         hwPixelFormat = AV_PIX_FMT_NONE;
         activeHardware = null;
         hardwareConfirmed = false;
+        hardwareFormatLogged = false;
         width = height = 0;
         pixelFormat = -1;
     }
