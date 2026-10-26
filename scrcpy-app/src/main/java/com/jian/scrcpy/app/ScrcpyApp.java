@@ -40,6 +40,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class ScrcpyApp extends Application {
     private static final double TILE_WIDTH = 360;
@@ -303,29 +304,36 @@ public final class ScrcpyApp extends Application {
     private void transferFiles(List<File> files, List<String> serials, Label result,
                                Button send, Button chooseFiles) {
         int total = files.size() * serials.size();
-        int success = 0;
-        List<String> failures = new ArrayList<>();
+        AtomicInteger success = new AtomicInteger();
+        AtomicInteger done = new AtomicInteger();
+        List<String> failures = Collections.synchronizedList(new ArrayList<>());
 
-        for (String serial : serials) {
-            DeviceSession session = sessions.get(serial);
-            String deviceName = session != null && session.device != null
-                    ? session.device.displayName() : serial;
-            Adb deviceAdb = new Adb(System.getProperty("scrcpy.adb", "adb"), serial);
-            for (File file : files) {
-                try {
-                    deviceAdb.push(file.toPath(), "/sdcard/Download/" + file.getName());
-                    success++;
-                } catch (Exception ex) {
-                    failures.add(deviceName + " / " + file.getName());
-                }
-                int done = success + failures.size();
-                int currentSuccess = success;
-                Platform.runLater(() -> result.setText(
-                        "正在发送 " + done + " / " + total + "，成功 " + currentSuccess));
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (String serial : serials) {
+                executor.submit(() -> {
+                    DeviceSession session = sessions.get(serial);
+                    String deviceName = session != null && session.device != null
+                            ? session.device.displayName() : serial;
+                    Adb deviceAdb = new Adb(System.getProperty("scrcpy.adb", "adb"), serial);
+                    // One task per device: devices run in parallel, while files for
+                    // the same device remain ordered to avoid competing ADB installs/pushes.
+                    for (File file : files) {
+                        try {
+                            deviceAdb.push(file.toPath(), "/sdcard/Download/" + file.getName());
+                            success.incrementAndGet();
+                        } catch (Exception ex) {
+                            failures.add(deviceName + " / " + file.getName());
+                        }
+                        int currentDone = done.incrementAndGet();
+                        int currentSuccess = success.get();
+                        Platform.runLater(() -> result.setText(
+                                "正在发送 " + currentDone + " / " + total + "，成功 " + currentSuccess));
+                    }
+                });
             }
         }
 
-        int finalSuccess = success;
+        int finalSuccess = success.get();
         Platform.runLater(() -> {
             String text = "发送完成：成功 " + finalSuccess + " / " + total;
             if (!failures.isEmpty()) {
@@ -424,29 +432,36 @@ public final class ScrcpyApp extends Application {
     private void installApps(List<File> apks, List<String> serials, Label result,
                              Button install, Button chooseApks) {
         int total = apks.size() * serials.size();
-        int success = 0;
-        List<String> failures = new ArrayList<>();
+        AtomicInteger success = new AtomicInteger();
+        AtomicInteger done = new AtomicInteger();
+        List<String> failures = Collections.synchronizedList(new ArrayList<>());
 
-        for (String serial : serials) {
-            DeviceSession session = sessions.get(serial);
-            String deviceName = session != null && session.device != null
-                    ? session.device.displayName() : serial;
-            Adb deviceAdb = new Adb(System.getProperty("scrcpy.adb", "adb"), serial);
-            for (File apk : apks) {
-                try {
-                    deviceAdb.run("install", "-r", apk.getAbsolutePath());
-                    success++;
-                } catch (Exception ex) {
-                    failures.add(deviceName + " / " + apk.getName());
-                }
-                int done = success + failures.size();
-                int currentSuccess = success;
-                Platform.runLater(() -> result.setText(
-                        "正在安装 " + done + " / " + total + "，成功 " + currentSuccess));
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (String serial : serials) {
+                executor.submit(() -> {
+                    DeviceSession session = sessions.get(serial);
+                    String deviceName = session != null && session.device != null
+                            ? session.device.displayName() : serial;
+                    Adb deviceAdb = new Adb(System.getProperty("scrcpy.adb", "adb"), serial);
+                    // One task per device: devices install concurrently, but APKs on
+                    // each individual device are deliberately installed sequentially.
+                    for (File apk : apks) {
+                        try {
+                            deviceAdb.run("install", "-r", apk.getAbsolutePath());
+                            success.incrementAndGet();
+                        } catch (Exception ex) {
+                            failures.add(deviceName + " / " + apk.getName());
+                        }
+                        int currentDone = done.incrementAndGet();
+                        int currentSuccess = success.get();
+                        Platform.runLater(() -> result.setText(
+                                "正在安装 " + currentDone + " / " + total + "，成功 " + currentSuccess));
+                    }
+                });
             }
         }
 
-        int finalSuccess = success;
+        int finalSuccess = success.get();
         Platform.runLater(() -> {
             String text = "安装完成：成功 " + finalSuccess + " / " + total;
             if (!failures.isEmpty()) {
