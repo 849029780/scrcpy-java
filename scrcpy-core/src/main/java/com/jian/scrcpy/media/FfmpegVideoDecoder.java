@@ -45,6 +45,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             Boolean.getBoolean("scrcpy.video.debug.skip-decode");
     private static final boolean DEBUG_SKIP_SWS_SCALE =
             Boolean.getBoolean("scrcpy.video.debug.skip-sws-scale");
+    private static final boolean DEBUG_FFMPEG =
+            Boolean.parseBoolean(System.getProperty("scrcpy.video.debug.ffmpeg", "true"));
+    private static final AtomicBoolean FFMPEG_LOGGING_CONFIGURED = new AtomicBoolean();
 
     // Keep the existing global native lock for stability with multi-device
     // decoding. Hardware decoding can be made more parallel later once every
@@ -60,9 +63,20 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode) {
         super(false);
+        configureFfmpegLogging();
         this.sink = sink;
         this.decoderMode = normalizeMode(decoderMode);
         decodeThread = Thread.ofVirtual().name("scrcpy-video-decoder").start(this::decodeLoop);
+    }
+
+    private static void configureFfmpegLogging() {
+        if (!DEBUG_FFMPEG || !FFMPEG_LOGGING_CONFIGURED.compareAndSet(false, true)) return;
+        // FFmpeg's default callback already writes to stderr. Raising the
+        // process-wide level is enough to expose D3D11VA setup failures without
+        // adding a Java varargs callback across the native boundary.
+        av_log_set_level(AV_LOG_DEBUG);
+        av_log_set_flags(av_log_get_flags() | AV_LOG_PRINT_LEVEL);
+        System.err.println("[scrcpy-java] FFmpeg native debug logging enabled");
     }
 
     private static String normalizeMode(String mode) {
