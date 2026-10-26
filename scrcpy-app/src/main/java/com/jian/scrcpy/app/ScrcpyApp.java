@@ -1215,19 +1215,21 @@ public final class ScrcpyApp extends Application {
             button.setGraphic(null);
             return;
         }
-        var resource = ScrcpyApp.class.getResource("/icons/" + iconName);
+        String pngName = iconName.endsWith(".svg")
+                ? iconName.substring(0, iconName.length() - 4) + ".png"
+                : iconName;
+        var resource = ScrcpyApp.class.getResource("/icons/" + pngName);
         if (resource == null) {
             button.setGraphic(null);
             return;
         }
         ImageView view = new ImageView(new Image(resource.toExternalForm()));
-        // These source JPGs are raster images. Scaling them to a fractional
-        // JavaFX size makes thin icon strokes look soft, especially on HiDPI.
-        // Use an integer 24 px box and disable interpolation for crisper controls.
+        // SVG is kept as the editable source; JavaFX Image loads the generated PNG.
+        // The PNGs are rendered at 96x96 so 24x24 display remains crisp on HiDPI.
         view.setFitWidth(24);
         view.setFitHeight(24);
         view.setPreserveRatio(true);
-        view.setSmooth(false);
+        view.setSmooth(true);
         view.setCache(true);
         button.setGraphic(view);
     }
