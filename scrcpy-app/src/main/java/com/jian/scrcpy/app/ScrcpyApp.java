@@ -267,6 +267,13 @@ public final class ScrcpyApp extends Application {
         targetScroll.setPrefHeight(180);
 
         Label result = new Label();
+        VBox progressBox = new VBox(4);
+        Map<String, Label> progressLabels = new LinkedHashMap<>();
+        targetChecks.forEach((serial, check) -> {
+            Label label = new Label(check.getText() + "：等待发送");
+            progressLabels.put(serial, label);
+            progressBox.getChildren().add(label);
+        });
         Button send = new Button("发送");
         send.setDefaultButton(true);
         send.setOnAction(e -> {
@@ -286,14 +293,20 @@ public final class ScrcpyApp extends Application {
 
             send.setDisable(true);
             chooseFiles.setDisable(true);
-            result.setText("正在发送 0 / " + (selectedFiles.size() * targets.size()) + " ...");
-            Thread.startVirtualThread(() -> transferFiles(selectedFiles, targets, result, send, chooseFiles));
+            result.setText("正在发送...");
+            progressLabels.forEach((serial, label) ->
+                    label.setVisible(targets.contains(serial)));
+            targets.forEach(serial ->
+                    progressLabels.get(serial).setText(targetChecks.get(serial).getText()
+                            + "：0 / " + selectedFiles.size()));
+            Thread.startVirtualThread(() -> transferFiles(
+                    selectedFiles, targets, result, progressLabels, send, chooseFiles));
         });
 
         VBox content = new VBox(10,
                 new Label("文件"), chooseFiles, files,
                 new Label("发送到已投屏设备"), targetScroll,
-                send, result);
+                send, result, new Label("各设备进度"), progressBox);
         content.setPadding(new Insets(8));
         content.setPrefSize(680, 560);
         dialog.getDialogPane().setContent(content);
@@ -302,6 +315,7 @@ public final class ScrcpyApp extends Application {
     }
 
     private void transferFiles(List<File> files, List<String> serials, Label result,
+                               Map<String, Label> progressLabels,
                                Button send, Button chooseFiles) {
         int total = files.size() * serials.size();
         AtomicInteger success = new AtomicInteger();
@@ -324,10 +338,17 @@ public final class ScrcpyApp extends Application {
                         } catch (Exception ex) {
                             failures.add(deviceName + " / " + file.getName());
                         }
+                        int deviceDone = files.indexOf(file) + 1;
                         int currentDone = done.incrementAndGet();
                         int currentSuccess = success.get();
-                        Platform.runLater(() -> result.setText(
-                                "正在发送 " + currentDone + " / " + total + "，成功 " + currentSuccess));
+                        Platform.runLater(() -> {
+                            Label label = progressLabels.get(serial);
+                            if (label != null) {
+                                label.setText(deviceName + "：" + deviceDone + " / " + files.size());
+                            }
+                            result.setText("总进度 " + currentDone + " / " + total
+                                    + "，成功 " + currentSuccess);
+                        });
                     }
                 });
             }
@@ -395,6 +416,13 @@ public final class ScrcpyApp extends Application {
         targetScroll.setPrefHeight(180);
 
         Label result = new Label();
+        VBox progressBox = new VBox(4);
+        Map<String, Label> progressLabels = new LinkedHashMap<>();
+        targetChecks.forEach((serial, check) -> {
+            Label label = new Label(check.getText() + "：等待安装");
+            progressLabels.put(serial, label);
+            progressBox.getChildren().add(label);
+        });
         Button install = new Button("安装");
         install.setDefaultButton(true);
         install.setOnAction(e -> {
@@ -414,14 +442,20 @@ public final class ScrcpyApp extends Application {
 
             install.setDisable(true);
             chooseApks.setDisable(true);
-            result.setText("正在安装 0 / " + (selectedApks.size() * targets.size()) + " ...");
-            Thread.startVirtualThread(() -> installApps(selectedApks, targets, result, install, chooseApks));
+            result.setText("正在安装...");
+            progressLabels.forEach((serial, label) ->
+                    label.setVisible(targets.contains(serial)));
+            targets.forEach(serial ->
+                    progressLabels.get(serial).setText(targetChecks.get(serial).getText()
+                            + "：0 / " + selectedApks.size()));
+            Thread.startVirtualThread(() -> installApps(
+                    selectedApks, targets, result, progressLabels, install, chooseApks));
         });
 
         VBox content = new VBox(10,
                 new Label("APK 安装包"), chooseApks, apks,
                 new Label("安装到已投屏设备"), targetScroll,
-                install, result);
+                install, result, new Label("各设备进度"), progressBox);
         content.setPadding(new Insets(8));
         content.setPrefSize(680, 560);
         dialog.getDialogPane().setContent(content);
@@ -430,6 +464,7 @@ public final class ScrcpyApp extends Application {
     }
 
     private void installApps(List<File> apks, List<String> serials, Label result,
+                             Map<String, Label> progressLabels,
                              Button install, Button chooseApks) {
         int total = apks.size() * serials.size();
         AtomicInteger success = new AtomicInteger();
@@ -452,10 +487,17 @@ public final class ScrcpyApp extends Application {
                         } catch (Exception ex) {
                             failures.add(deviceName + " / " + apk.getName());
                         }
+                        int deviceDone = apks.indexOf(apk) + 1;
                         int currentDone = done.incrementAndGet();
                         int currentSuccess = success.get();
-                        Platform.runLater(() -> result.setText(
-                                "正在安装 " + currentDone + " / " + total + "，成功 " + currentSuccess));
+                        Platform.runLater(() -> {
+                            Label label = progressLabels.get(serial);
+                            if (label != null) {
+                                label.setText(deviceName + "：" + deviceDone + " / " + apks.size());
+                            }
+                            result.setText("总进度 " + currentDone + " / " + total
+                                    + "，成功 " + currentSuccess);
+                        });
                     }
                 });
             }
