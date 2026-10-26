@@ -145,18 +145,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
         if (selected == null) return false;
 
-        // av_hwdevice_ctx_create() follows FFmpeg's C API: AVBufferRef **device_ctx.
-        // JavaCPP therefore needs a PointerPointer output holder here. Constructing
-        // AVBufferRef(null) and passing it directly does not provide FFmpeg with
-        // writable AVBufferRef** storage, so the codec later reports
-        // "No decoder device for codec found".
-        PointerPointer<AVBufferRef> deviceOut = new PointerPointer<>(1);
+        // JavaCPP maps AVBufferRef ** to AVBufferRef directly for this function:
+        // the wrapper writes the returned native pointer into this pointer object.
+        AVBufferRef device = new AVBufferRef((Pointer) null);
         int createResult = av_hwdevice_ctx_create(
-                deviceOut, backend.type(), (String) null, (AVDictionary) null, 0);
-        AVBufferRef device = createResult >= 0 ? new AVBufferRef(deviceOut.get(AVBufferRef.class, 0)) : null;
-        deviceOut.close();
-        if (createResult < 0 || device == null || device.isNull()) {
-            if (device != null && !device.isNull()) av_buffer_unref(device);
+                device, backend.type(), (String) null, (AVDictionary) null, 0);
+        if (createResult < 0 || device.isNull()) {
+            if (!device.isNull()) av_buffer_unref(device);
             System.err.printf("[scrcpy-java] cannot create hardware device %s: %d%n", backend.name(), createResult);
             return false;
         }
