@@ -1,11 +1,10 @@
 package com.jian.scrcpy.media;
 
 import javax.sound.sampled.*;
-import java.nio.*;
-
 public final class JavaSoundPlayer implements AutoCloseable {
     private SourceDataLine line;
     private int rate, channels;
+    private byte[] outputBuffer;
 
     public synchronized void accept(AudioFrame f) {
         try {
@@ -13,10 +12,18 @@ public final class JavaSoundPlayer implements AutoCloseable {
                 close();
                 open(f.sampleRate(), f.channels());
             }
-            byte[] b = new byte[f.pcm().length * 2];
-            ByteBuffer bb = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN);
-            for (short s : f.pcm()) bb.putShort(s);
-            line.write(b, 0, b.length);
+            short[] pcm = f.pcm();
+            int bytes = pcm.length * 2;
+            if (outputBuffer == null || outputBuffer.length < bytes) {
+                outputBuffer = new byte[bytes];
+            }
+            for (int i = 0; i < pcm.length; i++) {
+                short s = pcm[i];
+                int p = i << 1;
+                outputBuffer[p] = (byte) s;
+                outputBuffer[p + 1] = (byte) (s >>> 8);
+            }
+            line.write(outputBuffer, 0, bytes);
         } catch (LineUnavailableException e) {
             throw new IllegalStateException(e);
         }
@@ -37,6 +44,7 @@ public final class JavaSoundPlayer implements AutoCloseable {
             line.flush();
             line.close();
             line = null;
+            outputBuffer = null;
         }
     }
 }
