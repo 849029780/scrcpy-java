@@ -34,6 +34,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     /** Codec announced by the stream. Decoder creation is deferred until the
      * session header so an encoder retry/resized session starts cleanly. */
     private CodecId announcedCodec;
+    private int sessionWidth, sessionHeight;
     private int width, height;
     private int pixelFormat = -1;
 
@@ -105,6 +106,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     private void initSoftware(AVCodec decoder, CodecId codecId) {
         ctx = avcodec_alloc_context3(decoder);
+        if (ctx != null && !ctx.isNull()) {
+            configureCodecContext(ctx);
+        }
         if (ctx == null || ctx.isNull() || avcodec_open2(ctx, decoder, (AVDictionary) null) < 0) {
             closeNative();
             throw new IllegalStateException("cannot open software decoder " + codecId);
@@ -140,6 +144,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             return false;
         }
 
+        configureCodecContext(candidate);
+
         int selectedPixelFormat = selected.pix_fmt();
         AVCodecContext.Get_format_AVCodecContext_IntPointer callback =
                 new AVCodecContext.Get_format_AVCodecContext_IntPointer() {
@@ -173,6 +179,17 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         allocateFramesAndPacket();
         System.out.printf("[scrcpy-java] video decoder: trying hardware %s (%s)%n", activeHardware, codecId);
         return true;
+    }
+
+    private void configureCodecContext(AVCodecContext codecContext) {
+        // Match scrcpy's demuxer setup: dimensions and the expected software
+        // pixel format are known from the session header before avcodec_open2().
+        // Some hardware backends (notably D3D11VA) use this information while
+        // negotiating the decoder.
+        if (sessionWidth > 0) codecContext.width(sessionWidth);
+        if (sessionHeight > 0) codecContext.height(sessionHeight);
+        codecContext.pix_fmt(AV_PIX_FMT_YUV420P);
+        codecContext.flags(codecContext.flags() | AV_CODEC_FLAG_LOW_DELAY);
     }
 
     private void allocateFramesAndPacket() {
@@ -283,12 +300,19 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             return;
         }
         if (m instanceof MediaMessage.Session session) {
-            if (!DEBUG_SKIP_DECODE && announcedCodec != null) {
-                // scrcpy may emit a new session header when Android's encoder
-                // is recreated (for example after applying encoder constraints).
-                // Never carry an AVCodecContext across that boundary.
+            sessionWidth = session.width();
+            sessionHeight = session.height();
+            if (!DEBUG_SKIP_DECODE && announcedCodec != null && ctx == null) {
+                // scrcpy opens the decoder once after the initial session
+                // header. Later session packets (rotation, flex-display resize,
+                // or a server-side capture retry) are notifications, not codec
+                // reset boundaries.
                 init(announcedCodec);
-                System.out.printf("[scrcpy-java] video decoder reset for session %dx%d%s%n",
+                System.out.printf("[scrcpy-java] video decoder initialized for session %dx%d%s%n",
+                        session.width(), session.height(),
+                        session.clientResized() ? " (client resized)" : "");
+            } else if (ctx != null) {
+                System.out.printf("[scrcpy-java] video session updated: %dx%d%s%n",
                         session.width(), session.height(),
                         session.clientResized() ? " (client resized)" : "");
             }
