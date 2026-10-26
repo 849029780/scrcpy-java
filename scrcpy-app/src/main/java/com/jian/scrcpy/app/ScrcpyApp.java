@@ -114,17 +114,16 @@ public final class ScrcpyApp extends Application {
         screenArea.setCenter(secondaryScroll);
         screenArea.setStyle("-fx-background-color: #181818;");
 
-        MenuItem deviceManager = new MenuItem("设备列表 / 连接");
-        deviceManager.setOnAction(e -> showDeviceManager());
-        MenuItem refreshDevices = new MenuItem("刷新设备");
-        refreshDevices.setOnAction(e -> scanDevices());
-        MenuButton deviceMenu = new MenuButton("设备");
-        deviceMenu.getItems().addAll(deviceManager, refreshDevices);
+        Button deviceButton = new Button("设备");
+        deviceButton.setOnAction(e -> showDeviceManager());
 
         Button sendFiles = new Button("传送文件");
         sendFiles.setOnAction(e -> showFileTransferDialog(stage));
 
-        HBox toolbar = new HBox(12, deviceMenu, sendFiles, primaryStatus, status);
+        Button installApps = new Button("批量安装应用");
+        installApps.setOnAction(e -> showAppInstallDialog(stage));
+
+        HBox toolbar = new HBox(12, deviceButton, sendFiles, installApps, primaryStatus, status);
         toolbar.setAlignment(Pos.CENTER_LEFT);
         toolbar.setPadding(new Insets(8));
 
@@ -336,6 +335,127 @@ public final class ScrcpyApp extends Application {
             send.setDisable(false);
             chooseFiles.setDisable(false);
             status.setText("文件传送完成：成功 " + finalSuccess + " / " + total);
+        });
+    }
+
+    private void showAppInstallDialog(Stage owner) {
+        if (sessions.isEmpty()) {
+            new Alert(Alert.AlertType.INFORMATION, "当前没有正在投屏的设备。", ButtonType.OK).showAndWait();
+            return;
+        }
+
+        Dialog<Void> dialog = new Dialog<>();
+        dialog.setTitle("批量安装应用");
+        dialog.setHeaderText("选择 APK 安装包和目标设备");
+        dialog.initOwner(owner);
+        dialog.initModality(Modality.APPLICATION_MODAL);
+
+        ListView<File> apks = new ListView<>();
+        apks.setPrefHeight(220);
+        apks.setCellFactory(v -> new ListCell<>() {
+            @Override protected void updateItem(File file, boolean empty) {
+                super.updateItem(file, empty);
+                setText(empty || file == null ? null : file.getAbsolutePath());
+            }
+        });
+
+        Button chooseApks = new Button("选择 APK...");
+        chooseApks.setOnAction(e -> {
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("选择 APK 安装包");
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Android APK (*.apk)", "*.apk"));
+            List<File> selected = chooser.showOpenMultipleDialog(dialog.getDialogPane().getScene().getWindow());
+            if (selected != null && !selected.isEmpty()) {
+                apks.getItems().setAll(selected);
+            }
+        });
+
+        VBox deviceBox = new VBox(6);
+        Map<String, CheckBox> targetChecks = new LinkedHashMap<>();
+        sessions.values().stream()
+                .filter(s -> s.device != null)
+                .sorted(Comparator.comparing(s -> s.device.displayName()))
+                .forEach(s -> {
+                    CheckBox check = new CheckBox(s.device.displayName());
+                    check.setSelected(true);
+                    targetChecks.put(s.device.serial(), check);
+                    deviceBox.getChildren().add(check);
+                });
+
+        ScrollPane targetScroll = new ScrollPane(deviceBox);
+        targetScroll.setFitToWidth(true);
+        targetScroll.setPrefHeight(180);
+
+        Label result = new Label();
+        Button install = new Button("安装");
+        install.setDefaultButton(true);
+        install.setOnAction(e -> {
+            List<File> selectedApks = List.copyOf(apks.getItems());
+            List<String> targets = targetChecks.entrySet().stream()
+                    .filter(entry -> entry.getValue().isSelected())
+                    .map(Map.Entry::getKey)
+                    .toList();
+            if (selectedApks.isEmpty()) {
+                result.setText("请先选择 APK 安装包");
+                return;
+            }
+            if (targets.isEmpty()) {
+                result.setText("请至少选择一台设备");
+                return;
+            }
+
+            install.setDisable(true);
+            chooseApks.setDisable(true);
+            result.setText("正在安装 0 / " + (selectedApks.size() * targets.size()) + " ...");
+            Thread.startVirtualThread(() -> installApps(selectedApks, targets, result, install, chooseApks));
+        });
+
+        VBox content = new VBox(10,
+                new Label("APK 安装包"), chooseApks, apks,
+                new Label("安装到已投屏设备"), targetScroll,
+                install, result);
+        content.setPadding(new Insets(8));
+        content.setPrefSize(680, 560);
+        dialog.getDialogPane().setContent(content);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        dialog.show();
+    }
+
+    private void installApps(List<File> apks, List<String> serials, Label result,
+                             Button install, Button chooseApks) {
+        int total = apks.size() * serials.size();
+        int success = 0;
+        List<String> failures = new ArrayList<>();
+
+        for (String serial : serials) {
+            DeviceSession session = sessions.get(serial);
+            String deviceName = session != null && session.device != null
+                    ? session.device.displayName() : serial;
+            Adb deviceAdb = new Adb(System.getProperty("scrcpy.adb", "adb"), serial);
+            for (File apk : apks) {
+                try {
+                    deviceAdb.run("install", "-r", apk.getAbsolutePath());
+                    success++;
+                } catch (Exception ex) {
+                    failures.add(deviceName + " / " + apk.getName());
+                }
+                int done = success + failures.size();
+                int currentSuccess = success;
+                Platform.runLater(() -> result.setText(
+                        "正在安装 " + done + " / " + total + "，成功 " + currentSuccess));
+            }
+        }
+
+        int finalSuccess = success;
+        Platform.runLater(() -> {
+            String text = "安装完成：成功 " + finalSuccess + " / " + total;
+            if (!failures.isEmpty()) {
+                text += "，失败 " + failures.size() + "（" + String.join("、", failures) + "）";
+            }
+            result.setText(text);
+            install.setDisable(false);
+            chooseApks.setDisable(false);
+            status.setText("应用安装完成：成功 " + finalSuccess + " / " + total);
         });
     }
 
