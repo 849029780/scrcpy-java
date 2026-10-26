@@ -689,6 +689,11 @@ public final class ScrcpyApp extends Application {
 
         HBox header = new HBox(6, title);
         HBox.setHgrow(title, Priority.ALWAYS);
+        // Keep the header height deterministic so resizeTile can make the
+        // outer tile exactly header + video, with no unused strip below.
+        header.setMinHeight(29);
+        header.setPrefHeight(29);
+        header.setMaxHeight(29);
 
         tile.getChildren().addAll(header, videoAndNavigation);
         VBox.setVgrow(videoAndNavigation, Priority.ALWAYS);
@@ -1356,13 +1361,15 @@ public final class ScrcpyApp extends Application {
             videoWidth = videoHeight * aspect;
         }
 
-        // Derive the outer tile from the actual laid-out content instead of
-        // fixed padding estimates. This keeps the viewport flush with the
-        // decoded frame and avoids unused black space on the right/bottom.
+        // BorderPane/TilePane may place the tile on fractional pixels. Rounding
+        // the outer height upward used to leave a visible 0..1 px dark strip at
+        // the bottom. Keep all dimensions on the same integer pixel grid.
+        videoWidth = Math.rint(videoWidth);
+        videoHeight = Math.rint(videoHeight);
         double controlsWidth = 38;
         double headerHeight = 29;
-        double tileWidth = Math.ceil(videoWidth + controlsWidth);
-        double tileHeight = Math.ceil(videoHeight + headerHeight);
+        double tileWidth = videoWidth + controlsWidth;
+        double tileHeight = videoHeight + headerHeight;
 
         handle.viewport.setPrefSize(videoWidth, videoHeight);
         handle.viewport.setMinSize(videoWidth, videoHeight);
