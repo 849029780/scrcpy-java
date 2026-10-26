@@ -29,11 +29,13 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
 import javafx.stage.Modality;
+import javafx.stage.FileChooser;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.TextInputDialog;
 
 import java.util.*;
+import java.io.File;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -119,7 +121,10 @@ public final class ScrcpyApp extends Application {
         MenuButton deviceMenu = new MenuButton("设备");
         deviceMenu.getItems().addAll(deviceManager, refreshDevices);
 
-        HBox toolbar = new HBox(12, deviceMenu, primaryStatus, status);
+        Button sendFiles = new Button("传送文件");
+        sendFiles.setOnAction(e -> showFileTransferDialog(stage));
+
+        HBox toolbar = new HBox(12, deviceMenu, sendFiles, primaryStatus, status);
         toolbar.setAlignment(Pos.CENTER_LEFT);
         toolbar.setPadding(new Insets(8));
 
@@ -212,6 +217,126 @@ public final class ScrcpyApp extends Application {
         dialog.getDialogPane().setContent(box);
         dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
         dialog.show();
+    }
+
+    private void showFileTransferDialog(Stage owner) {
+        if (sessions.isEmpty()) {
+            new Alert(Alert.AlertType.INFORMATION, "当前没有正在投屏的设备。", ButtonType.OK).showAndWait();
+            return;
+        }
+
+        Dialog<Void> dialog = new Dialog<>();
+        dialog.setTitle("传送文件");
+        dialog.setHeaderText("批量选择文件和目标设备");
+        dialog.initOwner(owner);
+        dialog.initModality(Modality.APPLICATION_MODAL);
+
+        ListView<File> files = new ListView<>();
+        files.setPrefHeight(220);
+        files.setCellFactory(v -> new ListCell<>() {
+            @Override protected void updateItem(File file, boolean empty) {
+                super.updateItem(file, empty);
+                setText(empty || file == null ? null : file.getAbsolutePath());
+            }
+        });
+
+        Button chooseFiles = new Button("选择文件...");
+        chooseFiles.setOnAction(e -> {
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("选择要传送的文件");
+            List<File> selected = chooser.showOpenMultipleDialog(dialog.getDialogPane().getScene().getWindow());
+            if (selected != null && !selected.isEmpty()) {
+                files.getItems().setAll(selected);
+            }
+        });
+
+        VBox deviceBox = new VBox(6);
+        Map<String, CheckBox> targetChecks = new LinkedHashMap<>();
+        sessions.values().stream()
+                .filter(s -> s.device != null)
+                .sorted(Comparator.comparing(s -> s.device.displayName()))
+                .forEach(s -> {
+                    CheckBox check = new CheckBox(s.device.displayName());
+                    check.setSelected(true);
+                    targetChecks.put(s.device.serial(), check);
+                    deviceBox.getChildren().add(check);
+                });
+
+        ScrollPane targetScroll = new ScrollPane(deviceBox);
+        targetScroll.setFitToWidth(true);
+        targetScroll.setPrefHeight(180);
+
+        Label result = new Label();
+        Button send = new Button("发送");
+        send.setDefaultButton(true);
+        send.setOnAction(e -> {
+            List<File> selectedFiles = List.copyOf(files.getItems());
+            List<String> targets = targetChecks.entrySet().stream()
+                    .filter(entry -> entry.getValue().isSelected())
+                    .map(Map.Entry::getKey)
+                    .toList();
+            if (selectedFiles.isEmpty()) {
+                result.setText("请先选择文件");
+                return;
+            }
+            if (targets.isEmpty()) {
+                result.setText("请至少选择一台设备");
+                return;
+            }
+
+            send.setDisable(true);
+            chooseFiles.setDisable(true);
+            result.setText("正在发送 0 / " + (selectedFiles.size() * targets.size()) + " ...");
+            Thread.startVirtualThread(() -> transferFiles(selectedFiles, targets, result, send, chooseFiles));
+        });
+
+        VBox content = new VBox(10,
+                new Label("文件"), chooseFiles, files,
+                new Label("发送到已投屏设备"), targetScroll,
+                send, result);
+        content.setPadding(new Insets(8));
+        content.setPrefSize(680, 560);
+        dialog.getDialogPane().setContent(content);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        dialog.show();
+    }
+
+    private void transferFiles(List<File> files, List<String> serials, Label result,
+                               Button send, Button chooseFiles) {
+        int total = files.size() * serials.size();
+        int success = 0;
+        List<String> failures = new ArrayList<>();
+
+        for (String serial : serials) {
+            DeviceSession session = sessions.get(serial);
+            String deviceName = session != null && session.device != null
+                    ? session.device.displayName() : serial;
+            Adb deviceAdb = new Adb(System.getProperty("scrcpy.adb", "adb"), serial);
+            for (File file : files) {
+                try {
+                    deviceAdb.push(file.toPath(), "/sdcard/Download/" + file.getName());
+                    success++;
+                } catch (Exception ex) {
+                    failures.add(deviceName + " / " + file.getName());
+                }
+                int done = success + failures.size();
+                int currentSuccess = success;
+                Platform.runLater(() -> result.setText(
+                        "正在发送 " + done + " / " + total + "，成功 " + currentSuccess));
+            }
+        }
+
+        int finalSuccess = success;
+        Platform.runLater(() -> {
+            String text = "发送完成：成功 " + finalSuccess + " / " + total;
+            if (!failures.isEmpty()) {
+                text += "，失败 " + failures.size() + "（" + String.join("、", failures) + "）";
+            }
+            result.setText(text);
+            send.setDisable(false);
+            chooseFiles.setDisable(false);
+            status.setText("文件传送完成：成功 " + finalSuccess + " / " + total);
+        });
     }
 
     private void startAdbMonitor() {
