@@ -1210,25 +1210,43 @@ public final class ScrcpyApp extends Application {
     }
 
     private static void setButtonIcon(ButtonBase button, String iconName) {
-        button.setText(null);
-        if (iconName == null) {
-            button.setGraphic(null);
+        button.setText("");
+        button.setGraphic(null);
+
+        if (iconName == null || iconName.isBlank()) {
             return;
         }
-        var resource = ScrcpyApp.class.getResource("/icons/" + iconName);
+
+        String resourcePath = "/icons/" + iconName;
+        var resource = ScrcpyApp.class.getResource(resourcePath);
         if (resource == null) {
-            button.setGraphic(null);
+            System.err.println("[scrcpy-java] icon resource not found: " + resourcePath);
             return;
         }
-        ImageView view = new ImageView(new Image(resource.toExternalForm()));
-        // All sidebar icons are PNG assets with English file names.
-        // They are rendered at 96x96 and displayed at 24x24 for crisp HiDPI scaling.
-        view.setFitWidth(24);
-        view.setFitHeight(24);
-        view.setPreserveRatio(true);
-        view.setSmooth(true);
-        view.setCache(true);
-        button.setGraphic(view);
+
+        // Load the PNG synchronously from the classpath stream. This avoids
+        // JavaFX URL/resource handling differences between IDE runs and the
+        // packaged Maven application.
+        try (var input = resource.openStream()) {
+            Image image = new Image(input, 24, 24, true, true, false);
+            if (image.isError()) {
+                System.err.println("[scrcpy-java] failed to load icon: " + resourcePath
+                        + " (" + image.getException() + ")");
+                return;
+            }
+
+            ImageView view = new ImageView(image);
+            view.setFitWidth(24);
+            view.setFitHeight(24);
+            view.setPreserveRatio(true);
+            view.setSmooth(true);
+            view.setCache(false);
+            view.setMouseTransparent(true);
+            button.setGraphic(view);
+        } catch (Exception e) {
+            System.err.println("[scrcpy-java] failed to read icon: " + resourcePath);
+            e.printStackTrace(System.err);
+        }
     }
 
     private Button deviceControlButton(String iconName, String tooltip, Runnable action) {
