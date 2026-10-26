@@ -66,6 +66,10 @@ public final class DeviceController {
         sink.accept(new ControlMessages.Simple(ControlMessageType.ROTATE_DEVICE));
     }
 
+    public void expandNotificationPanel() {
+        sink.accept(new ControlMessages.Simple(ControlMessageType.EXPAND_NOTIFICATION_PANEL));
+    }
+
     public void setDisplayPower(boolean on) {
         sink.accept(new ControlMessages.DisplayPower(on));
     }
