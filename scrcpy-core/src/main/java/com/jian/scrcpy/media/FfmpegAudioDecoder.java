@@ -23,7 +23,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private CodecId codec;
     /** AAC requires the codec configuration (AudioSpecificConfig) before opening the decoder. */
     private byte[] pendingCodecConfig;
-    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(240);
+    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(120);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
 
@@ -124,7 +124,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         }
     }
 
-    private synchronized void decodeMessage(MediaMessage m) {
+    private void decodeMessage(MediaMessage m) {
         if (m instanceof MediaMessage.Codec c) {
             init(c.codec());
             return;
