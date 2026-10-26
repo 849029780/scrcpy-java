@@ -33,7 +33,6 @@
         <configuration>
           <options>
             <option>--enable-native-access=javafx.graphics</option>
-            <option>-Dscrcpy.video.debug.skip-sws-scale=true</option>
           </options>
           <mainClass>com.jian.scrcpy.app.ScrcpyApp</mainClass>
         </configuration>
