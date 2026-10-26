@@ -21,6 +21,8 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private AVFrame frame;
     private AVPacket packet;
     private CodecId codec;
+    /** AAC requires the codec configuration (AudioSpecificConfig) before opening the decoder. */
+    private byte[] pendingCodecConfig;
     private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(240);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
@@ -47,15 +49,39 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         closeNative();
 
         this.codec = codec;
+        this.pendingCodecConfig = null;
+
         AVCodec dec = avcodec_find_decoder(avId(codec));
         if (dec == null) throw new IllegalStateException("decoder unavailable: " + codec);
         ctx = avcodec_alloc_context3(dec);
-        if (ctx == null || avcodec_open2(ctx, dec, (AVDictionary) null) < 0)
+        if (ctx == null) throw new IllegalStateException("cannot allocate decoder: " + codec);
+
+        // AAC carries its AudioSpecificConfig as a separate scrcpy config packet.
+        // Do not open the decoder before that packet is received.
+        if (codec != CodecId.AAC) {
+            openDecoder(dec);
+        }
+    }
+
+    private void openDecoder(AVCodec dec) {
+        if (ctx == null) throw new IllegalStateException("decoder context is null: " + codec);
+        if (codec == CodecId.AAC && pendingCodecConfig != null) {
+            int padding = AV_INPUT_BUFFER_PADDING_SIZE;
+            Pointer extra = av_mallocz(pendingCodecConfig.length + padding);
+            if (extra == null) throw new IllegalStateException("cannot allocate AAC extradata");
+            new BytePointer(extra).put(pendingCodecConfig);
+            ctx.extradata(new BytePointer(extra));
+            ctx.extradata_size(pendingCodecConfig.length);
+        }
+        if (avcodec_open2(ctx, dec, (AVDictionary) null) < 0)
             throw new IllegalStateException("cannot open decoder: " + codec);
+
         frame = av_frame_alloc();
         packet = av_packet_alloc();
         if (frame == null || packet == null) throw new IllegalStateException("cannot allocate audio decoder state");
+
         System.out.println("[scrcpy-java] audio decoder initialized: " + codec
+                + (codec == CodecId.AAC ? " config=" + pendingCodecConfig.length + " bytes" : "")
                 + " ffmpeg=" + org.bytedeco.ffmpeg.global.avutil.av_version_info().getString());
         System.out.flush();
     }
@@ -105,6 +131,17 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         }
         if (!(m instanceof MediaMessage.Packet p)) return;
         if (p.config()) {
+            if (codec == CodecId.AAC && ctx != null && frame == null) {
+                pendingCodecConfig = new byte[p.data().readableBytes()];
+                p.data().getBytes(p.data().readerIndex(), pendingCodecConfig);
+                AVCodec dec = avcodec_find_decoder(avId(codec));
+                if (dec == null) throw new IllegalStateException("decoder unavailable: " + codec);
+                openDecoder(dec);
+            }
+            return;
+        }
+        if (ctx == null || packet == null) {
+            // AAC must have its config packet before media packets can be decoded.
             return;
         }
         byte[] bytes = new byte[p.data().readableBytes() + AV_INPUT_BUFFER_PADDING_SIZE];
@@ -216,5 +253,6 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         if (packet != null) { av_packet_free(packet); packet = null; }
         if (frame != null) { av_frame_free(frame); frame = null; }
         if (ctx != null) { avcodec_free_context(ctx); ctx = null; }
+        pendingCodecConfig = null;
     }
 }
