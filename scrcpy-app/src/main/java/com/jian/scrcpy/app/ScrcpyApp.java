@@ -1783,6 +1783,14 @@ public final class ScrcpyApp extends Application {
         handle.relativePointerValid = false;
         handle.view().setCursor(Cursor.DEFAULT);
         handle.relativeCaptured = false;
+
+        // The touch/mouse control is a single toggle button. Keep its selected
+        // state and PNG in sync whenever the mode is changed, including when
+        // the change is broadcast from the primary device to other devices.
+        if (handle.mouseModeButton != null) {
+            updateMouseModeButton(handle.mouseModeButton, handle.mouseMode);
+        }
+
         if (handle.mouseMode == MouseMode.UHID_RELATIVE) {
             handle.uhid.openMouse();
             handle.view().requestFocus();
