@@ -49,7 +49,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // decoding. Hardware decoding can be made more parallel later once every
     // backend has been stress-tested independently.
     private static final Object FFMPEG_VIDEO_LOCK = new Object();
-    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(120);
+    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(60);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
 
@@ -307,9 +307,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private void decodeMessage(MediaMessage m) {
-        synchronized (FFMPEG_VIDEO_LOCK) {
-            decodeMessage0(m);
-        }
+        // Only the native decoder calls are serialized globally. Expensive
+        // swscale, Java heap copies and the JavaFX sink are intentionally kept
+        // outside this lock so multiple devices can convert/render in parallel.
+        decodeMessage0(m);
     }
 
     private void decodeMessage0(MediaMessage m) {
@@ -321,11 +322,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             sessionWidth = session.width();
             sessionHeight = session.height();
             if (!DEBUG_SKIP_DECODE && announcedCodec != null && ctx == null) {
-                // scrcpy opens the decoder once after the initial session
-                // header. Later session packets (rotation, flex-display resize,
-                // or a server-side capture retry) are notifications, not codec
-                // reset boundaries.
-                init(announcedCodec);
+                synchronized (FFMPEG_VIDEO_LOCK) {
+                    init(announcedCodec);
+                }
                 System.out.printf("[scrcpy-java] video decoder initialized for session %dx%d%s%n",
                         session.width(), session.height(),
                         session.clientResized() ? " (client resized)" : "");
@@ -339,21 +338,25 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         if (!(m instanceof MediaMessage.Packet p) || p.config()) return;
         if (DEBUG_SKIP_DECODE) return;
         if (ctx == null) {
-            // Be tolerant of streams without a session header.
             if (announcedCodec == null) return;
-            init(announcedCodec);
+            synchronized (FFMPEG_VIDEO_LOCK) {
+                init(announcedCodec);
+            }
         }
 
         byte[] encoded = new byte[p.data().readableBytes()];
         int payloadSize = encoded.length;
         p.data().getBytes(p.data().readerIndex(), encoded);
 
-        av_packet_unref(packet);
-        if (av_new_packet(packet, payloadSize) < 0) return;
-        packet.data().put(encoded, 0, payloadSize);
-        packet.pts(p.pts()).dts(p.pts());
+        int sendResult;
+        synchronized (FFMPEG_VIDEO_LOCK) {
+            av_packet_unref(packet);
+            if (av_new_packet(packet, payloadSize) < 0) return;
+            packet.data().put(encoded, 0, payloadSize);
+            packet.pts(p.pts()).dts(p.pts());
+            sendResult = avcodec_send_packet(ctx, packet);
+        }
 
-        int sendResult = avcodec_send_packet(ctx, packet);
         if (sendResult < 0) {
             if (activeHardware != null && !hardwareConfirmed) {
                 logHardwarePacketFailure("avcodec_send_packet", sendResult, encoded, p.pts());
@@ -361,27 +364,32 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             }
             return;
         }
+
         int receiveResult;
-        while ((receiveResult = avcodec_receive_frame(ctx, frame)) >= 0) {
+        for (;;) {
+            synchronized (FFMPEG_VIDEO_LOCK) {
+                receiveResult = avcodec_receive_frame(ctx, frame);
+                if (receiveResult >= 0 && activeHardware != null && frame.format() == hwPixelFormat) {
+                    av_frame_unref(softwareFrame);
+                    if (av_hwframe_transfer_data(softwareFrame, frame, 0) < 0) {
+                        receiveResult = AVERROR_EOF();
+                    }
+                }
+            }
+
+            if (receiveResult < 0) break;
+
             if (activeHardware != null && !hardwareConfirmed) {
                 hardwareConfirmed = true;
                 System.out.printf("[scrcpy-java] video decoder: hardware %s confirmed (%s)%n", activeHardware, activeCodec);
             }
             if (DEBUG_SKIP_RENDER) continue;
 
-            AVFrame source = frame;
-            if (activeHardware != null && frame.format() == hwPixelFormat) {
-                av_frame_unref(softwareFrame);
-                if (av_hwframe_transfer_data(softwareFrame, frame, 0) < 0) {
-                    System.err.printf("[scrcpy-java] %s frame transfer failed; dropping frame%n", activeHardware);
-                    continue;
-                }
-                source = softwareFrame;
-            }
-
-            converter(source.width(), source.height(), source.format());
+            AVFrame source = (activeHardware != null && frame.format() == hwPixelFormat)
+                    ? softwareFrame : frame;
             if (DEBUG_SKIP_SWS_SCALE) continue;
 
+            converter(source.width(), source.height(), source.format());
             int scaled = sws_scale(
                     sws,
                     source.data(),
@@ -404,7 +412,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             }
             sink.accept(new VideoFrame(width, height, out, p.pts()));
         }
-        if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF
+
+        if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF()
                 && activeHardware != null && !hardwareConfirmed) {
             fallbackToSoftware(encoded, p.pts(), "avcodec_receive_frame=" + receiveResult);
         }
