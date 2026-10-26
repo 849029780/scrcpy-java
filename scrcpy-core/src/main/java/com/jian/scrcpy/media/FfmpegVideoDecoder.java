@@ -9,8 +9,8 @@ import org.bytedeco.ffmpeg.swscale.SwsContext;
 import org.bytedeco.javacpp.*;
 
 import java.util.*;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -49,7 +49,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // decoding. Hardware decoding can be made more parallel later once every
     // backend has been stress-tested independently.
     private static final Object FFMPEG_VIDEO_LOCK = new Object();
-    private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(120);
+    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(120);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
 
@@ -344,20 +344,25 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             init(announcedCodec);
         }
 
-        byte[] b = new byte[p.data().readableBytes()];
-        int payloadSize = b.length;
-        p.data().getBytes(p.data().readerIndex(), b);
-
+        int payloadSize = p.data().readableBytes();
         av_packet_unref(packet);
         if (av_new_packet(packet, payloadSize) < 0) return;
-        packet.data().put(b, 0, payloadSize);
+
+        // Copy directly from Netty's ByteBuf into FFmpeg's packet buffer.
+        // Avoid a temporary byte[] for every video packet (especially costly
+        // at 60/120 fps and with multiple devices).
+        p.data().getBytes(
+                p.data().readerIndex(),
+                packet.data().asBuffer(),
+                payloadSize);
         packet.pts(p.pts()).dts(p.pts());
 
         int sendResult = avcodec_send_packet(ctx, packet);
         if (sendResult < 0) {
             if (activeHardware != null && !hardwareConfirmed) {
-                logHardwarePacketFailure("avcodec_send_packet", sendResult, b, p.pts());
-                fallbackToSoftware(b, p.pts(), "avcodec_send_packet=" + sendResult);
+                byte[] encoded = copyPacketPayload(p);
+                logHardwarePacketFailure("avcodec_send_packet", sendResult, encoded, p.pts());
+                fallbackToSoftware(encoded, p.pts(), "avcodec_send_packet=" + sendResult);
             }
             return;
         }
@@ -406,8 +411,15 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
         if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF
                 && activeHardware != null && !hardwareConfirmed) {
-            fallbackToSoftware(b, p.pts(), "avcodec_receive_frame=" + receiveResult);
+            byte[] encoded = copyPacketPayload(p);
+            fallbackToSoftware(encoded, p.pts(), "avcodec_receive_frame=" + receiveResult);
         }
+    }
+
+    private static byte[] copyPacketPayload(MediaMessage.Packet packet) {
+        byte[] encoded = new byte[packet.data().readableBytes()];
+        packet.data().getBytes(packet.data().readerIndex(), encoded);
+        return encoded;
     }
 
     private void logHardwarePacketFailure(String operation, int error, byte[] encoded, long pts) {
