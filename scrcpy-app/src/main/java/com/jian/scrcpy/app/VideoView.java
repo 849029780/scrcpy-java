@@ -4,7 +4,6 @@ import com.jian.scrcpy.media.VideoFrame;
 import javafx.application.Platform;
 import javafx.scene.image.*;
 
-import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class VideoView extends ImageView {
@@ -30,34 +29,45 @@ public final class VideoView extends ImageView {
         frameWidth = f.width();
         frameHeight = f.height();
         latest.set(f);
+        scheduleRender();
+    }
+
+    private void scheduleRender() {
         synchronized (this) {
             if (scheduled) return;
             scheduled = true;
         }
-        Platform.runLater(() -> {
-            try {
-                VideoFrame v = latest.getAndSet(null);
-                if (v != null) {
-                    if (image == null || imageWidth != v.width() || imageHeight != v.height()) {
-                        image = new WritableImage(v.width(), v.height());
-                        pixelWriter = image.getPixelWriter();
-                        imageWidth = v.width();
-                        imageHeight = v.height();
-                        setImage(image);
-                    }
-                    pixelWriter.setPixels(
-                            0, 0,
-                            v.width(), v.height(),
-                            PixelFormat.getByteBgraInstance(),
-                            v.bgra(), 0, v.width() * 4);
+        Platform.runLater(this::renderLatest);
+    }
+
+    private void renderLatest() {
+        try {
+            VideoFrame v = latest.getAndSet(null);
+            if (v != null) {
+                if (image == null || imageWidth != v.width() || imageHeight != v.height()) {
+                    image = new WritableImage(v.width(), v.height());
+                    pixelWriter = image.getPixelWriter();
+                    imageWidth = v.width();
+                    imageHeight = v.height();
+                    setImage(image);
                 }
-            } finally {
-                synchronized (this) {
-                    scheduled = false;
-                }
-                if (latest.get() != null) accept(latest.get());
+                pixelWriter.setPixels(
+                        0, 0,
+                        v.width(), v.height(),
+                        PixelFormat.getByteBgraInstance(),
+                        v.bgra(), 0, v.width() * 4);
             }
-        });
+        } finally {
+            boolean reschedule;
+            synchronized (this) {
+                scheduled = false;
+                reschedule = latest.get() != null;
+                if (reschedule) scheduled = true;
+            }
+            if (reschedule) {
+                Platform.runLater(this::renderLatest);
+            }
+        }
     }
 
     public int frameWidth() {
