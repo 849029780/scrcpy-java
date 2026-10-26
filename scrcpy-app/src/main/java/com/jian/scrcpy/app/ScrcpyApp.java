@@ -268,6 +268,11 @@ public final class ScrcpyApp extends Application {
 
         Label result = new Label();
         VBox progressBox = new VBox(4);
+        ScrollPane progressScroll = new ScrollPane(progressBox);
+        progressScroll.setFitToWidth(true);
+        progressScroll.setPrefViewportHeight(160);
+        progressScroll.setMaxHeight(220);
+        progressScroll.setPannable(true);
         Map<String, Label> progressLabels = new LinkedHashMap<>();
         targetChecks.forEach((serial, check) -> {
             Label label = new Label(check.getText() + "：等待发送");
@@ -306,7 +311,7 @@ public final class ScrcpyApp extends Application {
         VBox content = new VBox(10,
                 new Label("文件"), chooseFiles, files,
                 new Label("发送到已投屏设备"), targetScroll,
-                send, result, new Label("各设备进度"), progressBox);
+                send, result, new Label("各设备进度"), progressScroll);
         content.setPadding(new Insets(8));
         content.setPrefSize(680, 560);
         dialog.getDialogPane().setContent(content);
@@ -417,6 +422,11 @@ public final class ScrcpyApp extends Application {
 
         Label result = new Label();
         VBox progressBox = new VBox(4);
+        ScrollPane progressScroll = new ScrollPane(progressBox);
+        progressScroll.setFitToWidth(true);
+        progressScroll.setPrefViewportHeight(160);
+        progressScroll.setMaxHeight(220);
+        progressScroll.setPannable(true);
         Map<String, Label> progressLabels = new LinkedHashMap<>();
         targetChecks.forEach((serial, check) -> {
             Label label = new Label(check.getText() + "：等待安装");
@@ -455,7 +465,7 @@ public final class ScrcpyApp extends Application {
         VBox content = new VBox(10,
                 new Label("APK 安装包"), chooseApks, apks,
                 new Label("安装到已投屏设备"), targetScroll,
-                install, result, new Label("各设备进度"), progressBox);
+                install, result, new Label("各设备进度"), progressScroll);
         content.setPadding(new Insets(8));
         content.setPrefSize(680, 560);
         dialog.getDialogPane().setContent(content);
