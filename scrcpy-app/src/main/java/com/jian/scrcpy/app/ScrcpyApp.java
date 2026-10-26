@@ -1043,7 +1043,7 @@ public final class ScrcpyApp extends Application {
 
     private static void updateAdaptClickButton(ToggleButton button, boolean enabled) {
         button.setSelected(enabled);
-        setButtonIcon(button, enabled ? "adapt-click-off.jpg" : "adapt-click-on.jpg");
+        setButtonIcon(button, enabled ? "adapt-click-off.svg" : "adapt-click-on.svg");
         button.setTooltip(new Tooltip(enabled
                 ? "关闭主设备点击坐标适配"
                 : "开启主设备点击坐标适配"));
@@ -1068,7 +1068,7 @@ public final class ScrcpyApp extends Application {
     private static void updateMouseModeButton(ToggleButton button, MouseMode mode) {
         boolean uhid = mode == MouseMode.UHID_RELATIVE;
         button.setSelected(uhid);
-        setButtonIcon(button, uhid ? "mouse-mode.jpg" : "touch-mode.jpg");
+        setButtonIcon(button, uhid ? "mouse-mode.svg" : "touch-mode.svg");
         button.setTooltip(new Tooltip(uhid ? "UHID 鼠标（点击切换为触控）" : "触控（点击切换为 UHID 鼠标）"));
     }
 
@@ -1080,7 +1080,7 @@ public final class ScrcpyApp extends Application {
     }
 
     private VBox createDeviceNavigationBar(DeviceSession handle, AdbDevice device) {
-        Button close = deviceControlButton("disconnect.jpg", "断开设备", () -> disconnect(device.serial()));
+        Button close = deviceControlButton("disconnect.svg", "断开设备", () -> disconnect(device.serial()));
 
         ToggleButton primaryScreen = new ToggleButton();
         primaryScreen.setCursor(Cursor.DEFAULT);
@@ -1098,14 +1098,13 @@ public final class ScrcpyApp extends Application {
 
         ToggleButton mouseModeButton = createMouseModeButton(handle);
         handle.mouseModeButton = mouseModeButton;
-        Button back = deviceControlButton("back.jpg", "返回", () -> rightSidebarKey(handle, AndroidKeycodes.BACK));
-        Button home = deviceControlButton("home.jpg", "Home", () -> rightSidebarKey(handle, AndroidKeycodes.HOME));
-        Button recent = deviceControlButton("recent-apps.jpg", "多任务", () -> rightSidebarKey(handle, 187));
-        Button taskbar = deviceControlButton(null, "打开任务栏", () -> rightSidebarTaskbar(handle));
-        taskbar.setText("▾");
-        Button volumeUp = deviceControlButton("volume-up.jpg", "音量加", () -> rightSidebarKey(handle, AndroidKeycodes.VOLUME_UP));
-        Button volumeDown = deviceControlButton("volume-down.jpg", "音量减", () -> rightSidebarKey(handle, AndroidKeycodes.VOLUME_DOWN));
-        Button power = deviceControlButton("power.jpg", "电源", () -> rightSidebarKey(handle, AndroidKeycodes.POWER));
+        Button back = deviceControlButton("back.svg", "返回", () -> rightSidebarKey(handle, AndroidKeycodes.BACK));
+        Button home = deviceControlButton("home.svg", "Home", () -> rightSidebarKey(handle, AndroidKeycodes.HOME));
+        Button recent = deviceControlButton("recent-apps.svg", "多任务", () -> rightSidebarKey(handle, 187));
+        Button taskbar = deviceControlButton("notification-panel.svg", "打开通知栏", () -> rightSidebarTaskbar(handle));
+        Button volumeUp = deviceControlButton("volume-up.svg", "音量加", () -> rightSidebarKey(handle, AndroidKeycodes.VOLUME_UP));
+        Button volumeDown = deviceControlButton("volume-down.svg", "音量减", () -> rightSidebarKey(handle, AndroidKeycodes.VOLUME_DOWN));
+        Button power = deviceControlButton("power.svg", "电源", () -> rightSidebarKey(handle, AndroidKeycodes.POWER));
         ToggleButton displayPower = new ToggleButton();
         displayPower.setCursor(Cursor.DEFAULT);
         displayPower.setTooltip(new Tooltip("熄屏 / 亮屏"));
@@ -1177,18 +1176,18 @@ public final class ScrcpyApp extends Application {
 
     private static void updatePrimaryScreenToggle(ToggleButton button, boolean primary) {
         button.setSelected(primary);
-        setButtonIcon(button, primary ? "unset-primary.jpg" : "set-primary.jpg");
+        setButtonIcon(button, primary ? "unset-primary.svg" : "set-primary.svg");
         button.setTooltip(new Tooltip(primary ? "取消主屏幕" : "设为主屏幕"));
     }
 
     private static void updateDisplayPowerToggle(ToggleButton button, boolean on) {
         button.setSelected(on);
-        setButtonIcon(button, on ? "screen-off.jpg" : "screen-on.jpg");
+        setButtonIcon(button, on ? "screen-off.svg" : "screen-on.svg");
         button.setTooltip(new Tooltip(on ? "熄屏" : "亮屏"));
     }
 
     private static void updateStayAwakeToggle(ToggleButton button, boolean enabled) {
-        setButtonIcon(button, enabled ? "stay-awake-off.jpg" : "stay-awake-on.jpg");
+        setButtonIcon(button, enabled ? "stay-awake-off.svg" : "stay-awake-on.svg");
         button.setTooltip(new Tooltip(enabled ? "关闭屏幕常亮" : "开启屏幕常亮"));
     }
 
@@ -1222,10 +1221,14 @@ public final class ScrcpyApp extends Application {
             return;
         }
         ImageView view = new ImageView(new Image(resource.toExternalForm()));
-        view.setFitWidth(22);
-        view.setFitHeight(22);
+        // These source JPGs are raster images. Scaling them to a fractional
+        // JavaFX size makes thin icon strokes look soft, especially on HiDPI.
+        // Use an integer 24 px box and disable interpolation for crisper controls.
+        view.setFitWidth(24);
+        view.setFitHeight(24);
         view.setPreserveRatio(true);
-        view.setSmooth(true);
+        view.setSmooth(false);
+        view.setCache(true);
         button.setGraphic(view);
     }
 
@@ -1233,7 +1236,9 @@ public final class ScrcpyApp extends Application {
         Button button = new Button();
         setButtonIcon(button, iconName);
         button.setCursor(Cursor.DEFAULT);
-        button.setTooltip(new Tooltip(tooltip));
+        Tooltip tip = new Tooltip(tooltip);
+        tip.setShowDelay(javafx.util.Duration.millis(250));
+        button.setTooltip(tip);
         button.setFocusTraversable(false);
         button.setMinSize(34, 34);
         button.setPrefSize(34, 34);
