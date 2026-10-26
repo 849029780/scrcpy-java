@@ -689,11 +689,11 @@ public final class ScrcpyApp extends Application {
 
         HBox header = new HBox(6, title);
         HBox.setHgrow(title, Priority.ALWAYS);
-        // Keep the header height deterministic so resizeTile can make the
-        // outer tile exactly header + video, with no unused strip below.
-        header.setMinHeight(29);
-        header.setPrefHeight(29);
-        header.setMaxHeight(29);
+        // Do not force a guessed header height. The Label's CSS/insets determine
+        // its real height; forcing 29 px can leave unused dark space above the
+        // video when the rendered header is shorter.
+        header.setMinHeight(Region.USE_PREF_SIZE);
+        header.setMaxHeight(Region.USE_PREF_SIZE);
 
         tile.getChildren().addAll(header, videoAndNavigation);
         VBox.setVgrow(videoAndNavigation, Priority.ALWAYS);
@@ -1367,9 +1367,10 @@ public final class ScrcpyApp extends Application {
         videoWidth = Math.rint(videoWidth);
         videoHeight = Math.rint(videoHeight);
         double controlsWidth = 38;
-        double headerHeight = 29;
+        // Let VBox compute the outer height from the real header + video row.
+        // A hard-coded header estimate caused either a top or bottom black strip
+        // depending on JavaFX font/CSS metrics.
         double tileWidth = videoWidth + controlsWidth;
-        double tileHeight = videoHeight + headerHeight;
 
         handle.viewport.setPrefSize(videoWidth, videoHeight);
         handle.viewport.setMinSize(videoWidth, videoHeight);
@@ -1377,9 +1378,12 @@ public final class ScrcpyApp extends Application {
         handle.view().setFitWidth(videoWidth);
         handle.view().setFitHeight(videoHeight);
 
-        handle.tile.setPrefSize(tileWidth, tileHeight);
-        handle.tile.setMinSize(tileWidth, tileHeight);
-        handle.tile.setMaxSize(tileWidth, tileHeight);
+        handle.tile.setMinWidth(tileWidth);
+        handle.tile.setPrefWidth(tileWidth);
+        handle.tile.setMaxWidth(tileWidth);
+        handle.tile.setMinHeight(Region.USE_PREF_SIZE);
+        handle.tile.setPrefHeight(Region.USE_COMPUTED_SIZE);
+        handle.tile.setMaxHeight(Region.USE_PREF_SIZE);
     }
 
     private void refreshAdaptClickButtons() {
