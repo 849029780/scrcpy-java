@@ -697,6 +697,14 @@ public final class ScrcpyApp extends Application {
         handle.viewport = viewport;
         handle.device = device;
 
+        // The tile is created before the first decoded frame, so frameWidth/frameHeight
+        // are still 0 here. Recalculate as soon as JavaFX receives the real image
+        // dimensions (and again after rotation/resolution changes). Otherwise the
+        // initial fixed viewport keeps preserveRatio=true and produces black bars
+        // on the left and right of portrait video.
+        handle.view().imageProperty().addListener((obs, oldImage, newImage) ->
+                resizeTile(handle, isPrimary(handle)));
+
         resizeTile(handle, false);
         secondaryGrid.getChildren().add(tile);
     }
