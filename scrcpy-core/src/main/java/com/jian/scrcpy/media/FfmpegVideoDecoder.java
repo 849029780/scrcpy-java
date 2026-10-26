@@ -195,7 +195,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         candidate.get_format(callback);
         AVBufferRef codecDeviceRef = av_buffer_ref(device);
         candidate.hw_device_ctx(codecDeviceRef);
-        candidate.hwaccel_flags(candidate.hwaccel_flags() | AV_HWACCEL_FLAG_IGNORE_LEVEL);
+        // Android MediaCodec may advertise AVC Baseline (66) rather than
+        // Constrained Baseline. FFmpeg's DXVA mode table accepts Constrained
+        // Baseline/Main/High by default, so allow the GPU/driver to decide
+        // whether this otherwise valid stream can be decoded.
+        candidate.hwaccel_flags(candidate.hwaccel_flags()
+                | AV_HWACCEL_FLAG_IGNORE_LEVEL
+                | AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH);
         logHardwareCodecContext("before-avcodec_open2", candidate);
 
         if (avcodec_open2(candidate, decoder, (AVDictionary) null) < 0) {
