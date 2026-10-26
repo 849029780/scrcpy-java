@@ -1228,7 +1228,7 @@ public final class ScrcpyApp extends Application {
         // JavaFX URL/resource handling differences between IDE runs and the
         // packaged Maven application.
         try (var input = resource.openStream()) {
-            Image image = new Image(input, 24, 24, true, true, false);
+            Image image = new Image(input, 24, 24, true, true);
             if (image.isError()) {
                 System.err.println("[scrcpy-java] failed to load icon: " + resourcePath
                         + " (" + image.getException() + ")");
