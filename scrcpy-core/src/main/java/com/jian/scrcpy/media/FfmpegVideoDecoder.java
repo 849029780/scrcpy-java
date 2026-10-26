@@ -31,6 +31,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private String activeHardware;
     private CodecId activeCodec;
     private boolean hardwareConfirmed;
+    /** Codec announced by the stream. Decoder creation is deferred until the
+     * session header so an encoder retry/resized session starts cleanly. */
+    private CodecId announcedCodec;
     private int width, height;
     private int pixelFormat = -1;
 
@@ -276,11 +279,28 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     private void decodeMessage0(MediaMessage m) {
         if (m instanceof MediaMessage.Codec c) {
-            if (!DEBUG_SKIP_DECODE) init(c.codec());
+            announcedCodec = c.codec();
+            return;
+        }
+        if (m instanceof MediaMessage.Session session) {
+            if (!DEBUG_SKIP_DECODE && announcedCodec != null) {
+                // scrcpy may emit a new session header when Android's encoder
+                // is recreated (for example after applying encoder constraints).
+                // Never carry an AVCodecContext across that boundary.
+                init(announcedCodec);
+                System.out.printf("[scrcpy-java] video decoder reset for session %dx%d%s%n",
+                        session.width(), session.height(),
+                        session.clientResized() ? " (client resized)" : "");
+            }
             return;
         }
         if (!(m instanceof MediaMessage.Packet p) || p.config()) return;
         if (DEBUG_SKIP_DECODE) return;
+        if (ctx == null) {
+            // Be tolerant of streams without a session header.
+            if (announcedCodec == null) return;
+            init(announcedCodec);
+        }
 
         byte[] b = new byte[p.data().readableBytes()];
         int payloadSize = b.length;
@@ -368,7 +388,12 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         if (av_new_packet(packet, encoded.length) < 0) return;
         packet.data().put(encoded, 0, encoded.length);
         packet.pts(pts).dts(pts);
-        if (avcodec_send_packet(ctx, packet) < 0) return;
+        int softwareSendResult = avcodec_send_packet(ctx, packet);
+        if (softwareSendResult < 0) {
+            System.err.printf("[scrcpy-java] software decoder also rejected fallback packet (%s): avcodec_send_packet=%d, bytes=%d%n",
+                    codecId, softwareSendResult, encoded.length);
+            return;
+        }
         while (avcodec_receive_frame(ctx, frame) >= 0) {
             if (DEBUG_SKIP_RENDER) continue;
             converter(frame.width(), frame.height(), frame.format());
