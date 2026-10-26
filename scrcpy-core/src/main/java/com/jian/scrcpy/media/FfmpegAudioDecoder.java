@@ -7,8 +7,8 @@ import org.bytedeco.ffmpeg.avcodec.*;
 import org.bytedeco.ffmpeg.avutil.*;
 import org.bytedeco.javacpp.*;
 
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -23,7 +23,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private CodecId codec;
     /** AAC requires the codec configuration (AudioSpecificConfig) before opening the decoder. */
     private byte[] pendingCodecConfig;
-    private final BlockingQueue<MediaMessage> decodeQueue = new LinkedBlockingQueue<>(240);
+    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(240);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
 
@@ -144,11 +144,10 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             // AAC must have its config packet before media packets can be decoded.
             return;
         }
-        byte[] bytes = new byte[p.data().readableBytes() + AV_INPUT_BUFFER_PADDING_SIZE];
         int payloadSize = p.data().readableBytes();
-        p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
-        // Let FFmpeg own the packet payload. Do not point AVPacket.data at a
-        // temporary JavaCPP BytePointer whose lifetime ends after send_packet.
+        // Let FFmpeg own the packet payload. Copy directly from Netty into the
+        // native FFmpeg packet to avoid a temporary heap byte[] for every
+        // encoded audio packet.
         av_packet_unref(packet);
         int allocRet = av_new_packet(packet, payloadSize);
         if (allocRet < 0) {
@@ -156,7 +155,10 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             return;
         }
 
-        packet.data().put(bytes, 0, payloadSize);
+        p.data().getBytes(
+                p.data().readerIndex(),
+                packet.data().asBuffer(),
+                payloadSize);
         packet.pts(p.pts()).dts(p.pts());
 
         int ret = avcodec_send_packet(ctx, packet);
