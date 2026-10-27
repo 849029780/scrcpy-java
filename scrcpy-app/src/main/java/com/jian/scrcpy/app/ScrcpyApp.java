@@ -380,7 +380,9 @@ public final class ScrcpyApp extends Application {
                         int deviceDone = files.indexOf(file) + 1;
                         int currentDone = done.incrementAndGet();
                         int currentSuccess = success.get();
-                        Platform.runLater(() -> {
+                        final SdlD3d11VideoRenderer sessionSdlRenderer = sdlRenderer;
+
+                Platform.runLater(() -> {
                             Label label = progressLabels.get(serial);
                             if (label != null) {
                                 label.setText(deviceName + "：" + deviceDone + " / " + files.size());
@@ -1029,7 +1031,7 @@ public final class ScrcpyApp extends Application {
                     clipboard.onRemoteClipboard(this::applyDeviceClipboard);
                     DeviceSession handle = new DeviceSession(
                             runningSession, player, videoDecoder, view,
-                            new DeviceController(runningSession::sendControl), uhid, clipboard, sdlRenderer);
+                            new DeviceController(runningSession::sendControl), uhid, clipboard, sessionSdlRenderer);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
                     if (Objects.equals(desiredPrimarySerial, device.serial())) {
