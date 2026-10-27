@@ -27,104 +27,154 @@ import static org.bytedeco.ffmpeg.global.avutil.av_buffer_unref;
 public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable {
     private static final int QUEUE_SIZE = 2;
 
-    private final Sdl3 sdl;
-    private final MemorySegment window;
-    private final MemorySegment renderer;
-    private final SdlD3d11HardwareDeviceProvider deviceProvider;
-    private final AVBufferRef ffmpegDevice;
-    private final SdlD3d11Interop interop;
+    private final String title;
+    private final int width;
+    private final int height;
+    private final java.util.concurrent.CompletableFuture<Void> initialized =
+            new java.util.concurrent.CompletableFuture<>();
     private final BlockingQueue<HardwareVideoFrame> pending = new ArrayBlockingQueue<>(QUEUE_SIZE);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean closeRequested = new AtomicBoolean();
 
+    private volatile Sdl3 sdl;
+    private volatile MemorySegment window = MemorySegment.NULL;
+    private volatile MemorySegment renderer = MemorySegment.NULL;
+    private volatile SdlD3d11HardwareDeviceProvider deviceProvider;
+    private volatile AVBufferRef ffmpegDevice;
+    private volatile SdlD3d11Interop interop;
+    private volatile Thread renderThread;
+
     private SdlD3d11VideoRenderer(String title, int width, int height) {
-        sdl = new Sdl3();
-        if (!sdl.initVideo()) {
-            sdl.close();
-            throw new IllegalStateException("SDL_Init(SDL_INIT_VIDEO) failed: " + sdl.error());
-        }
-
-        MemorySegment createdWindow = sdl.createWindow(title, width, height);
-        if (createdWindow.address() == 0) {
-            sdl.close();
-            throw new IllegalStateException("SDL_CreateWindow failed: " + sdl.error());
-        }
-        window = createdWindow;
-
-        MemorySegment createdRenderer = sdl.createRenderer(window, "direct3d11");
-        if (createdRenderer.address() == 0) {
-            sdl.destroyWindow(window);
-            sdl.close();
-            throw new IllegalStateException("SDL_CreateRenderer(direct3d11) failed: " + sdl.error());
-        }
-        renderer = createdRenderer;
-
-        MemorySegment device = sdl.rendererD3d11Device(renderer);
-        if (device.address() == 0) {
-            sdl.destroyRenderer(renderer);
-            sdl.destroyWindow(window);
-            sdl.close();
-            throw new IllegalStateException("SDL renderer did not expose ID3D11Device*");
-        }
-
-        deviceProvider = new SdlD3d11HardwareDeviceProvider(device);
-        AVBufferRef createdDevice = deviceProvider.createDeviceContext(AV_HWDEVICE_TYPE_D3D11VA);
-        if (createdDevice == null || createdDevice.isNull()) {
-            deviceProvider.close();
-            sdl.destroyRenderer(renderer);
-            sdl.destroyWindow(window);
-            sdl.close();
-            throw new IllegalStateException("FFmpeg D3D11VA device initialization failed");
-        }
-        ffmpegDevice = createdDevice;
-
-        MemorySegment deviceContext = deviceProvider.deviceContext(ffmpegDevice);
-        if (deviceContext.address() == 0) {
-            av_buffer_unref(ffmpegDevice);
-            deviceProvider.close();
-            sdl.destroyRenderer(renderer);
-            sdl.destroyWindow(window);
-            sdl.close();
-            throw new IllegalStateException("FFmpeg D3D11VA device has no immediate context");
-        }
-
-        interop = new SdlD3d11Interop(sdl, renderer, deviceContext, width, height);
-    }
-
-    public static SdlD3d11VideoRenderer create(String title, int width, int height) {
-        if (width <= 0 || height <= 0) throw new IllegalArgumentException("Invalid video size");
-        return new SdlD3d11VideoRenderer(title, width, height);
+        this.title = title;
+        this.width = width;
+        this.height = height;
     }
 
     /**
-     * Supplies a renderer-owned D3D11 device context to FfmpegVideoDecoder.
+     * Creates the renderer and starts its SDL owner thread. SDL video,
+     * renderer, D3D11 interop and FFmpeg device initialization all happen on
+     * that same platform thread. The method returns only after the shared
+     * D3D11 device provider is ready for the decoder.
+     */
+    public static SdlD3d11VideoRenderer create(String title, int width, int height) {
+        if (width <= 0 || height <= 0) throw new IllegalArgumentException("Invalid video size");
+        SdlD3d11VideoRenderer result = new SdlD3d11VideoRenderer(title, width, height);
+        result.renderThread = Thread.ofPlatform()
+                .name("scrcpy-sdl")
+                .start(result::pumpLoop);
+        try {
+            result.initialized.join();
+        } catch (java.util.concurrent.CompletionException e) {
+            result.requestClose();
+            throw e;
+        }
+        return result;
+    }
+
+    private void initialize() {
+        Sdl3 localSdl = new Sdl3();
+        if (!localSdl.initVideo()) {
+            localSdl.close();
+            throw new IllegalStateException("SDL_Init(SDL_INIT_VIDEO) failed: " + localSdl.error());
+        }
+
+        MemorySegment createdWindow = localSdl.createWindow(title, width, height);
+        if (createdWindow.address() == 0) {
+            localSdl.close();
+            throw new IllegalStateException("SDL_CreateWindow failed: " + localSdl.error());
+        }
+
+        MemorySegment createdRenderer = localSdl.createRenderer(createdWindow, "direct3d11");
+        if (createdRenderer.address() == 0) {
+            localSdl.destroyWindow(createdWindow);
+            localSdl.close();
+            throw new IllegalStateException("SDL_CreateRenderer(direct3d11) failed: " + localSdl.error());
+        }
+
+        MemorySegment device = localSdl.rendererD3d11Device(createdRenderer);
+        if (device.address() == 0) {
+            localSdl.destroyRenderer(createdRenderer);
+            localSdl.destroyWindow(createdWindow);
+            localSdl.close();
+            throw new IllegalStateException("SDL renderer did not expose ID3D11Device*");
+        }
+
+        SdlD3d11HardwareDeviceProvider localProvider = new SdlD3d11HardwareDeviceProvider(device);
+        AVBufferRef localFfmpegDevice =
+                localProvider.createDeviceContext(AV_HWDEVICE_TYPE_D3D11VA);
+        if (localFfmpegDevice == null || localFfmpegDevice.isNull()) {
+            localProvider.close();
+            localSdl.destroyRenderer(createdRenderer);
+            localSdl.destroyWindow(createdWindow);
+            localSdl.close();
+            throw new IllegalStateException("FFmpeg D3D11VA device initialization failed");
+        }
+
+        MemorySegment deviceContext = localProvider.deviceContext(localFfmpegDevice);
+        if (deviceContext.address() == 0) {
+            av_buffer_unref(localFfmpegDevice);
+            localProvider.close();
+            localSdl.destroyRenderer(createdRenderer);
+            localSdl.destroyWindow(createdWindow);
+            localSdl.close();
+            throw new IllegalStateException("FFmpeg D3D11VA device has no immediate context");
+        }
+
+        SdlD3d11Interop localInterop;
+        try {
+            localInterop = new SdlD3d11Interop(
+                    localSdl, createdRenderer, deviceContext, width, height);
+        } catch (Throwable t) {
+            av_buffer_unref(localFfmpegDevice);
+            localProvider.close();
+            localSdl.destroyRenderer(createdRenderer);
+            localSdl.destroyWindow(createdWindow);
+            localSdl.close();
+            throw t;
+        }
+
+        sdl = localSdl;
+        window = createdWindow;
+        renderer = createdRenderer;
+        deviceProvider = localProvider;
+        ffmpegDevice = localFfmpegDevice;
+        interop = localInterop;
+    }
+
+    /**
+     * Supplies the renderer-owned D3D11 device to FfmpegVideoDecoder.
      * The decoder therefore allocates D3D11VA surfaces on the same GPU device
      * used by this SDL renderer.
      */
     public com.jian.scrcpy.media.VideoHardwareDeviceProvider hardwareDeviceProvider() {
+        awaitInitialized();
         return deviceProvider;
     }
 
     @Override
     public boolean renderHardware(HardwareVideoFrame frame) {
-        if (closed.get()) return false;
+        if (closed.get() || closeRequested.get()) {
+            frame.close();
+            return false;
+        }
         if (!pending.offer(frame)) {
             HardwareVideoFrame old = pending.poll();
             if (old != null) old.close();
-            if (!pending.offer(frame)) return false;
+            if (!pending.offer(frame)) {
+                frame.close();
+                return false;
+            }
         }
         return true;
     }
 
     @Override
     public void renderSoftware(VideoFrame frame) {
-        // This backend is intentionally hardware-only. The core decoder falls
-        // back to its normal JavaFX/software sink when this renderer is absent.
         frame.close();
     }
 
     /**
-     * Render at most one queued frame. Must run on the SDL video thread.
+     * Render at most one queued frame. Must run on the SDL owner thread.
      */
     public boolean pump() {
         if (closed.get()) return false;
@@ -151,47 +201,77 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
     }
 
     public MemorySegment window() {
+        awaitInitialized();
         return window;
     }
 
     public MemorySegment renderer() {
+        awaitInitialized();
         return renderer;
     }
 
     /**
-     * Run the SDL render loop on the thread which created the SDL video
-     * subsystem. SDL documents renderer creation/presentation as main-thread
-     * operations, so native teardown is also performed here.
+     * Owns the SDL video subsystem for the lifetime of this renderer.
+     * Creation and destruction therefore happen on the same platform thread
+     * that performs rendering.
      */
     public void pumpLoop() {
-        if (closed.get()) return;
         try {
+            initialize();
+            initialized.complete(null);
             while (!closeRequested.get()) {
                 pump();
                 Thread.sleep(4);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            if (!initialized.isDone()) initialized.completeExceptionally(e);
+        } catch (Throwable t) {
+            if (!initialized.isDone()) initialized.completeExceptionally(t);
+            else t.printStackTrace(System.err);
         } finally {
-            close();
+            destroyOnOwnerThread();
         }
     }
 
     public void requestClose() {
         closeRequested.set(true);
+        Thread thread = renderThread;
+        if (thread != null) thread.interrupt();
     }
 
     @Override
     public void close() {
+        requestClose();
+    }
+
+    private void awaitInitialized() {
+        try {
+            initialized.join();
+        } catch (java.util.concurrent.CompletionException e) {
+            throw e;
+        }
+    }
+
+    private void destroyOnOwnerThread() {
         if (!closed.compareAndSet(false, true)) return;
         HardwareVideoFrame frame;
         while ((frame = pending.poll()) != null) frame.close();
-        interop.destroy(sdl);
-        av_buffer_unref(ffmpegDevice);
-        deviceProvider.close();
-        sdl.destroyRenderer(renderer);
-        sdl.destroyWindow(window);
-        sdl.close();
-    }
 
+        Sdl3 localSdl = sdl;
+        SdlD3d11Interop localInterop = interop;
+        AVBufferRef localFfmpegDevice = ffmpegDevice;
+        SdlD3d11HardwareDeviceProvider localProvider = deviceProvider;
+        MemorySegment localRenderer = renderer;
+        MemorySegment localWindow = window;
+
+        if (localInterop != null && localSdl != null) localInterop.destroy(localSdl);
+        if (localFfmpegDevice != null) av_buffer_unref(localFfmpegDevice);
+        if (localProvider != null) localProvider.close();
+        if (localSdl != null) {
+            if (localRenderer != null && localRenderer.address() != 0) localSdl.destroyRenderer(localRenderer);
+            if (localWindow != null && localWindow.address() != 0) localSdl.destroyWindow(localWindow);
+            localSdl.close();
+        }
+    }
 }
