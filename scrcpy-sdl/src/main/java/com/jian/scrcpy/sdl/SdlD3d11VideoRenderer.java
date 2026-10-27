@@ -35,6 +35,7 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
     private final SdlD3d11Interop interop;
     private final BlockingQueue<HardwareVideoFrame> pending = new ArrayBlockingQueue<>(QUEUE_SIZE);
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean closeRequested = new AtomicBoolean();
 
     private SdlD3d11VideoRenderer(String title, int width, int height) {
         sdl = new Sdl3();
@@ -135,6 +136,7 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
             MemorySegment sourceTexture = MemorySegment.ofAddress(frame.frame().data(0).address());
             long sourceArraySlice = frame.frame().data(1).address();
 
+            interop.ensureSize(sdl, frame.width(), frame.height());
             interop.copyFrame(sdl, sourceTexture, sourceArraySlice);
             if (!sdl.renderTexture(renderer, interop.texture())) {
                 throw new IllegalStateException("SDL_RenderTexture failed: " + sdl.error());
@@ -154,6 +156,29 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
 
     public MemorySegment renderer() {
         return renderer;
+    }
+
+    /**
+     * Run the SDL render loop on the thread which created the SDL video
+     * subsystem. SDL documents renderer creation/presentation as main-thread
+     * operations, so native teardown is also performed here.
+     */
+    public void pumpLoop() {
+        if (closed.get()) return;
+        try {
+            while (!closeRequested.get()) {
+                pump();
+                Thread.sleep(4);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            close();
+        }
+    }
+
+    public void requestClose() {
+        closeRequested.set(true);
     }
 
     @Override

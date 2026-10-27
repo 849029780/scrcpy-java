@@ -10,7 +10,9 @@ final class SdlD3d11Interop {
     private final MemorySegment deviceContext;
     private final Linker linker = Linker.nativeLinker();
     private final MethodHandle copySubresourceRegion;
-    private final MemorySegment destinationTexture;
+    private MemorySegment destinationTexture;
+    private int width;
+    private int height;
 
     SdlD3d11Interop(Sdl3 sdl, MemorySegment renderer, MemorySegment deviceContext, int width, int height) {
         if (deviceContext == null || deviceContext.address() == 0)
@@ -23,6 +25,8 @@ final class SdlD3d11Interop {
                 (long) COPY_SUBRESOURCE_REGION_VTABLE_INDEX * ADDRESS.byteSize());
         copySubresourceRegion = linker.downcallHandle(address, FunctionDescriptor.ofVoid(
                 ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT, ADDRESS));
+        this.width = width;
+        this.height = height;
         destinationTexture = sdl.createNv12Texture(renderer, width, height);
         if (destinationTexture.address() == 0)
             throw new IllegalStateException("SDL_CreateTexture(NV12) failed: " + sdl.error());
@@ -30,6 +34,23 @@ final class SdlD3d11Interop {
             sdl.destroyTexture(destinationTexture);
             throw new IllegalStateException("SDL NV12 texture has no D3D11 native texture");
         }
+    }
+
+    void ensureSize(Sdl3 sdl, int width, int height) {
+        if (width <= 0 || height <= 0) throw new IllegalArgumentException("Invalid texture size");
+        if (this.width == width && this.height == height && destinationTexture.address() != 0) return;
+        sdl.destroyTexture(destinationTexture);
+        destinationTexture = sdl.createNv12Texture(renderer, width, height);
+        if (destinationTexture.address() == 0) {
+            throw new IllegalStateException("SDL_CreateTexture(NV12) failed: " + sdl.error());
+        }
+        if (sdl.textureD3d11Texture(destinationTexture).address() == 0) {
+            sdl.destroyTexture(destinationTexture);
+            destinationTexture = MemorySegment.NULL;
+            throw new IllegalStateException("SDL NV12 texture has no D3D11 native texture");
+        }
+        this.width = width;
+        this.height = height;
     }
 
     void copyFrame(Sdl3 sdl, MemorySegment sourceTexture, long sourceArraySlice) {
@@ -47,5 +68,10 @@ final class SdlD3d11Interop {
     }
 
     MemorySegment texture() { return destinationTexture; }
-    void destroy(Sdl3 sdl) { sdl.destroyTexture(destinationTexture); }
+    void destroy(Sdl3 sdl) {
+        if (destinationTexture != null && destinationTexture.address() != 0) {
+            sdl.destroyTexture(destinationTexture);
+            destinationTexture = MemorySegment.NULL;
+        }
+    }
 }
