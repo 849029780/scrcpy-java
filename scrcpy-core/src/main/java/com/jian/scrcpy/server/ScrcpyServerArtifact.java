@@ -33,7 +33,10 @@ public final class ScrcpyServerArtifact {
         Path[] candidates = {
                 Path.of("scrcpy-server-v5.0.1"),
                 Path.of("scrcpy-server-v5.0.1.jar"),
-                Path.of("scrcpy-server")
+                Path.of("scrcpy-server"),
+                applicationSibling("scrcpy-server-v5.0.1"),
+                applicationSibling("scrcpy-server-v5.0.1.jar"),
+                applicationParentSibling("scrcpy-server-v5.0.1")
         };
         for (Path candidate : candidates) {
             if (Files.isRegularFile(candidate)) {
@@ -62,6 +65,24 @@ public final class ScrcpyServerArtifact {
         }
         verify(cache);
         return cache;
+    }
+
+    private static Path applicationSibling(String name) {
+        try {
+            Path code = Path.of(ScrcpyServerArtifact.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI()).toAbsolutePath().normalize();
+            Path base = Files.isDirectory(code) ? code : code.getParent();
+            return base == null ? Path.of(name) : base.resolve(name);
+        } catch (Exception ignored) {
+            return Path.of(name);
+        }
+    }
+
+    private static Path applicationParentSibling(String name) {
+        Path sibling = applicationSibling(name);
+        Path parent = sibling.getParent();
+        if (parent != null) parent = parent.getParent();
+        return parent == null ? sibling : parent.resolve(name);
     }
 
     private static void verify(Path path) throws Exception {
