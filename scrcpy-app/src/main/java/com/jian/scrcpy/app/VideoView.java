@@ -28,7 +28,10 @@ public final class VideoView extends ImageView {
     public void accept(VideoFrame f) {
         frameWidth = f.width();
         frameHeight = f.height();
-        latest.set(f);
+        VideoFrame replaced = latest.getAndSet(f);
+        if (replaced != null) {
+            replaced.close();
+        }
         scheduleRender();
     }
 
@@ -44,18 +47,24 @@ public final class VideoView extends ImageView {
         try {
             VideoFrame v = latest.getAndSet(null);
             if (v != null) {
-                if (image == null || imageWidth != v.width() || imageHeight != v.height()) {
-                    image = new WritableImage(v.width(), v.height());
-                    pixelWriter = image.getPixelWriter();
-                    imageWidth = v.width();
-                    imageHeight = v.height();
-                    setImage(image);
+                try {
+                    if (image == null || imageWidth != v.width() || imageHeight != v.height()) {
+                        image = new WritableImage(v.width(), v.height());
+                        pixelWriter = image.getPixelWriter();
+                        imageWidth = v.width();
+                        imageHeight = v.height();
+                        setImage(image);
+                    }
+                    pixelWriter.setPixels(
+                            0, 0,
+                            v.width(), v.height(),
+                            PixelFormat.getByteBgraInstance(),
+                            v.bgra(), 0, v.width() * 4);
+                } finally {
+                    // PixelWriter has copied the source bytes before returning,
+                    // so the decoder can safely reuse this large BGRA buffer.
+                    v.close();
                 }
-                pixelWriter.setPixels(
-                        0, 0,
-                        v.width(), v.height(),
-                        PixelFormat.getByteBgraInstance(),
-                        v.bgra(), 0, v.width() * 4);
             }
         } finally {
             boolean reschedule;
