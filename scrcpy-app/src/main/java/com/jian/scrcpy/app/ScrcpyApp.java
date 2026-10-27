@@ -1004,6 +1004,7 @@ public final class ScrcpyApp extends Application {
                             .name("scrcpy-sdl-" + device.serial())
                             .start(renderer::pumpLoop);
                 }
+                final SdlD3d11VideoRenderer sessionSdlRenderer = sdlRenderer;
 
                 Platform.runLater(() -> {
                     reconnecting.remove(device.serial());
