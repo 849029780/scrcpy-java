@@ -3,15 +3,14 @@ name: Desktop Packages
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
-    paths:
-      - 'pom.xml'
-      - 'scrcpy-core/**'
-      - 'scrcpy-app/**'
-      - '.github/workflows/package.yml'
+
+# Packaging is intentionally not run for every development push. Release tags
+# and explicit manual runs create the cross-platform desktop images.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   package:
