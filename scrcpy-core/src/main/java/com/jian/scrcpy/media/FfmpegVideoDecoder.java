@@ -56,7 +56,12 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // decoding. Hardware decoding can be made more parallel later once every
     // backend has been stress-tested independently.
     private static final Object FFMPEG_VIDEO_LOCK = new Object();
-    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(60);
+    // Keep the compressed backlog short. Retained Netty ByteBuf packets count
+    // toward process memory and a long queue only adds latency for live video.
+    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(16);
+    // Reused staging storage for the JavaCPP AVPacket copy. Directly wrapping a
+    // Netty ByteBuf is not portable across the supported platforms/allocators.
+    private byte[] encodedBuffer = new byte[0];
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
 
@@ -351,9 +356,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             }
         }
 
-        byte[] encoded = new byte[p.data().readableBytes()];
-        int payloadSize = encoded.length;
-        p.data().getBytes(p.data().readerIndex(), encoded);
+        int payloadSize = p.data().readableBytes();
+        byte[] encoded = ensureEncodedCapacity(payloadSize);
+        p.data().getBytes(p.data().readerIndex(), encoded, 0, payloadSize);
 
         int sendResult;
         synchronized (FFMPEG_VIDEO_LOCK) {
@@ -366,8 +371,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         if (sendResult < 0) {
             if (activeHardware != null && !hardwareConfirmed) {
-                logHardwarePacketFailure("avcodec_send_packet", sendResult, encoded, p.pts());
-                fallbackToSoftware(encoded, p.pts(), "avcodec_send_packet=" + sendResult);
+                logHardwarePacketFailure("avcodec_send_packet", sendResult, encoded, payloadSize, p.pts());
+                fallbackToSoftware(encoded, payloadSize, p.pts(), "avcodec_send_packet=" + sendResult);
             }
             return;
         }
@@ -412,17 +417,19 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF()
                 && activeHardware != null && !hardwareConfirmed) {
-            fallbackToSoftware(encoded, p.pts(), "avcodec_receive_frame=" + receiveResult);
+            fallbackToSoftware(encoded, payloadSize, p.pts(), "avcodec_receive_frame=" + receiveResult);
         }
     }
 
-    private static byte[] copyPacketPayload(MediaMessage.Packet packet) {
-        byte[] encoded = new byte[packet.data().readableBytes()];
-        packet.data().getBytes(packet.data().readerIndex(), encoded);
-        return encoded;
+    private byte[] ensureEncodedCapacity(int size) {
+        if (encodedBuffer.length < size) {
+            int capacity = Math.max(size, Math.max(64 * 1024, encodedBuffer.length << 1));
+            encodedBuffer = new byte[capacity];
+        }
+        return encodedBuffer;
     }
 
-    private void logHardwarePacketFailure(String operation, int error, byte[] encoded, long pts) {
+    private void logHardwarePacketFailure(String operation, int error, byte[] encoded, int encodedLength, long pts) {
         byte[] errorBuffer = new byte[256];
         BytePointer errorPointer = new BytePointer(errorBuffer);
         String errorText;
@@ -433,7 +440,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             errorPointer.close();
         }
 
-        int previewLength = Math.min(encoded.length, 48);
+        int previewLength = Math.min(encodedLength, 48);
         StringBuilder hex = new StringBuilder(previewLength * 3);
         for (int i = 0; i < previewLength; i++) {
             if (i > 0) hex.append(' ');
@@ -442,18 +449,14 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         System.err.printf(
                 "[scrcpy-java] hardware decode diagnostic: backend=%s codec=%s op=%s error=%d (%s) packetBytes=%d pts=%d session=%dx%d ctx=%dx%d pixFmt=%d hwPixelFmt=%d hwDevice=%s firstBytes=%s%n",
-                activeHardware, activeCodec, operation, error, errorText, encoded.length, pts,
+                activeHardware, activeCodec, operation, error, errorText, encodedLength, pts,
                 sessionWidth, sessionHeight,
                 ctx != null ? ctx.width() : -1, ctx != null ? ctx.height() : -1,
                 ctx != null ? ctx.pix_fmt() : AV_PIX_FMT_NONE, hwPixelFormat,
                 hwDevice != null && !hwDevice.isNull(), hex);
     }
 
-    private void fallbackToSoftware(byte[] encoded, long pts) {
-        fallbackToSoftware(encoded, pts, "hardware decode failed");
-    }
-
-    private void fallbackToSoftware(byte[] encoded, long pts, String reason) {
+    private void fallbackToSoftware(byte[] encoded, int encodedLength, long pts, String reason) {
         CodecId codecId = activeCodec;
         String backend = activeHardware;
         System.err.printf("[scrcpy-java] hardware decoder %s failed before first frame (%s); falling back to software: %s%n",
@@ -467,13 +470,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         initSoftware(decoder, codecId);
 
         av_packet_unref(packet);
-        if (av_new_packet(packet, encoded.length) < 0) return;
-        packet.data().put(encoded, 0, encoded.length);
+        if (av_new_packet(packet, encodedLength) < 0) return;
+        packet.data().put(encoded, 0, encodedLength);
         packet.pts(pts).dts(pts);
         int softwareSendResult = avcodec_send_packet(ctx, packet);
         if (softwareSendResult < 0) {
             System.err.printf("[scrcpy-java] software decoder also rejected fallback packet (%s): avcodec_send_packet=%d, bytes=%d%n",
-                    codecId, softwareSendResult, encoded.length);
+                    codecId, softwareSendResult, encodedLength);
             return;
         }
         while (avcodec_receive_frame(ctx, frame) >= 0) {
