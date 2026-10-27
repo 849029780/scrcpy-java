@@ -49,6 +49,8 @@ public final class ScrcpyApp extends Application {
     private static final double TILE_WIDTH = 360;
     private static final double TILE_HEIGHT = 680;
     private static final double RELATIVE_MOUSE_EDGE_MARGIN = 2.0;
+    private static final long RECONNECT_INTERVAL_MILLIS = 3_000;
+    private static final int MAX_RECONNECT_ATTEMPTS = 20;
 
     // Device management is intentionally kept out of the main workspace and
     // shown from the "设备" menu as a modal popup.
@@ -71,6 +73,10 @@ public final class ScrcpyApp extends Application {
     /** Device whose absolute touch gesture is currently active. */
     private volatile DeviceSession activeMouseInput;
     private final Set<String> reconnecting = ConcurrentHashMap.newKeySet();
+    /** Devices checked in the device manager; independent from ListView focus/selection. */
+    private final Set<String> checkedDevices = ConcurrentHashMap.newKeySet();
+    /** Retry state for connections that were previously established and then lost. */
+    private final Map<String, ReconnectState> reconnectStates = new ConcurrentHashMap<>();
     private volatile String primarySerial;
     /** Preserve the user's primary-device choice across temporary ADB loss. */
     private volatile String desiredPrimarySerial;
@@ -91,7 +97,7 @@ public final class ScrcpyApp extends Application {
         String adbPath = System.getProperty("scrcpy.adb", "adb");
         adb = new Adb(adbPath, null);
 
-        devices.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        devices.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
         devices.setCellFactory(v -> deviceCell());
         devices.setPlaceholder(new Label("未发现 ADB 设备"));
         devices.setPrefHeight(420);
@@ -134,8 +140,8 @@ public final class ScrcpyApp extends Application {
         BorderPane content = new BorderPane(screenArea);
         content.setTop(toolbar);
 
-        devices.getSelectionModel().getSelectedItems().addListener(
-                (javafx.collections.ListChangeListener<AdbDevice>) c -> updateButtons());
+        // Device connection targets are controlled by per-row check boxes.
+        // The ListView selection is now only visual focus and never requires Ctrl.
 
         stage.setTitle("scrcpy-java - 多设备投屏");
         Scene scene = new Scene(content, 1400, 900);
@@ -179,17 +185,36 @@ public final class ScrcpyApp extends Application {
 
     private ListCell<AdbDevice> deviceCell() {
         return new ListCell<>() {
+            private final CheckBox check = new CheckBox();
+
+            {
+                check.setOnAction(e -> {
+                    AdbDevice d = getItem();
+                    if (d == null) return;
+                    if (check.isSelected()) {
+                        checkedDevices.add(d.serial());
+                    } else {
+                        checkedDevices.remove(d.serial());
+                    }
+                    updateButtons();
+                });
+            }
+
             @Override
             protected void updateItem(AdbDevice d, boolean empty) {
                 super.updateItem(d, empty);
+                setText(null);
                 if (empty || d == null) {
-                    setText(null);
+                    setGraphic(null);
                     return;
                 }
                 boolean active = sessions.containsKey(d.serial());
                 String state = active ? "投屏中" :
                         ("device".equals(d.state()) ? "已连接" : d.state());
-                setText(d.displayName() + "  [" + state + "]");
+                check.setText(d.displayName() + "  [" + state + "]");
+                check.setSelected(checkedDevices.contains(d.serial()));
+                check.setMaxWidth(Double.MAX_VALUE);
+                setGraphic(check);
             }
         };
     }
@@ -545,24 +570,47 @@ public final class ScrcpyApp extends Application {
             if (!lost.isEmpty()) {
                 Platform.runLater(() -> lost.forEach(serial -> {
                     if (sessions.containsKey(serial)) {
-                        status.setText("设备已离线: " + serial + "，等待自动重连");
+                        status.setText("设备已离线: " + serial + "，3 秒后尝试自动重连");
                         disconnectForReconnect(serial);
                     }
                 }));
             }
-            current.values().stream()
-                    .filter(AdbDevice::ready)
-                    .filter(d -> desiredConnections.containsKey(d.serial()))
-                    .filter(d -> !sessions.containsKey(d.serial()))
-                    .forEach(d -> {
-                        if (reconnecting.add(d.serial())) {
-                            ConnectionSettings settings = desiredConnections.get(d.serial());
-                            Platform.runLater(() -> {
-                                status.setText("设备已恢复，正在重连: " + d.displayName());
-                                connectDevice(d, settings, true);
-                            });
-                        }
+            long now = System.currentTimeMillis();
+            desiredConnections.forEach((serial, settings) -> {
+                if (sessions.containsKey(serial) || reconnecting.contains(serial)) return;
+
+                ReconnectState retry = reconnectStates.get(serial);
+                if (retry == null || now < retry.nextAttemptAtMillis()) return;
+                if (retry.attempts() >= MAX_RECONNECT_ATTEMPTS) {
+                    reconnectStates.remove(serial);
+                    desiredConnections.remove(serial);
+                    Platform.runLater(() -> {
+                        status.setText("设备自动重连失败: " + serial + "，已达到 " + MAX_RECONNECT_ATTEMPTS + " 次");
+                        devices.refresh();
+                        updateButtons();
                     });
+                    return;
+                }
+
+                AdbDevice d = current.get(serial);
+                if (d == null || !d.ready()) {
+                    // Do not consume an attempt while ADB cannot see the device;
+                    // wait three seconds and try the availability check again.
+                    reconnectStates.computeIfPresent(serial,
+                            (key, state) -> state.waitUntil(now + RECONNECT_INTERVAL_MILLIS));
+                    return;
+                }
+
+                ReconnectState next = retry.nextAttempt(now + RECONNECT_INTERVAL_MILLIS);
+                reconnectStates.put(serial, next);
+                if (reconnecting.add(serial)) {
+                    Platform.runLater(() -> {
+                        status.setText("正在自动重连 " + d.displayName() + "（"
+                                + next.attempts() + "/" + MAX_RECONNECT_ATTEMPTS + "）");
+                        connectDevice(d, settings, true);
+                    });
+                }
+            });
         } catch (Throwable ignored) {
             // A transient ADB restart must not tear down active sessions.
         }
@@ -608,14 +656,7 @@ public final class ScrcpyApp extends Application {
             try {
                 List<AdbDevice> list = adb.devices();
                 Platform.runLater(() -> {
-                    Set<String> selectedSerials = new HashSet<>();
-                    devices.getSelectionModel().getSelectedItems().forEach(d -> selectedSerials.add(d.serial()));
                     devices.setItems(FXCollections.observableArrayList(list));
-                    for (int i = 0; i < list.size(); i++) {
-                        if (selectedSerials.contains(list.get(i).serial())) {
-                            devices.getSelectionModel().select(i);
-                        }
-                    }
                     status.setText(list.isEmpty()
                             ? "未发现设备"
                             : "发现 " + list.size() + " 台设备，投屏中 " + sessions.size() + " 台");
@@ -826,7 +867,9 @@ public final class ScrcpyApp extends Application {
     }
 
     private void connectSelected() {
-        connectDevices(new ArrayList<>(devices.getSelectionModel().getSelectedItems()));
+        connectDevices(devices.getItems().stream()
+                .filter(d -> checkedDevices.contains(d.serial()))
+                .toList());
     }
 
     private void connectAll() {
@@ -877,6 +920,8 @@ public final class ScrcpyApp extends Application {
                     status.setText("正在连接 " + targets.size() + " 台设备...");
                     targets.forEach(device -> {
                         desiredConnections.put(device.serial(), settings);
+                        reconnectStates.remove(device.serial());
+                        reconnecting.remove(device.serial());
                         connectDevice(device, settings, false);
                     });
                 });
@@ -933,6 +978,7 @@ public final class ScrcpyApp extends Application {
 
                 Platform.runLater(() -> {
                     reconnecting.remove(device.serial());
+                    reconnectStates.remove(device.serial());
                     if (!desiredConnections.containsKey(device.serial())) {
                         runningSession.close();
                         if (videoDecoder != null) videoDecoder.close();
@@ -1859,13 +1905,17 @@ public final class ScrcpyApp extends Application {
     }
 
     private void disconnectSelected() {
-        new ArrayList<>(devices.getSelectionModel().getSelectedItems())
-                .forEach(d -> disconnect(d.serial()));
+        devices.getItems().stream()
+                .filter(d -> checkedDevices.contains(d.serial()))
+                .map(AdbDevice::serial)
+                .toList()
+                .forEach(this::disconnect);
     }
 
     private void disconnect(String serial) {
         desiredConnections.remove(serial);
         reconnecting.remove(serial);
+        reconnectStates.remove(serial);
         if (Objects.equals(desiredPrimarySerial, serial)) {
             desiredPrimarySerial = null;
         }
@@ -1874,6 +1924,8 @@ public final class ScrcpyApp extends Application {
 
     private void disconnectForReconnect(String serial) {
         reconnecting.remove(serial);
+        reconnectStates.computeIfAbsent(serial,
+                key -> new ReconnectState(0, System.currentTimeMillis() + RECONNECT_INTERVAL_MILLIS));
         // A temporary ADB loss must not forget which device was primary.
         if (isPrimarySerial(serial)) {
             desiredPrimarySerial = serial;
@@ -1923,7 +1975,7 @@ public final class ScrcpyApp extends Application {
     private void updateButtons() {
         boolean hasReady = devices.getItems().stream()
                 .anyMatch(d -> d.ready() && !sessions.containsKey(d.serial()));
-        boolean hasSelection = !devices.getSelectionModel().getSelectedItems().isEmpty();
+        boolean hasSelection = !checkedDevices.isEmpty();
         connect.setDisable(!hasSelection);
         disconnect.setDisable(!hasSelection);
         connectAll.setDisable(!hasReady);
@@ -1958,11 +2010,23 @@ public final class ScrcpyApp extends Application {
         adbMonitor.shutdownNow();
         desiredConnections.clear();
         reconnecting.clear();
+        reconnectStates.clear();
+        checkedDevices.clear();
         closeAllSessions();
     }
 
     public static void main(String[] args) {
         launch(args);
+    }
+
+    private record ReconnectState(int attempts, long nextAttemptAtMillis) {
+        ReconnectState nextAttempt(long nextAttemptAtMillis) {
+            return new ReconnectState(attempts + 1, nextAttemptAtMillis);
+        }
+
+        ReconnectState waitUntil(long nextAttemptAtMillis) {
+            return new ReconnectState(attempts, nextAttemptAtMillis);
+        }
     }
 
     private record ConnectionSettings(
