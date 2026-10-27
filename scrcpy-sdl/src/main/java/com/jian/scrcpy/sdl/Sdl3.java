@@ -9,6 +9,11 @@ import static java.lang.foreign.ValueLayout.*;
 final class Sdl3 implements AutoCloseable {
     static final int SDL_INIT_VIDEO = 0x00000020;
     static final String D3D11_DEVICE_PROPERTY = "SDL.renderer.d3d11.device";
+    static final String D3D11_SWAPCHAIN_PROPERTY = "SDL.renderer.d3d11.swap_chain";
+    static final String METAL_DEVICE_PROPERTY = "SDL.renderer.metal.device";
+    static final String METAL_COMMAND_QUEUE_PROPERTY = "SDL.renderer.metal.command_queue";
+    static final String VULKAN_PHYSICAL_DEVICE_PROPERTY = "SDL.renderer.vulkan.physical_device";
+    static final String VULKAN_DEVICE_PROPERTY = "SDL.renderer.vulkan.device";
 
     private final Arena arena = Arena.ofShared();
     private final SymbolLookup symbols;
@@ -67,10 +72,17 @@ final class Sdl3 implements AutoCloseable {
         return cString((MemorySegment) invoke(getRendererName, renderer));
     }
 
-    MemorySegment rendererD3d11Device(MemorySegment renderer) {
+    MemorySegment rendererPointerProperty(MemorySegment renderer, String property) {
         int props = (int) invoke(getRendererProperties, renderer);
+        if (props == 0) {
+            return MemorySegment.NULL;
+        }
         return (MemorySegment) invoke(getPointerProperty, props,
-                utf8(D3D11_DEVICE_PROPERTY), MemorySegment.NULL);
+                utf8(property), MemorySegment.NULL);
+    }
+
+    MemorySegment rendererD3d11Device(MemorySegment renderer) {
+        return rendererPointerProperty(renderer, D3D11_DEVICE_PROPERTY);
     }
 
     String error() { return cString((MemorySegment) invoke(getError)); }
