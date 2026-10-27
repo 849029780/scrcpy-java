@@ -86,7 +86,7 @@ public final class ServerLauncher implements AutoCloseable {
         String scid = "%08x".formatted(o.scid());
         String socket = "scrcpy_" + scid;
 
-        System.out.printf("[scrcpy-java] scid=%s (%d), socket=%s%n", scid, o.scid(), socket);
+        System.out.printf("[scrcpy-java][%s] scid=%s (%d), socket=%s%n", o.serial(), scid, o.scid(), socket);
 
         if (localPort <= 0 || localPort > 65535) {
             throw new IllegalArgumentException("Invalid local tunnel port: " + localPort);
@@ -100,7 +100,7 @@ public final class ServerLauncher implements AutoCloseable {
 
         var a = buildServerArgs(o, scid);
 
-        System.out.println("[scrcpy-java] server args: " + String.join(" ", a));
+        System.out.printf("[scrcpy-java][%s] server args: %s%n", o.serial(), String.join(" ", a));
         process = adb.shellAsync(a);
     }
 
@@ -114,7 +114,7 @@ public final class ServerLauncher implements AutoCloseable {
                 "com.genymobile.scrcpy.Server",
                 "5.0.1",
                 "scid=" + scid,
-                "log_level=info",
+                "log_level=debug",
                 "tunnel_forward=false");
 
         if (!o.video()) {
