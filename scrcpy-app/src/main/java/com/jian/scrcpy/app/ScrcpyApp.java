@@ -94,8 +94,10 @@ public final class ScrcpyApp extends Application {
 
     @Override
     public void start(Stage stage) {
-        String adbPath = System.getProperty("scrcpy.adb", "adb");
-        adb = new Adb(adbPath, null);
+        // Adb resolves an explicit path, bundled platform-tools, Android SDK,
+        // and finally PATH. The application therefore does not require a
+        // system-wide adb installation.
+        adb = new Adb(System.getProperty("scrcpy.adb"), null);
 
         devices.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
         devices.setCellFactory(v -> deviceCell());
