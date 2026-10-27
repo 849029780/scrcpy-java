@@ -22,6 +22,7 @@ import static org.bytedeco.ffmpeg.global.swscale.*;
 public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaMessage> implements AutoCloseable {
     private final Consumer<VideoFrame> sink;
     private final String decoderMode;
+    private final String serial;
     private final VideoHardwareDeviceProvider hardwareDeviceProvider;
     private AVCodecContext ctx;
     private AVFrame frame, softwareFrame, rgb;
@@ -83,18 +84,24 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private final Thread decodeThread;
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink) {
-        this(sink, "hardware");
+        this(sink, "hardware", VideoHardwareDeviceProvider.DEFAULT, null);
     }
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode) {
-        this(sink, decoderMode, VideoHardwareDeviceProvider.DEFAULT);
+        this(sink, decoderMode, VideoHardwareDeviceProvider.DEFAULT, null);
     }
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode,
                               VideoHardwareDeviceProvider hardwareDeviceProvider) {
+        this(sink, decoderMode, hardwareDeviceProvider, null);
+    }
+
+    public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode,
+                              VideoHardwareDeviceProvider hardwareDeviceProvider, String serial) {
         av_log_set_level(AV_LOG_WARNING);
         super(false);
         this.sink = sink;
+        this.serial = serial == null || serial.isBlank() ? "unknown" : serial;
         this.decoderMode = normalizeMode(decoderMode);
         this.hardwareDeviceProvider = Objects.requireNonNullElse(
                 hardwareDeviceProvider, VideoHardwareDeviceProvider.DEFAULT);
@@ -134,7 +141,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 }
             }
             if ("hardware".equals(decoderMode)) {
-                System.out.printf("[scrcpy-java] hardware video decoding unavailable for %s; using software decoder%n", codecId);
+                System.out.printf("[scrcpy-java][%s] hardware video decoding unavailable for %s; using software decoder%n", serial, codecId);
             }
         }
 
@@ -151,7 +158,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             throw new IllegalStateException("cannot open software decoder " + codecId);
         }
         allocateFramesAndPacket();
-        System.out.printf("[scrcpy-java] video decoder: software (%s)%n", codecId);
+        System.out.printf("[scrcpy-java][%s] video decoder: software (%s)%n", serial, codecId);
     }
 
     private boolean tryInitHardware(AVCodec decoder, CodecId codecId, HardwareBackend backend) {
@@ -182,11 +189,11 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
         if (device == null || device.isNull() || createResult < 0) {
             if (device != null && !device.isNull()) av_buffer_unref(device);
-            System.err.printf("[scrcpy-java] cannot create hardware device %s: %d%n", backend.name(), createResult);
+            System.err.printf("[scrcpy-java][%s] cannot create hardware device %s: %d%n", serial, backend.name(), createResult);
             return false;
         }
         if (rendererOwnedDevice) {
-            System.out.printf("[scrcpy-java] video decoder: using renderer-owned %s device%n", backend.name());
+            System.out.printf("[scrcpy-java][%s] video decoder: using renderer-owned %s device%n", serial, backend.name());
         }
 
         AVCodecContext candidate = avcodec_alloc_context3(decoder);
@@ -212,7 +219,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                                 return format;
                             }
                         }
-                        System.err.printf("[scrcpy-java] hardware %s get_format: requested=%d not offered; offered=[%s]%n",
+                        System.err.printf("[scrcpy-java][%s] hardware %s get_format: requested=%d not offered; offered=[%s]%n",
+                                serial,
                                 backend.name(), selectedPixelFormat, offered);
                         return AV_PIX_FMT_NONE;
                     }
@@ -242,7 +250,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         getFormatCallback = callback;
         activeHardware = backend.name();
         allocateFramesAndPacket();
-        System.out.printf("[scrcpy-java] video decoder: trying hardware %s (%s)%n", activeHardware, codecId);
+        System.out.printf("[scrcpy-java][%s] video decoder: trying hardware %s (%s)%n", serial, activeHardware, codecId);
         return true;
     }
 
@@ -343,7 +351,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         } catch (Throwable t) {
-            System.err.println("[scrcpy-java] video decode worker failed: " + t);
+            System.err.println("[scrcpy-java][" + serial + "] video decode worker failed: " + t);
             t.printStackTrace(System.err);
         } finally {
             MediaMessage m;
@@ -371,11 +379,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 synchronized (FFMPEG_VIDEO_LOCK) {
                     init(announcedCodec);
                 }
-                System.out.printf("[scrcpy-java] video decoder initialized for session %dx%d%s%n",
+                System.out.printf("[scrcpy-java][%s] video decoder initialized for session %dx%d%s%n",
+                        serial,
                         session.width(), session.height(),
                         session.clientResized() ? " (client resized)" : "");
             } else if (ctx != null) {
-                System.out.printf("[scrcpy-java] video session updated: %dx%d%s%n",
+                System.out.printf("[scrcpy-java][%s] video session updated: %dx%d%s%n",
+                        serial,
                         session.width(), session.height(),
                         session.clientResized() ? " (client resized)" : "");
             }
@@ -427,7 +437,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
             if (activeHardware != null && !hardwareConfirmed) {
                 hardwareConfirmed = true;
-                System.out.printf("[scrcpy-java] video decoder: hardware %s confirmed (%s)%n", activeHardware, activeCodec);
+                System.out.printf("[scrcpy-java][%s] video decoder: hardware %s confirmed (%s)%n", serial, activeHardware, activeCodec);
             }
             if (DEBUG_SKIP_RENDER) continue;
 
@@ -488,8 +498,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
 
         System.err.printf(
-                "[scrcpy-java] hardware decode diagnostic: backend=%s codec=%s op=%s error=%d (%s) packetBytes=%d pts=%d session=%dx%d ctx=%dx%d pixFmt=%d hwPixelFmt=%d hwDevice=%s firstBytes=%s%n",
-                activeHardware, activeCodec, operation, error, errorText, encodedLength, pts,
+                "[scrcpy-java][%s] hardware decode diagnostic: backend=%s codec=%s op=%s error=%d (%s) packetBytes=%d pts=%d session=%dx%d ctx=%dx%d pixFmt=%d hwPixelFmt=%d hwDevice=%s firstBytes=%s%n",
+                serial, activeHardware, activeCodec, operation, error, errorText, encodedLength, pts,
                 sessionWidth, sessionHeight,
                 ctx != null ? ctx.width() : -1, ctx != null ? ctx.height() : -1,
                 ctx != null ? ctx.pix_fmt() : AV_PIX_FMT_NONE, hwPixelFormat,
@@ -499,7 +509,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private void fallbackToSoftware(byte[] encoded, int encodedLength, long pts, String reason) {
         CodecId codecId = activeCodec;
         String backend = activeHardware;
-        System.err.printf("[scrcpy-java] hardware decoder %s failed before first frame (%s); falling back to software: %s%n",
+        System.err.printf("[scrcpy-java][%s] hardware decoder %s failed before first frame (%s); falling back to software: %s%n",
+                serial,
                 backend, codecId, reason);
         closeNative();
         activeCodec = codecId;
@@ -515,7 +526,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         packet.pts(pts).dts(pts);
         int softwareSendResult = avcodec_send_packet(ctx, packet);
         if (softwareSendResult < 0) {
-            System.err.printf("[scrcpy-java] software decoder also rejected fallback packet (%s): avcodec_send_packet=%d, bytes=%d%n",
+            System.err.printf("[scrcpy-java][%s] software decoder also rejected fallback packet (%s): avcodec_send_packet=%d, bytes=%d%n",
+                    serial,
                     codecId, softwareSendResult, encodedLength);
             return;
         }
