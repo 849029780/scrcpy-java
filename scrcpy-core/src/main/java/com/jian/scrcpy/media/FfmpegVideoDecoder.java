@@ -8,6 +8,7 @@ import org.bytedeco.ffmpeg.avutil.*;
 import org.bytedeco.ffmpeg.swscale.SwsContext;
 import org.bytedeco.javacpp.*;
 
+import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -38,12 +39,27 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private int width, height;
     private int pixelFormat = -1;
 
-    // Keep only a few full-resolution Java buffers per decoder. JavaFX holds
-    // at most one pending frame plus one frame being copied, so three buffers
-    // avoid steady-state allocations without allowing memory to grow with FPS.
+    // FFmpeg writes swscale output directly into these off-heap buffers. They
+    // are then exposed to JavaFX PixelBuffer without the old native -> byte[]
+    // full-frame copy. Three buffers cover decode, pending and displayed frames.
     private static final int BGRA_POOL_SIZE = 3;
-    private final ArrayDeque<byte[]> bgraPool = new ArrayDeque<>(BGRA_POOL_SIZE);
+    private final ArrayDeque<BgraBuffer> bgraPool = new ArrayDeque<>(BGRA_POOL_SIZE);
+    private final ArrayList<BgraBuffer> bgraBuffers = new ArrayList<>(BGRA_POOL_SIZE);
     private int bgraBufferSize;
+
+    private static final class BgraBuffer {
+        final ByteBuffer buffer;
+        final BytePointer pointer;
+
+        BgraBuffer(int size) {
+            buffer = ByteBuffer.allocateDirect(size);
+            pointer = new BytePointer(buffer);
+        }
+
+        void close() {
+            pointer.close();
+        }
+    }
 
     private static final boolean DEBUG_SKIP_RENDER =
             Boolean.getBoolean("scrcpy.video.debug.skip-render");
@@ -274,13 +290,12 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             throw new IllegalStateException("cannot create swscale context: " + w + "x" + h + " fmt=" + fmt);
         }
 
+        // rgb is only a lightweight destination descriptor now. Its data
+        // pointer is assigned to a pooled direct ByteBuffer for each frame.
         av_frame_unref(rgb);
         rgb.width(w);
         rgb.height(h);
         rgb.format(AV_PIX_FMT_BGRA);
-        if (av_frame_get_buffer(rgb, 32) < 0) {
-            throw new IllegalStateException("cannot allocate BGRA frame buffer: " + w + "x" + h);
-        }
     }
 
     @Override
@@ -402,6 +417,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             if (DEBUG_SKIP_SWS_SCALE) continue;
 
             converter(source.width(), source.height(), source.format());
+            BgraBuffer output = acquireBgraBuffer(width * height * 4);
+            if (output == null) continue;
+            configureRgbDestination(output);
             int scaled = sws_scale(
                     sws,
                     source.data(),
@@ -410,9 +428,12 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                     source.height(),
                     rgb.data(),
                     rgb.linesize());
-            if (scaled <= 0) continue;
+            if (scaled <= 0) {
+                recycleBgraBuffer(output);
+                continue;
+            }
 
-            publishFrame(p.pts());
+            publishFrame(output, p.pts());
         }
 
         if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF()
@@ -483,33 +504,30 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             if (DEBUG_SKIP_RENDER) continue;
             converter(frame.width(), frame.height(), frame.format());
             if (DEBUG_SKIP_SWS_SCALE) continue;
+            BgraBuffer output = acquireBgraBuffer(width * height * 4);
+            if (output == null) continue;
+            configureRgbDestination(output);
             int scaled = sws_scale(sws, frame.data(), frame.linesize(), 0, frame.height(), rgb.data(), rgb.linesize());
-            if (scaled <= 0) continue;
-            publishFrame(pts);
+            if (scaled <= 0) {
+                recycleBgraBuffer(output);
+                continue;
+            }
+            publishFrame(output, pts);
         }
     }
 
-    private void publishFrame(long pts) {
-        int n = width * height * 4;
-        byte[] out = acquireBgraBuffer(n);
-        if (out == null) {
-            // The UI is still using all pooled buffers. Dropping the already
-            // decoded presentation frame is cheaper than allocating another
-            // multi-megabyte array and increasing GC pressure.
-            return;
-        }
+    private void configureRgbDestination(BgraBuffer output) {
+        output.buffer.clear();
+        output.pointer.position(0);
+        rgb.data(0, output.pointer);
+        rgb.linesize(0, width * 4);
+    }
 
-        int stride = rgb.linesize(0);
-        BytePointer pixels = rgb.data(0);
-        if (stride == width * 4) {
-            pixels.position(0).get(out, 0, n);
-        } else {
-            for (int y = 0; y < height; y++) {
-                pixels.position((long) y * stride).get(out, y * width * 4, width * 4);
-            }
-        }
-
-        VideoFrame videoFrame = new VideoFrame(width, height, out, pts, () -> recycleBgraBuffer(out));
+    private void publishFrame(BgraBuffer output, long pts) {
+        output.buffer.position(0);
+        output.buffer.limit(width * height * 4);
+        VideoFrame videoFrame = new VideoFrame(
+                width, height, output.buffer, pts, () -> recycleBgraBuffer(output));
         try {
             sink.accept(videoFrame);
         } catch (Throwable t) {
@@ -518,19 +536,29 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
     }
 
-    private synchronized byte[] acquireBgraBuffer(int size) {
+    private synchronized BgraBuffer acquireBgraBuffer(int size) {
         if (bgraBufferSize != size) {
-            bgraPool.clear();
-            bgraBufferSize = size;
-            for (int i = 0; i < BGRA_POOL_SIZE; i++) {
-                bgraPool.addLast(new byte[size]);
-            }
+            resetBgraPool(size);
         }
         return bgraPool.pollFirst();
     }
 
-    private synchronized void recycleBgraBuffer(byte[] buffer) {
-        if (buffer.length == bgraBufferSize && bgraPool.size() < BGRA_POOL_SIZE) {
+    private void resetBgraPool(int size) {
+        bgraPool.clear();
+        for (BgraBuffer buffer : bgraBuffers) buffer.close();
+        bgraBuffers.clear();
+        bgraBufferSize = size;
+        for (int i = 0; i < BGRA_POOL_SIZE; i++) {
+            BgraBuffer buffer = new BgraBuffer(size);
+            bgraBuffers.add(buffer);
+            bgraPool.addLast(buffer);
+        }
+    }
+
+    private synchronized void recycleBgraBuffer(BgraBuffer buffer) {
+        if (buffer.buffer.capacity() == bgraBufferSize
+                && bgraBuffers.contains(buffer)
+                && !bgraPool.contains(buffer)) {
             bgraPool.addLast(buffer);
         }
     }
@@ -582,6 +610,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             getFormatCallback.close();
             getFormatCallback = null;
         }
+        // The direct BGRA pool is independent from an FFmpeg decoder retry,
+        // but a session size change will recreate it lazily on the next frame.
         hwPixelFormat = AV_PIX_FMT_NONE;
         activeHardware = null;
         hardwareConfirmed = false;
