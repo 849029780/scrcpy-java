@@ -24,6 +24,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private final String decoderMode;
     private final String serial;
     private final VideoHardwareDeviceProvider hardwareDeviceProvider;
+    private final VideoRenderer renderer;
     private AVCodecContext ctx;
     private AVFrame frame, softwareFrame, rgb;
     private AVPacket packet;
@@ -84,20 +85,26 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private final Thread decodeThread;
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink) {
-        this(sink, "hardware", VideoHardwareDeviceProvider.DEFAULT, null);
+        this(sink, "hardware", VideoHardwareDeviceProvider.DEFAULT, null, null);
     }
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode) {
-        this(sink, decoderMode, VideoHardwareDeviceProvider.DEFAULT, null);
+        this(sink, decoderMode, VideoHardwareDeviceProvider.DEFAULT, null, null);
     }
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode,
                               VideoHardwareDeviceProvider hardwareDeviceProvider) {
-        this(sink, decoderMode, hardwareDeviceProvider, null);
+        this(sink, decoderMode, hardwareDeviceProvider, null, null);
     }
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode,
                               VideoHardwareDeviceProvider hardwareDeviceProvider, String serial) {
+        this(sink, decoderMode, hardwareDeviceProvider, serial, null);
+    }
+
+    public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode,
+                              VideoHardwareDeviceProvider hardwareDeviceProvider, String serial,
+                              VideoRenderer renderer) {
         av_log_set_level(AV_LOG_WARNING);
         super(false);
         this.sink = sink;
@@ -105,6 +112,17 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         this.decoderMode = normalizeMode(decoderMode);
         this.hardwareDeviceProvider = Objects.requireNonNullElse(
                 hardwareDeviceProvider, VideoHardwareDeviceProvider.DEFAULT);
+        this.renderer = renderer != null ? renderer : new VideoRenderer() {
+            @Override
+            public boolean renderHardware(HardwareVideoFrame frame) {
+                return false;
+            }
+
+            @Override
+            public void renderSoftware(VideoFrame frame) {
+                sink.accept(frame);
+            }
+        };
         decodeThread = Thread.ofVirtual().name("scrcpy-video-decoder").start(this::decodeLoop);
     }
 
@@ -425,12 +443,6 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         for (;;) {
             synchronized (FFMPEG_VIDEO_LOCK) {
                 receiveResult = avcodec_receive_frame(ctx, frame);
-                if (receiveResult >= 0 && activeHardware != null && frame.format() == hwPixelFormat) {
-                    av_frame_unref(softwareFrame);
-                    if (av_hwframe_transfer_data(softwareFrame, frame, 0) < 0) {
-                        receiveResult = AVERROR_EOF();
-                    }
-                }
             }
 
             if (receiveResult < 0) break;
@@ -441,8 +453,28 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             }
             if (DEBUG_SKIP_RENDER) continue;
 
-            AVFrame source = (activeHardware != null && frame.format() == hwPixelFormat)
-                    ? softwareFrame : frame;
+            AVFrame source = frame;
+            if (activeHardware != null && frame.format() == hwPixelFormat) {
+                HardwareVideoFrame hardwareFrame = HardwareVideoFrame.from(
+                        frame, serial, activeHardware, p.pts());
+                if (hardwareFrame != null) {
+                    boolean accepted = false;
+                    try {
+                        accepted = renderer.renderHardware(hardwareFrame);
+                    } finally {
+                        if (!accepted) hardwareFrame.close();
+                    }
+                    if (accepted) continue;
+                }
+
+                synchronized (FFMPEG_VIDEO_LOCK) {
+                    av_frame_unref(softwareFrame);
+                    if (av_hwframe_transfer_data(softwareFrame, frame, 0) < 0) {
+                        continue;
+                    }
+                }
+                source = softwareFrame;
+            }
             if (DEBUG_SKIP_SWS_SCALE) continue;
 
             converter(source.width(), source.height(), source.format());
@@ -560,7 +592,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         VideoFrame videoFrame = new VideoFrame(
                 width, height, output.buffer, pts, () -> recycleBgraBuffer(output));
         try {
-            sink.accept(videoFrame);
+            renderer.renderSoftware(videoFrame);
         } catch (Throwable t) {
             videoFrame.close();
             throw t;
