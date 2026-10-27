@@ -953,7 +953,7 @@ public final class ScrcpyApp extends Application {
 
                 VideoView view = new VideoView();
                 final FfmpegVideoDecoder videoDecoder = d.video()
-                        ? new FfmpegVideoDecoder(view::accept, d.videoDecoder())
+                        ? new FfmpegVideoDecoder(view::accept, d.videoDecoder(), VideoHardwareDeviceProvider.DEFAULT, device.serial())
                         : null;
                 videoDecoderRef.set(videoDecoder);
                 audioPlayer = new JavaSoundPlayer();
