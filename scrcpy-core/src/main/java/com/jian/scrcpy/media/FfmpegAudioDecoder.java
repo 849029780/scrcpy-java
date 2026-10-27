@@ -23,7 +23,10 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private CodecId codec;
     /** AAC requires the codec configuration (AudioSpecificConfig) before opening the decoder. */
     private byte[] pendingCodecConfig;
-    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(120);
+    // Audio packets are small, but retaining a very deep live queue increases
+    // latency and keeps Netty buffers alive unnecessarily.
+    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(48);
+    private byte[] encodedBuffer = new byte[0];
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
 
@@ -144,9 +147,9 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             // AAC must have its config packet before media packets can be decoded.
             return;
         }
-        byte[] bytes = new byte[p.data().readableBytes()];
-        int payloadSize = bytes.length;
-        p.data().getBytes(p.data().readerIndex(), bytes);
+        int payloadSize = p.data().readableBytes();
+        byte[] bytes = ensureEncodedCapacity(payloadSize);
+        p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
         av_packet_unref(packet);
         int allocRet = av_new_packet(packet, payloadSize);
         if (allocRet < 0) {
@@ -167,6 +170,14 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
                 return;
             }
             drainFrames(p.pts());
+    }
+
+    private byte[] ensureEncodedCapacity(int size) {
+        if (encodedBuffer.length < size) {
+            int capacity = Math.max(size, Math.max(8 * 1024, encodedBuffer.length << 1));
+            encodedBuffer = new byte[capacity];
+        }
+        return encodedBuffer;
     }
 
     private static void releaseMessage(MediaMessage m) {
