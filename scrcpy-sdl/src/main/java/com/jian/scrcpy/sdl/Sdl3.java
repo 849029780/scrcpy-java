@@ -9,7 +9,13 @@ final class Sdl3 implements AutoCloseable {
     static final int SDL_INIT_VIDEO = 0x00000020;
     static final int SDL_PIXELFORMAT_NV12 = 0x3231564e;
     static final int SDL_TEXTUREACCESS_STATIC = 0;
+    // SDL3 renderer native-device properties.
     static final String D3D11_DEVICE_PROPERTY = "SDL.renderer.d3d11.device";
+    static final String D3D11_SWAPCHAIN_PROPERTY = "SDL.renderer.d3d11.swapchain";
+    static final String METAL_DEVICE_PROPERTY = "SDL.renderer.metal.device";
+    static final String METAL_COMMAND_QUEUE_PROPERTY = "SDL.renderer.metal.command_queue";
+    static final String VULKAN_DEVICE_PROPERTY = "SDL.renderer.vulkan.device";
+    static final String VULKAN_PHYSICAL_DEVICE_PROPERTY = "SDL.renderer.vulkan.physical_device";
     static final String D3D11_TEXTURE_PROPERTY = "SDL.texture.d3d11.texture";
 
     private final Arena arena = Arena.ofShared();
