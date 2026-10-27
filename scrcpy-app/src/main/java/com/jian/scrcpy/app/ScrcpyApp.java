@@ -5,6 +5,7 @@ import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.adb.AdbDevice;
 import com.jian.scrcpy.media.JavaSoundPlayer;
 import com.jian.scrcpy.media.FfmpegVideoDecoder;
+import com.jian.scrcpy.media.VideoHardwareDeviceProvider;
 import com.jian.scrcpy.control.DeviceController;
 import com.jian.scrcpy.control.UhidController;
 import com.jian.scrcpy.control.ClipboardController;
