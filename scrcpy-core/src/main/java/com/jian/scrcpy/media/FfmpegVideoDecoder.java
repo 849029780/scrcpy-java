@@ -38,6 +38,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private int width, height;
     private int pixelFormat = -1;
 
+    // Keep only a few full-resolution Java buffers per decoder. JavaFX holds
+    // at most one pending frame plus one frame being copied, so three buffers
+    // avoid steady-state allocations without allowing memory to grow with FPS.
+    private static final int BGRA_POOL_SIZE = 3;
+    private final ArrayDeque<byte[]> bgraPool = new ArrayDeque<>(BGRA_POOL_SIZE);
+    private int bgraBufferSize;
+
     private static final boolean DEBUG_SKIP_RENDER =
             Boolean.getBoolean("scrcpy.video.debug.skip-render");
     private static final boolean DEBUG_SKIP_DECODE =
@@ -400,17 +407,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                     rgb.linesize());
             if (scaled <= 0) continue;
 
-            int stride = rgb.linesize(0), n = width * height * 4;
-            byte[] out = new byte[n];
-            BytePointer pixels = rgb.data(0);
-            if (stride == width * 4) {
-                pixels.position(0).get(out);
-            } else {
-                for (int y = 0; y < height; y++) {
-                    pixels.position((long) y * stride).get(out, y * width * 4, width * 4);
-                }
-            }
-            sink.accept(new VideoFrame(width, height, out, p.pts()));
+            publishFrame(p.pts());
         }
 
         if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF()
@@ -485,17 +482,53 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             if (DEBUG_SKIP_SWS_SCALE) continue;
             int scaled = sws_scale(sws, frame.data(), frame.linesize(), 0, frame.height(), rgb.data(), rgb.linesize());
             if (scaled <= 0) continue;
-            int stride = rgb.linesize(0), n = width * height * 4;
-            byte[] out = new byte[n];
-            BytePointer pixels = rgb.data(0);
-            if (stride == width * 4) {
-                pixels.position(0).get(out);
-            } else {
-                for (int y = 0; y < height; y++) {
-                    pixels.position((long) y * stride).get(out, y * width * 4, width * 4);
-                }
+            publishFrame(pts);
+        }
+    }
+
+    private void publishFrame(long pts) {
+        int n = width * height * 4;
+        byte[] out = acquireBgraBuffer(n);
+        if (out == null) {
+            // The UI is still using all pooled buffers. Dropping the already
+            // decoded presentation frame is cheaper than allocating another
+            // multi-megabyte array and increasing GC pressure.
+            return;
+        }
+
+        int stride = rgb.linesize(0);
+        BytePointer pixels = rgb.data(0);
+        if (stride == width * 4) {
+            pixels.position(0).get(out, 0, n);
+        } else {
+            for (int y = 0; y < height; y++) {
+                pixels.position((long) y * stride).get(out, y * width * 4, width * 4);
             }
-            sink.accept(new VideoFrame(width, height, out, pts));
+        }
+
+        VideoFrame videoFrame = new VideoFrame(width, height, out, pts, () -> recycleBgraBuffer(out));
+        try {
+            sink.accept(videoFrame);
+        } catch (Throwable t) {
+            videoFrame.close();
+            throw t;
+        }
+    }
+
+    private synchronized byte[] acquireBgraBuffer(int size) {
+        if (bgraBufferSize != size) {
+            bgraPool.clear();
+            bgraBufferSize = size;
+            for (int i = 0; i < BGRA_POOL_SIZE; i++) {
+                bgraPool.addLast(new byte[size]);
+            }
+        }
+        return bgraPool.pollFirst();
+    }
+
+    private synchronized void recycleBgraBuffer(byte[] buffer) {
+        if (buffer.length == bgraBufferSize && bgraPool.size() < BGRA_POOL_SIZE) {
+            bgraPool.addLast(buffer);
         }
     }
 
