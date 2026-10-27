@@ -12,6 +12,15 @@ public final class ScrcpyMediaDecoder extends ByteToMessageDecoder {
     private static final long PTS_MASK = KEY - 1;
 
     private boolean codecRead;
+    private final String sessionLabel;
+
+    public ScrcpyMediaDecoder() {
+        this(null);
+    }
+
+    public ScrcpyMediaDecoder(String sessionLabel) {
+        this.sessionLabel = sessionLabel == null || sessionLabel.isBlank() ? "unknown" : sessionLabel;
+    }
 
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
@@ -30,7 +39,7 @@ public final class ScrcpyMediaDecoder extends ByteToMessageDecoder {
                 throw new IllegalArgumentException("Not a video codec: " + codec);
             }
 
-            System.out.printf("[scrcpy-java] video codec: %s (0x%08x)%n", codec, id);
+            System.out.printf("[scrcpy-java][%s] video codec: %s (0x%08x)%n", sessionLabel, codec, id);
             out.add(new MediaMessage.Codec(codec));
             return;
         }
@@ -47,8 +56,8 @@ public final class ScrcpyMediaDecoder extends ByteToMessageDecoder {
             int width = in.readInt();
             int height = in.readInt();
 
-            System.out.printf("[scrcpy-java] video session: %dx%d flags=0x%08x%n",
-                    width, height, flags);
+            System.out.printf("[scrcpy-java][%s] video session: %dx%d flags=0x%08x%n",
+                    sessionLabel, width, height, flags);
 
             out.add(new MediaMessage.Session(width, height, (flags & 1) != 0));
             return;
