@@ -380,9 +380,7 @@ public final class ScrcpyApp extends Application {
                         int deviceDone = files.indexOf(file) + 1;
                         int currentDone = done.incrementAndGet();
                         int currentSuccess = success.get();
-                        final SdlD3d11VideoRenderer sessionSdlRenderer = sdlRenderer;
-
-                Platform.runLater(() -> {
+                        Platform.runLater(() -> {
                             Label label = progressLabels.get(serial);
                             if (label != null) {
                                 label.setText(deviceName + "：" + deviceDone + " / " + files.size());
