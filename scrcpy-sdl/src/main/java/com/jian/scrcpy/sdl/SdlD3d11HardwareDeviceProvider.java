@@ -58,7 +58,7 @@ final class SdlD3d11HardwareDeviceProvider implements VideoHardwareDeviceProvide
 
         // AVD3D11VADeviceContext::device is the first field of hwctx.
         // FFmpeg releases this interface when the AVHWDeviceContext dies.
-        int addResult = (int) addRef.invokeExact(d3d11Device);
+        int addResult = addRef();
         if (addResult == 0) {
             av_buffer_unref(ref);
             return null;
@@ -75,6 +75,14 @@ final class SdlD3d11HardwareDeviceProvider implements VideoHardwareDeviceProvide
         }
 
         return ref;
+    }
+
+    private int addRef() {
+        try {
+            return (int) addRef.invokeExact(d3d11Device);
+        } catch (Throwable e) {
+            throw new IllegalStateException("Failed to AddRef ID3D11Device", e);
+        }
     }
 
     @Override
