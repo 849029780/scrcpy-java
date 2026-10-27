@@ -944,6 +944,7 @@ public final class ScrcpyApp extends Application {
             JavaSoundPlayer audioPlayer = null;
             java.util.concurrent.atomic.AtomicReference<FfmpegVideoDecoder> videoDecoderRef = new java.util.concurrent.atomic.AtomicReference<>();
             ScrcpySession session = null;
+            SdlD3d11VideoRenderer sdlRenderer = null;
             try {
                 ScrcpyOptions d = settings.toOptions(device.serial(), ScrcpyOptions.defaults());
                 ScrcpyOptions options = new ScrcpyOptions(
@@ -956,7 +957,7 @@ public final class ScrcpyApp extends Application {
                         d.turnScreenOff(), d.crop(), d.startApp());
 
                 VideoView view = new VideoView();
-                SdlD3d11VideoRenderer sdlRenderer = USE_SDL_D3D11_RENDERER
+                sdlRenderer = USE_SDL_D3D11_RENDERER
                         ? SdlD3d11VideoRenderer.create("scrcpy-java - " + device.displayName(), 360, 680)
                         : null;
                 final FfmpegVideoDecoder videoDecoder = d.video()
@@ -998,7 +999,10 @@ public final class ScrcpyApp extends Application {
                  * shutdown; this owner thread performs native teardown.
                  */
                 if (sdlRenderer != null) {
-                    sdlRenderer.pumpLoop();
+                    SdlD3d11VideoRenderer renderer = sdlRenderer;
+                    Thread.ofPlatform()
+                            .name("scrcpy-sdl-" + device.serial())
+                            .start(renderer::pumpLoop);
                 }
 
                 Platform.runLater(() -> {
