@@ -126,6 +126,49 @@ public final class Adb {
         }
     }
 
+    /**
+     * Start an asynchronous ADB command while preserving both stdout and stderr.
+     *
+     * <p>scrcpy-server writes its diagnostic messages to stdout on normal builds,
+     * but keeping stderr separate makes the launcher robust to diagnostics emitted
+     * by adb or Android framework components. Every line is prefixed with the
+     * current device serial so logs from multiple devices cannot be confused.</p>
+     */
+    private Process startAsyncWithLogging(List<String> command) throws IOException {
+        try {
+            ProcessBuilder builder = new ProcessBuilder(command);
+            builder.redirectErrorStream(false);
+            Process p = builder.start();
+
+            startLogPump(p.getInputStream(), "stdout");
+            startLogPump(p.getErrorStream(), "stderr");
+            return p;
+        } catch (IOException e) {
+            throw unavailable(e);
+        }
+    }
+
+    private void startLogPump(InputStream stream, String channel) {
+        Thread thread = new Thread(() -> {
+            try (var reader = new BufferedReader(
+                    new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                for (String line; (line = reader.readLine()) != null; ) {
+                    System.out.printf("[scrcpy-java][%s][server][%s] %s%n",
+                            serial == null || serial.isBlank() ? "unknown" : serial,
+                            channel,
+                            line);
+                }
+            } catch (IOException e) {
+                System.err.printf("[scrcpy-java][%s][server][%s] log stream closed: %s%n",
+                        serial == null || serial.isBlank() ? "unknown" : serial,
+                        channel,
+                        e.getMessage());
+            }
+        }, "scrcpy-server-log-" + channel);
+        thread.setDaemon(true);
+        thread.start();
+    }
+
     private IOException unavailable(IOException cause) {
         return new IOException("ADB 不可用。请将 Android platform-tools 放到应用 platform-tools/"
                 + platformName() + "/ 目录，或通过 scrcpy.adb / ANDROID_HOME / ANDROID_SDK_ROOT / PATH 指定 adb。"
@@ -189,6 +232,6 @@ public final class Adb {
         var c = base();
         c.add("shell");
         c.addAll(a);
-        return start(c, true);
+        return startAsyncWithLogging(c);
     }
 }
