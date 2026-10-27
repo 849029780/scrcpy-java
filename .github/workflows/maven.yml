@@ -3,6 +3,13 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+
+# Only the newest run for a workflow/branch is useful during active development.
+# Keep workflow name in the key so Maven CI never cancels packaging/release work.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
