@@ -993,17 +993,8 @@ public final class ScrcpyApp extends Application {
                         videoDecoder,
                         player::accept);
 
-                /*
-                 * SDL renderer/video calls stay on the thread which owns the
-                 * SDL video subsystem. DeviceSession.close() only requests
-                 * shutdown; this owner thread performs native teardown.
-                 */
-                if (sdlRenderer != null) {
-                    SdlD3d11VideoRenderer renderer = sdlRenderer;
-                    Thread.ofPlatform()
-                            .name("scrcpy-sdl-" + device.serial())
-                            .start(renderer::pumpLoop);
-                }
+                // SdlD3d11VideoRenderer.create() already owns its SDL lifecycle
+                // on a dedicated platform render thread. Do not start a second pump loop here.
                 final SdlD3d11VideoRenderer sessionSdlRenderer = sdlRenderer;
 
                 Platform.runLater(() -> {
