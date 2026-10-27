@@ -6,6 +6,7 @@ import org.bytedeco.ffmpeg.avutil.AVHWDeviceContext;
 import org.bytedeco.javacpp.Pointer;
 
 import java.lang.foreign.*;
+import java.lang.invoke.MethodHandle;
 import java.util.Objects;
 
 import static org.bytedeco.ffmpeg.global.avutil.*;
@@ -63,9 +64,8 @@ final class SdlD3d11HardwareDeviceProvider implements VideoHardwareDeviceProvide
             return null;
         }
 
-        MemorySegment hwctxMemory = hwctx.position(0).asByteBuffer() != null
-                ? MemorySegment.ofAddress(hwctx.address()).reinterpret(8)
-                : MemorySegment.NULL;
+        MemorySegment hwctxMemory = MemorySegment.ofAddress(hwctx.address()).reinterpret(
+                ValueLayout.ADDRESS.byteSize());
         hwctxMemory.set(ValueLayout.ADDRESS, 0, d3d11Device);
 
         int initResult = av_hwdevice_ctx_init(ref);
