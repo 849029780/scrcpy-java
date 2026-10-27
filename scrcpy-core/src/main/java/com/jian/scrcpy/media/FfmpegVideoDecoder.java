@@ -22,6 +22,7 @@ import static org.bytedeco.ffmpeg.global.swscale.*;
 public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaMessage> implements AutoCloseable {
     private final Consumer<VideoFrame> sink;
     private final String decoderMode;
+    private final VideoHardwareDeviceProvider hardwareDeviceProvider;
     private AVCodecContext ctx;
     private AVFrame frame, softwareFrame, rgb;
     private AVPacket packet;
@@ -86,10 +87,17 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode) {
+        this(sink, decoderMode, VideoHardwareDeviceProvider.DEFAULT);
+    }
+
+    public FfmpegVideoDecoder(Consumer<VideoFrame> sink, String decoderMode,
+                              VideoHardwareDeviceProvider hardwareDeviceProvider) {
         av_log_set_level(AV_LOG_WARNING);
         super(false);
         this.sink = sink;
         this.decoderMode = normalizeMode(decoderMode);
+        this.hardwareDeviceProvider = Objects.requireNonNullElse(
+                hardwareDeviceProvider, VideoHardwareDeviceProvider.DEFAULT);
         decodeThread = Thread.ofVirtual().name("scrcpy-video-decoder").start(this::decodeLoop);
     }
 
@@ -159,15 +167,26 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
         if (selected == null) return false;
 
-        // JavaCPP maps AVBufferRef ** to AVBufferRef directly for this function:
-        // the wrapper writes the returned native pointer into this pointer object.
-        AVBufferRef device = new AVBufferRef((Pointer) null);
-        int createResult = av_hwdevice_ctx_create(
-                device, backend.type(), (String) null, (AVDictionary) null, 0);
-        if (createResult < 0 || device.isNull()) {
-            if (!device.isNull()) av_buffer_unref(device);
+        // Prefer a renderer-owned hardware device. This is required for
+        // zero-copy/cross-API interop on hybrid-GPU systems: the decoder and
+        // renderer must address the same physical GPU. Until a renderer
+        // supplies one, preserve the existing platform-default FFmpeg path.
+        AVBufferRef device = hardwareDeviceProvider.createDeviceContext(backend.type());
+        boolean rendererOwnedDevice = device != null && !device.isNull();
+        int createResult = 0;
+        if (!rendererOwnedDevice) {
+            // JavaCPP maps AVBufferRef ** to AVBufferRef directly here.
+            device = new AVBufferRef((Pointer) null);
+            createResult = av_hwdevice_ctx_create(
+                    device, backend.type(), (String) null, (AVDictionary) null, 0);
+        }
+        if (device == null || device.isNull() || createResult < 0) {
+            if (device != null && !device.isNull()) av_buffer_unref(device);
             System.err.printf("[scrcpy-java] cannot create hardware device %s: %d%n", backend.name(), createResult);
             return false;
+        }
+        if (rendererOwnedDevice) {
+            System.out.printf("[scrcpy-java] video decoder: using renderer-owned %s device%n", backend.name());
         }
 
         AVCodecContext candidate = avcodec_alloc_context3(decoder);
