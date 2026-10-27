@@ -10,6 +10,15 @@ public final class ScrcpyAudioDecoder extends ByteToMessageDecoder {
     private static final long KEY = 1L << 61;
     private static final long PTS_MASK = KEY - 1;
     private boolean codecRead;
+    private final String sessionLabel;
+
+    public ScrcpyAudioDecoder() {
+        this(null);
+    }
+
+    public ScrcpyAudioDecoder(String sessionLabel) {
+        this.sessionLabel = sessionLabel == null || sessionLabel.isBlank() ? "unknown" : sessionLabel;
+    }
 
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
@@ -23,7 +32,7 @@ public final class ScrcpyAudioDecoder extends ByteToMessageDecoder {
             if (codec != CodecId.OPUS && codec != CodecId.AAC && codec != CodecId.FLAC) {
                 throw new IllegalArgumentException("Not an audio codec: " + codec);
             }
-            System.out.printf("[scrcpy-java] audio codec: %s (0x%08x)%n", codec, id);
+            System.out.printf("[scrcpy-java][%s] audio codec: %s (0x%08x)%n", sessionLabel, codec, id);
             out.add(new MediaMessage.Codec(codec));
             return;
         }
