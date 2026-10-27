@@ -42,7 +42,7 @@ public final class ServerLauncher implements AutoCloseable {
                 "com.genymobile.scrcpy.Server",
                 "5.0.1",
                 "scid=00000001",
-                "log_level=info",
+                "log_level=debug",
                 "list_encoders=true",
                 "video=true",
                 "audio=false",
