@@ -2,6 +2,10 @@ package com.jian.scrcpy.sdl;
 
 import java.lang.foreign.MemorySegment;
 
+import org.bytedeco.ffmpeg.avutil.AVBufferRef;
+
+import static org.bytedeco.ffmpeg.global.avutil.AV_HWDEVICE_TYPE_D3D11VA;
+
 /**
  * Cross-platform SDL3 renderer/device probe.
  *
@@ -36,6 +40,25 @@ public final class SdlD3d11Probe {
                 if (selection.auxiliaryDevice().address() != 0) {
                     System.out.printf("[scrcpy-java][sdl] renderer auxiliary device: 0x%x%n",
                             selection.auxiliaryDevice().address());
+                }
+
+                if (selection.interop() == SdlRendererSelector.Interop.D3D11
+                        && selection.device().address() != 0) {
+                    try (SdlD3d11HardwareDeviceProvider provider =
+                                 new SdlD3d11HardwareDeviceProvider(selection.device())) {
+                        AVBufferRef ffmpegDevice =
+                                provider.createDeviceContext(AV_HWDEVICE_TYPE_D3D11VA);
+                        if (ffmpegDevice == null || ffmpegDevice.isNull()) {
+                            throw new IllegalStateException(
+                                    "FFmpeg D3D11VA device context initialization failed");
+                        }
+                        try {
+                            System.out.println(
+                                    "[scrcpy-java][sdl] FFmpeg D3D11VA device context initialized from SDL device");
+                        } finally {
+                            org.bytedeco.ffmpeg.global.avutil.av_buffer_unref(ffmpegDevice);
+                        }
+                    }
                 }
 
                 System.out.println("[scrcpy-java][sdl] renderer capability probe passed");
