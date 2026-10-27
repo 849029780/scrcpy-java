@@ -17,6 +17,7 @@ import static org.bytedeco.ffmpeg.global.avutil.*;
 
 public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaMessage> implements AutoCloseable {
     private final Consumer<AudioFrame> sink;
+    private final String sessionLabel;
     private AVCodecContext ctx;
     private AVFrame frame;
     private AVPacket packet;
@@ -31,8 +32,13 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private final Thread decodeThread;
 
     public FfmpegAudioDecoder(Consumer<AudioFrame> s) {
+        this(s, null);
+    }
+
+    public FfmpegAudioDecoder(Consumer<AudioFrame> s, String sessionLabel) {
         super(false);
         sink = s;
+        this.sessionLabel = sessionLabel == null || sessionLabel.isBlank() ? "unknown" : sessionLabel;
         decodeThread = Thread.ofVirtual().name("scrcpy-audio-decoder").start(this::decodeLoop);
     }
 
@@ -83,7 +89,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         packet = av_packet_alloc();
         if (frame == null || packet == null) throw new IllegalStateException("cannot allocate audio decoder state");
 
-        System.out.println("[scrcpy-java] audio decoder initialized: " + codec
+        System.out.println("[scrcpy-java][" + sessionLabel + "] audio decoder initialized: " + codec
                 + (codec == CodecId.AAC ? " config=" + pendingCodecConfig.length + " bytes" : "")
                 + " ffmpeg=" + org.bytedeco.ffmpeg.global.avutil.av_version_info().getString());
         System.out.flush();
@@ -115,7 +121,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         } catch (Throwable t) {
-            System.err.println("[scrcpy-java] audio decode worker failed: " + t);
+            System.err.println("[scrcpy-java][" + sessionLabel + "] audio decode worker failed: " + t);
             t.printStackTrace(System.err);
         } finally {
             MediaMessage m;
@@ -204,7 +210,8 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private void logDecodeError(String operation, int error, long size, long pts) {
         try (BytePointer errorText = new BytePointer(256)) {
             av_strerror(error, errorText, 256);
-            System.err.printf("[scrcpy-java] audio %s failed: codec=%s size=%d pts=%d error=%d (%s)%n",
+            System.err.printf("[scrcpy-java][%s] audio %s failed: codec=%s size=%d pts=%d error=%d (%s)%n",
+                    sessionLabel,
                     operation, codec, size, pts, error, errorText.getString());
         }
     }
@@ -234,7 +241,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
                 for (int i = 0; i < samples; i++) pcm[i * channels + ch] = src.get(i);
             }
         } else {
-            System.err.println("[scrcpy-java] unsupported decoded audio sample format: " + format);
+            System.err.println("[scrcpy-java][" + sessionLabel + "] unsupported decoded audio sample format: " + format);
             return null;
         }
         return new AudioFrame(sampleRate, channels, pcm, pts);

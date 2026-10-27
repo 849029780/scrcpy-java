@@ -58,7 +58,7 @@ public final class ScrcpyConnection implements AutoCloseable {
         if (firstSocket) firstSocket(pipeline);
 
         if ("video".equals(name)) {
-            pipeline.addLast("media", new ScrcpyMediaDecoder());
+            pipeline.addLast("media", new ScrcpyMediaDecoder(sessionLabel));
             pipeline.addLast("configMerger", new ConfigPacketMerger());
             if (videoHandler != null) pipeline.addLast("videoHandler", videoHandler);
         } else if ("audio".equals(name)) {

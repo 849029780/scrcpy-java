@@ -52,7 +52,7 @@ public final class ScrcpySession implements AutoCloseable {
 
         try {
             if (options.audio()) {
-                audioDecoder = new FfmpegAudioDecoder(audioSink == null ? f -> {} : audioSink);
+                audioDecoder = new FfmpegAudioDecoder(audioSink == null ? f -> {} : audioSink, options.serial());
             }
 
             connection.listen(
