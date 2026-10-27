@@ -9,6 +9,7 @@
     <modules>
         <module>scrcpy-core</module>
         <module>scrcpy-app</module>
+        <module>scrcpy-sdl</module>
     </modules>
     <properties>
         <maven.compiler.release>25</maven.compiler.release>
