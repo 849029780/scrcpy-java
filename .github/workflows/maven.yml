@@ -32,21 +32,11 @@ jobs:
               - 'scrcpy-swing-poc/native/CMakeLists.txt'
               - 'scrcpy-swing-poc/native/src/scrcpy_swing_d3d11.cpp'
               - '.github/workflows/maven.yml'
-            linux:
-              - 'scrcpy-swing-poc/native/CMakeLists.txt'
-              - 'scrcpy-swing-poc/native/src/scrcpy_swing_vaapi.cpp'
-              - '.github/workflows/maven.yml'
-            macos:
-              - 'scrcpy-swing-poc/native/CMakeLists.txt'
-              - 'scrcpy-swing-poc/native/src/scrcpy_swing_metal.mm'
-              - '.github/workflows/maven.yml'
       - name: Generate only the required native build matrix
         id: matrix
         shell: bash
         env:
           WINDOWS_CHANGED: ${{ steps.filter.outputs.windows }}
-          LINUX_CHANGED: ${{ steps.filter.outputs.linux }}
-          MACOS_CHANGED: ${{ steps.filter.outputs.macos }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
@@ -57,12 +47,6 @@ jobs:
           }
           if [[ "$EVENT_NAME" == "workflow_dispatch" || "$WINDOWS_CHANGED" == "true" ]]; then
             add_platform windows windows-latest scrcpy_swing_d3d11.dll scrcpy-swing-poc/native/build/Release/scrcpy_swing_d3d11.dll
-          fi
-          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$LINUX_CHANGED" == "true" ]]; then
-            add_platform linux ubuntu-latest libscrcpy_swing_vaapi.so scrcpy-swing-poc/native/build/libscrcpy_swing_vaapi.so
-          fi
-          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$MACOS_CHANGED" == "true" ]]; then
-            add_platform macos macos-latest libscrcpy_swing_metal.dylib scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib
           fi
           matrix="$(jq -cn --argjson include "$include" '{include:$include}')"
           has_native=false
@@ -84,33 +68,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-      - name: Install Linux native renderer dependencies
-        if: matrix.platform == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y libva-dev libva-x11-2 libx11-dev pkg-config
       - name: Configure native Swing renderer
         shell: bash
         run: |
-          if [[ "${{ matrix.platform }}" == "windows" ]]; then
-            cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
-          else
-            cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -DCMAKE_BUILD_TYPE=Release
-          fi
+          cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
       - name: Build native Swing renderer
         run: cmake --build scrcpy-swing-poc/native/build --config Release
       - name: Stage native renderer artifact
         shell: bash
         run: |
           set -euo pipefail
-          case "${{ matrix.platform }}" in
-            windows) target="windows-x86_64" ;;
-            linux) target="linux-x86_64" ;;
-            macos)
-              case "$(uname -m)" in
-                arm64|aarch64) target="macos-aarch64" ;;
-                *) target="macos-x86_64" ;;
-              esac
-              ;;
-          esac
+          target="windows-x86_64"
           mkdir -p "native-output/$target"
           cp "${{ matrix.source }}" "native-output/$target/${{ matrix.library }}"
       - name: Upload native renderer
