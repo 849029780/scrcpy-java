@@ -687,7 +687,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         double scaleAverageMs = scaleCount == 0 ? 0.0 : scaleNanos / 1_000_000.0 / scaleCount;
         System.out.printf(
                 Locale.ROOT,
-                "[scrcpy-java][%s] video stats: decoded=%.1f fps, gpuNativePresent=%.1f fps, nativePresentMisses=%d, hwToCpuTransfers=%d/%d (failed=%d), softwarePresent=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/16%n",
+                "[scrcpy-java][%s] video stats: decoded=%.1f fps, gpuNativeQueued=%.1f fps, nativePresentMisses=%d, hwToCpuTransfers=%d/%d (failed=%d), softwarePresent=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/16%n",
                 serial, decodedFps, hardware / seconds, nativeMisses,
                 transferSuccesses, transferAttempts, transferFailures, software / seconds,
                 queueDrops, poolMisses, scaleAverageMs,
