@@ -18,12 +18,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.value }}
+      has_native: ${{ steps.matrix.outputs.has_native }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         with:
           filters: |
             windows:
@@ -63,12 +65,15 @@ jobs:
             add_platform macos macos-latest libscrcpy_swing_metal.dylib scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib
           fi
           matrix="$(jq -cn --argjson include "$include" '{include:$include}')"
+          has_native=false
+          if [[ "$include" != "[]" ]]; then has_native=true; fi
           echo "value=$matrix" >> "$GITHUB_OUTPUT"
+          echo "has_native=$has_native" >> "$GITHUB_OUTPUT"
           echo "Native build matrix: $matrix"
 
   native:
     needs: changes
-    if: ${{ needs.changes.result == 'success' }}
+    if: ${{ needs.changes.outputs.has_native == 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
