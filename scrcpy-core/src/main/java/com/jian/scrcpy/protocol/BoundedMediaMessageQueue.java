@@ -11,11 +11,9 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * Bounded live-media queue with explicit, serialized ByteBuf ownership.
  *
- * All queue mutations and removals happen under one lock. This is intentional:
- * evicting from an ArrayBlockingQueue while a separate consumer calls take()
- * makes ownership harder to reason about because the queue's weakly-consistent
- * iterators do not provide an atomic "remove this exact item and transfer its
- * ownership" operation to callers.
+ * If overload forces a compressed video packet to be dropped, the queue enters
+ * key-frame recovery mode. Inter frames are discarded until the next key frame
+ * so the decoder never consumes frames whose reference chain was broken.
  */
 public final class BoundedMediaMessageQueue {
     public enum OfferResult {
@@ -28,6 +26,7 @@ public final class BoundedMediaMessageQueue {
     private final ArrayDeque<MediaMessage> queue;
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition notEmpty = lock.newCondition();
+    private boolean awaitingKeyFrame;
 
     public BoundedMediaMessageQueue(int capacity) {
         if (capacity <= 0) throw new IllegalArgumentException("capacity must be positive");
@@ -42,35 +41,61 @@ public final class BoundedMediaMessageQueue {
     public OfferResult offer(MediaMessage incoming) {
         lock.lock();
         try {
+            if (incoming instanceof MediaMessage.Packet packet && !packet.config()) {
+                if (awaitingKeyFrame && !packet.keyFrame()) {
+                    release(incoming);
+                    return OfferResult.INCOMING_DROPPED;
+                }
+                if (queue.size() >= capacity) {
+                    // Dropping any compressed frame breaks the predictive
+                    // reference chain, not just dropping a non-key frame.
+                    enterKeyFrameRecovery();
+                    if (!packet.keyFrame() || queue.size() >= capacity) {
+                        release(incoming);
+                        return OfferResult.INCOMING_DROPPED;
+                    }
+                    awaitingKeyFrame = false;
+                    queue.addLast(incoming);
+                    notEmpty.signal();
+                    return OfferResult.ENQUEUED_AFTER_EVICTION;
+                }
+                if (packet.keyFrame() && awaitingKeyFrame) {
+                    awaitingKeyFrame = false;
+                }
+                queue.addLast(incoming);
+                notEmpty.signal();
+                return OfferResult.ENQUEUED;
+            }
+
             if (queue.size() < capacity) {
                 queue.addLast(incoming);
                 notEmpty.signal();
                 return OfferResult.ENQUEUED;
             }
 
-            MediaMessage evicted = removeFirstMatching(message ->
-                    message instanceof MediaMessage.Packet packet
-                            && !packet.config() && !packet.keyFrame());
-            if (evicted == null) {
-                evicted = removeFirstMatching(message ->
-                        message instanceof MediaMessage.Packet packet && !packet.config());
-            }
-            if (evicted == null && isControlOrConfig(incoming)) {
-                evicted = removeFirstMatching(queued ->
+            // Control/session metadata must not evict an arbitrary compressed
+            // frame without also invalidating the queued reference chain.
+            int removed = enterKeyFrameRecovery();
+            if (queue.size() >= capacity && isControlOrConfig(incoming)) {
+                MediaMessage duplicate = removeFirstMatching(queued ->
                         incoming instanceof MediaMessage.Codec && queued instanceof MediaMessage.Codec
                                 || incoming instanceof MediaMessage.Session && queued instanceof MediaMessage.Session
                                 || incoming instanceof MediaMessage.Packet incomingPacket
                                 && incomingPacket.config()
                                 && queued instanceof MediaMessage.Packet queuedPacket
                                 && queuedPacket.config());
-                if (evicted == null) evicted = queue.pollFirst();
+                if (duplicate != null) {
+                    release(duplicate);
+                    removed++;
+                }
             }
 
-            if (evicted != null) {
-                release(evicted);
+            if (queue.size() < capacity) {
                 queue.addLast(incoming);
                 notEmpty.signal();
-                return OfferResult.ENQUEUED_AFTER_EVICTION;
+                return removed > 0
+                        ? OfferResult.ENQUEUED_AFTER_EVICTION
+                        : OfferResult.ENQUEUED;
             }
 
             release(incoming);
@@ -78,6 +103,24 @@ public final class BoundedMediaMessageQueue {
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * Removes queued compressed frames and waits for a clean key frame.
+     * Codec/session messages and codec-configuration packets are retained.
+     */
+    private int enterKeyFrameRecovery() {
+        awaitingKeyFrame = true;
+        int removed = 0;
+        for (Iterator<MediaMessage> iterator = queue.iterator(); iterator.hasNext();) {
+            MediaMessage message = iterator.next();
+            if (message instanceof MediaMessage.Packet packet && !packet.config()) {
+                iterator.remove();
+                release(message);
+                removed++;
+            }
+        }
+        return removed;
     }
 
     /** Waits until a message is available. Ownership transfers to the caller. */
