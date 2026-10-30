@@ -16,6 +16,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.bytedeco.ffmpeg.global.avutil.*;
 
@@ -48,6 +49,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
         final int height;
         final long texture;
         final long arraySlice;
+        volatile long submittedAtNanos;
 
         PendingFrame(HardwareVideoFrame frame, AVFrame avFrame) {
             this.frame = frame;
@@ -72,6 +74,18 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     private final Map<Long, PendingFrame> inFlight = new HashMap<>();
     private final Object drainMonitor = new Object();
     private boolean pumpScheduled;
+
+    // Per-renderer rolling telemetry. Presented is counted only after native
+    // polling returns a successful Present result, never when merely queued.
+    private final AtomicLong statsSubmitted = new AtomicLong();
+    private final AtomicLong statsPresented = new AtomicLong();
+    private final AtomicLong statsPresentFailures = new AtomicLong();
+    private final AtomicLong statsBackpressure = new AtomicLong();
+    private final AtomicLong statsSubmitNanos = new AtomicLong();
+    private final AtomicLong statsSubmitToPresentNanos = new AtomicLong();
+    private final AtomicLong statsMaxSubmitToPresentNanos = new AtomicLong();
+    private final AtomicLong statsMaxInFlight = new AtomicLong();
+    private long statsLastReportNanos = System.nanoTime();
 
     public SwingD3D11VideoRenderer(SwingVideoSurface surface) {
         this.surface = surface;
@@ -149,7 +163,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
 
     private void schedulePump() {
         synchronized (drainMonitor) {
-            if (pumpScheduled || (closed.get() && inFlight.isEmpty())) return;
+            if (pumpScheduled) return;
             pumpScheduled = true;
         }
         PRESENT_EXECUTOR.execute(this::pump);
@@ -172,6 +186,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
                         if (completedToken > 0) {
                             onPresented(completed);
                         } else {
+                            statsPresentFailures.incrementAndGet();
                             System.err.printf("[scrcpy-swing][%s] D3D11 GPU work completed but Present failed; frame dropped%n",
                                     completed.frame.serial());
                         }
@@ -185,14 +200,22 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
                     if (queued != null) {
                         AVFrame avFrame = queued.frame();
                         PendingFrame candidate = new PendingFrame(queued, avFrame);
+                        long submitStarted = System.nanoTime();
                         long token = candidate.texture == 0 ? -1 : canvas.submitHardwareFrame(
                                 candidate.texture, candidate.arraySlice,
                                 candidate.width, candidate.height,
                                 avFrame.colorspace(), avFrame.color_range());
+                        long submitElapsed = System.nanoTime() - submitStarted;
                         if (token > 0) {
+                            candidate.submittedAtNanos = System.nanoTime();
+                            statsSubmitted.incrementAndGet();
+                            statsSubmitNanos.addAndGet(submitElapsed);
                             pendingFrames.poll();
                             inFlight.put(token, candidate);
+                            updateMaximum(statsMaxInFlight, inFlight.size());
                             progressed = true;
+                        } else if (token == 0) {
+                            statsBackpressure.incrementAndGet();
                         } else if (token < 0) {
                             pendingFrames.poll();
                             queued.close();
@@ -205,6 +228,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
 
                 if (!progressed) break;
             }
+            reportPerformanceStats();
         } catch (Throwable error) {
             System.err.println("[scrcpy-swing] asynchronous D3D11 presentation pump failed: " + error);
             error.printStackTrace(System.err);
@@ -223,6 +247,10 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     }
 
     private void onPresented(PendingFrame completed) {
+        long latency = Math.max(0L, System.nanoTime() - completed.submittedAtNanos);
+        statsPresented.incrementAndGet();
+        statsSubmitToPresentNanos.addAndGet(latency);
+        updateMaximum(statsMaxSubmitToPresentNanos, latency);
         if (firstNativePresentLogged.compareAndSet(false, true)) {
             System.out.printf("[scrcpy-swing][%s] D3D11 asynchronous presentation confirmed: "
                             + "texture=0x%x arraySlice=%d size=%dx%d; GPU query completed before Present; "
@@ -231,6 +259,39 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
                     completed.width, completed.height);
         }
         surface.showHardwareFrame(completed.width, completed.height);
+    }
+
+    private void reportPerformanceStats() {
+        long now = System.nanoTime();
+        long elapsed = now - statsLastReportNanos;
+        if (elapsed < TimeUnit.SECONDS.toNanos(5)) return;
+        statsLastReportNanos = now;
+
+        long submitted = statsSubmitted.getAndSet(0);
+        long presented = statsPresented.getAndSet(0);
+        long failures = statsPresentFailures.getAndSet(0);
+        long backpressure = statsBackpressure.getAndSet(0);
+        long submitNanos = statsSubmitNanos.getAndSet(0);
+        long latencyNanos = statsSubmitToPresentNanos.getAndSet(0);
+        long maxLatencyNanos = statsMaxSubmitToPresentNanos.getAndSet(0);
+        long maxInFlight = statsMaxInFlight.getAndSet(0);
+        double seconds = elapsed / 1_000_000_000.0;
+        double submitAvgMs = submitted == 0 ? 0.0 : submitNanos / 1_000_000.0 / submitted;
+        double latencyAvgMs = presented == 0 ? 0.0 : latencyNanos / 1_000_000.0 / presented;
+
+        System.out.printf(java.util.Locale.ROOT,
+                "[scrcpy-swing][%s] D3D11 stats: gpuSubmitted=%.1f fps, presented=%.1f fps, "
+                        + "presentFailed=%d, submitBackpressure=%d, submitAvg=%.3f ms, "
+                        + "submitToPresentAvg=%.2f ms, submitToPresentMax=%.2f ms, "
+                        + "queue=%d/%d, inFlight=%d/%d%n",
+                surface.serial(), submitted / seconds, presented / seconds,
+                failures, backpressure, submitAvgMs, latencyAvgMs,
+                maxLatencyNanos / 1_000_000.0,
+                pendingFrames.size(), MAX_QUEUED_HARDWARE_FRAMES, inFlight.size(), maxInFlight);
+    }
+
+    private static void updateMaximum(AtomicLong target, long value) {
+        target.accumulateAndGet(value, Math::max);
     }
 
     @Override
