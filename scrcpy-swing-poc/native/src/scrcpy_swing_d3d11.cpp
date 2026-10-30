@@ -67,8 +67,9 @@ struct FrameSlot {
  * input-view cache; only the expensive device/context objects are shared.
  */
 struct SharedD3D11Device {
+    static constexpr size_t MAX_SHARED_DEVICES = 8;
+
     struct State {
-        std::mutex mutex;
         ID3D11Device* device{};
         ID3D11DeviceContext* context{};
         ID3D11VideoDevice* videoDevice{};
@@ -76,17 +77,29 @@ struct SharedD3D11Device {
         size_t references{};
     };
 
-    static State& state() {
-        static State value;
+    static std::mutex& poolMutex() {
+        static std::mutex value;
+        return value;
+    }
+
+    static std::array<State, MAX_SHARED_DEVICES>& states() {
+        static std::array<State, MAX_SHARED_DEVICES> value{};
         return value;
     }
 
     static bool acquire(ID3D11Device** outDevice,
                         ID3D11DeviceContext** outContext,
                         ID3D11VideoDevice** outVideoDevice,
-                        ID3D11VideoContext** outVideoContext) {
-        State& shared = state();
-        std::lock_guard<std::mutex> guard(shared.mutex);
+                        ID3D11VideoContext** outVideoContext,
+                        size_t* outIndex) {
+        std::lock_guard<std::mutex> guard(poolMutex());
+        auto& pool = states();
+        size_t index = 0;
+        for (size_t i = 1; i < pool.size(); ++i) {
+            if (pool[i].references < pool[index].references) index = i;
+        }
+        State& shared = pool[index];
+
         if (!shared.device) {
             const D3D_FEATURE_LEVEL levels[] = {
                 D3D_FEATURE_LEVEL_11_1,
@@ -133,8 +146,8 @@ struct SharedD3D11Device {
                 return false;
             }
 
-            // FFmpeg decoding and all per-window presentation renderers share
-            // this immediate context. Enable D3D11's built-in serialization.
+            // FFmpeg decoding and renderers assigned to this pool entry share
+            // the immediate context. Enable D3D11's built-in serialization.
             ID3D11Multithread* multithread = nullptr;
             if (SUCCEEDED(context->QueryInterface(__uuidof(ID3D11Multithread),
                     reinterpret_cast<void**>(&multithread)))) {
@@ -156,16 +169,21 @@ struct SharedD3D11Device {
         *outContext = shared.context;
         *outVideoDevice = shared.videoDevice;
         *outVideoContext = shared.videoContext;
+        *outIndex = index;
         ++shared.references;
         return true;
     }
 
-    static void release(ID3D11Device*& device,
+    static void release(size_t index,
+                        ID3D11Device*& device,
                         ID3D11DeviceContext*& context,
                         ID3D11VideoDevice*& videoDevice,
                         ID3D11VideoContext*& videoContext) {
-        State& shared = state();
-        std::lock_guard<std::mutex> guard(shared.mutex);
+        std::lock_guard<std::mutex> guard(poolMutex());
+        auto& pool = states();
+        if (index >= pool.size()) return;
+        State& shared = pool[index];
+
         if (videoContext) { videoContext->Release(); videoContext = nullptr; }
         if (videoDevice) { videoDevice->Release(); videoDevice = nullptr; }
         if (context) { context->Release(); context = nullptr; }
@@ -188,6 +206,7 @@ struct Renderer {
     ID3D11DeviceContext* context{};
     ID3D11VideoDevice* videoDevice{};
     ID3D11VideoContext* videoContext{};
+    size_t sharedDeviceIndex{};
     IDXGISwapChain* swapChain{};
     ID3D11RenderTargetView* renderTarget{};
     std::unordered_map<InputViewKey, ID3D11VideoProcessorInputView*, InputViewKeyHash> inputViews;
@@ -210,7 +229,7 @@ struct Renderer {
         drainInFlight(false);
         releaseProcessor();
         detachSurface();
-        SharedD3D11Device::release(device, context, videoDevice, videoContext);
+        SharedD3D11Device::release(sharedDeviceIndex, device, context, videoDevice, videoContext);
     }
 
     void releaseInputViews() {
@@ -369,7 +388,7 @@ struct Renderer {
 
     bool createDevice() {
         return SharedD3D11Device::acquire(
-            &device, &context, &videoDevice, &videoContext);
+            &device, &context, &videoDevice, &videoContext, &sharedDeviceIndex);
     }
 
     bool attachSurface(HWND target) {
