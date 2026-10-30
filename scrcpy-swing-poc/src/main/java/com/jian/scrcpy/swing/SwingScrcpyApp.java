@@ -717,12 +717,13 @@ public final class SwingScrcpyApp {
                 running.start(ScrcpyServerArtifact.resolve(), decoder, player::accept);
                 JavaSoundPlayer audio = player;
                 FfmpegVideoDecoder video = decoder;
+                SwingD3D11VideoRenderer activeRenderer = nativeRenderer;
                 SwingUtilities.invokeLater(() -> {
                     reconnecting.remove(device.serial());
                     reconnectStates.remove(device.serial());
                     if (!desiredConnections.containsKey(device.serial()) || sessions.containsKey(device.serial())) {
                         running.close(); if (video != null) video.close();
-                        if (nativeRenderer != null) nativeRenderer.close();
+                        if (activeRenderer != null) activeRenderer.close();
                         audio.close(); return;
                     }
                     UhidController uhid = new UhidController(running::sendControl);
@@ -730,7 +731,7 @@ public final class SwingScrcpyApp {
                     running.addDeviceMessageListener(uhid::handle);
                     running.addDeviceMessageListener(clipboard::handle);
                     clipboard.onRemoteClipboard(this::applyDeviceClipboard);
-                    DeviceSession handle = new DeviceSession(running, audio, video, nativeRenderer, surface,
+                    DeviceSession handle = new DeviceSession(running, audio, video, activeRenderer, surface,
                             new DeviceController(running::sendControl), uhid, clipboard);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
