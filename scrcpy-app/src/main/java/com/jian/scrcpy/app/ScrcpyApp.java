@@ -957,9 +957,23 @@ public final class ScrcpyApp extends Application {
                         d.turnScreenOff(), d.crop(), d.startApp());
 
                 VideoView view = new VideoView();
-                sdlRenderer = USE_SDL_D3D11_RENDERER
-                        ? SdlD3d11VideoRenderer.create("scrcpy-java - " + device.displayName(), 360, 680)
-                        : null;
+                if (USE_SDL_D3D11_RENDERER) {
+                    try {
+                        sdlRenderer = SdlD3d11VideoRenderer.create(
+                                "scrcpy-java - " + device.displayName(), 360, 680);
+                    } catch (Throwable rendererError) {
+                        // SDL/D3D11 is an experimental presentation backend.
+                        // A renderer initialization failure must not prevent
+                        // the device session from connecting: the decoder will
+                        // use FFmpeg's default hardware device and transfer
+                        // frames to the existing JavaFX BGRA path.
+                        System.err.printf(
+                                "[scrcpy-java][%s] SDL D3D11 renderer unavailable; falling back to JavaFX: %s%n",
+                                device.serial(), rendererError);
+                        rendererError.printStackTrace(System.err);
+                        sdlRenderer = null;
+                    }
+                }
                 final FfmpegVideoDecoder videoDecoder = d.video()
                         ? new FfmpegVideoDecoder(
                                 view::accept,
