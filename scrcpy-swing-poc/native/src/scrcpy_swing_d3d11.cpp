@@ -49,7 +49,6 @@ struct FrameSlot {
     ID3D11Texture2D* texture{};
     ID3D11RenderTargetView* renderTarget{};
     ID3D11VideoProcessorOutputView* outputView{};
-    ID3D11Query* completionQuery{};
     jlong token{};
 
     void release() {
@@ -91,7 +90,6 @@ struct Renderer {
         drainInFlight(false);
         releaseProcessor();
         detachSurface();
-        if (completionQuery) completionQuery->Release();
         if (videoContext) videoContext->Release();
         if (videoDevice) videoDevice->Release();
         if (context) context->Release();
@@ -108,10 +106,6 @@ struct Renderer {
     void releaseFrameSlots() {
         for (auto& slot : frameSlots) slot.release();
         inFlightSlots.clear();
-    }
-
-    void releaseOutputView() {
-        // The swap-chain output view was replaced by per-frame output views.
     }
 
     bool ensureFrameSlot(FrameSlot& slot) {
@@ -304,10 +298,6 @@ struct Renderer {
                 reinterpret_cast<void**>(&videoDevice)))) return false;
         if (FAILED(context->QueryInterface(__uuidof(ID3D11VideoContext),
                 reinterpret_cast<void**>(&videoContext)))) return false;
-        D3D11_QUERY_DESC queryDesc{};
-        queryDesc.Query = D3D11_QUERY_EVENT;
-        if (FAILED(device->CreateQuery(&queryDesc, &completionQuery))) return false;
-
         // FFmpeg's D3D11VA decoder and the Swing renderer share this immediate
         // context. Enable D3D11's built-in context serialization for calls
         // arriving from the decoder and presentation threads.
