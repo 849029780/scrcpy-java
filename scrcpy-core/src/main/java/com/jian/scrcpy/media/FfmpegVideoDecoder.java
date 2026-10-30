@@ -122,13 +122,17 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // A decoder worker exclusively owns its AVCodecContext, AVPacket and
     // AVFrames. This lock is only a defensive per-instance boundary.
     private final ReentrantLock decoderNativeLock = new ReentrantLock();
-    // Keep the compressed backlog short. Retained Netty ByteBuf packets count
-    // toward process memory and a long queue only adds latency for live video.
-    // Four packets cap per-device compressed backlog to roughly 67 ms at 60 FPS.
-    // This bounds retained Netty buffers across large multi-device sessions.
-    private static final int DECODE_QUEUE_CAPACITY = 4;
+    // Do not discard compressed H.264/H.265 access units during normal
+    // overload: a dropped reference frame can stall decoding until the next
+    // encoder IDR (which may be several seconds away). Instead apply TCP
+    // backpressure to the video socket while the bounded queue drains.
+    private static final int DECODE_QUEUE_CAPACITY = 64;
+    private static final int DECODE_QUEUE_HIGH_WATERMARK = 16;
+    private static final int DECODE_QUEUE_LOW_WATERMARK = 8;
     private final BoundedMediaMessageQueue decodeQueue =
             new BoundedMediaMessageQueue(DECODE_QUEUE_CAPACITY);
+    private volatile ChannelHandlerContext videoChannelContext;
+    private final AtomicBoolean videoReadsPaused = new AtomicBoolean();
     // Reused staging storage for the JavaCPP AVPacket copy. Directly wrapping a
     // Netty ByteBuf is not portable across the supported platforms/allocators.
     private byte[] encodedBuffer = new byte[0];
@@ -428,22 +432,56 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     @Override
     protected void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
+        videoChannelContext = ch;
         if (closed.get()) {
             releaseMessage(m);
             return;
         }
         // MediaMessage is a plain record, not a ReferenceCounted wrapper.
         // Its Packet owns the retained ByteBuf until the queue consumer (or
-        // queue eviction/drop path) releases it. Do not retain it a second time.
+        // emergency overflow path) releases it. Do not retain it a second time.
         BoundedMediaMessageQueue.OfferResult result = decodeQueue.offer(m);
         if (result != BoundedMediaMessageQueue.OfferResult.ENQUEUED && VIDEO_STATS_ENABLED) {
             statsQueueDrops.incrementAndGet();
         }
+        if (decodeQueue.size() >= DECODE_QUEUE_HIGH_WATERMARK) {
+            pauseVideoReads(ch);
+        }
     }
+
+    /** Stop reading the TCP stream before the compressed queue reaches capacity. */
+    private void pauseVideoReads(ChannelHandlerContext context) {
+        if (videoReadsPaused.compareAndSet(false, true)) {
+            context.channel().config().setAutoRead(false);
+        }
+    }
+
+    /**
+     * Resume socket reads only after the decoder has drained the backlog.
+     * All channel configuration changes are marshalled onto the channel event loop.
+     */
+    private void resumeVideoReadsIfNeeded() {
+        ChannelHandlerContext context = videoChannelContext;
+        if (context == null || !videoReadsPaused.get()
+                || decodeQueue.size() > DECODE_QUEUE_LOW_WATERMARK) {
+            return;
+        }
+        context.executor().execute(() -> {
+            if (closed.get() || !context.channel().isActive()
+                    || decodeQueue.size() > DECODE_QUEUE_LOW_WATERMARK) {
+                return;
+            }
+            if (videoReadsPaused.compareAndSet(true, false)) {
+                context.channel().config().setAutoRead(true);
+            }
+        });
+    }
+
     private void decodeLoop() {
         try {
             while (!closed.get() || !decodeQueue.isEmpty()) {
                 MediaMessage m = decodeQueue.take();
+                resumeVideoReadsIfNeeded();
                 try {
                     decodeMessage(m);
                     reportVideoStatsIfDue();
