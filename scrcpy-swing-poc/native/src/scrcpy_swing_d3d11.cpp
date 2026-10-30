@@ -234,23 +234,6 @@ struct Renderer {
         return true;
     }
 
-    bool ensureOutputView() {
-        if (outputView) return true;
-        ID3D11Texture2D* backBuffer = nullptr;
-        HRESULT hr = swapChain->GetBuffer(
-            0, __uuidof(ID3D11Texture2D),
-            reinterpret_cast<void**>(&backBuffer));
-        if (FAILED(hr)) return false;
-
-        D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC desc{};
-        desc.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
-        desc.Texture2D.MipSlice = 0;
-        hr = videoDevice->CreateVideoProcessorOutputView(
-            backBuffer, processorEnumerator, &desc, &outputView);
-        backBuffer->Release();
-        return SUCCEEDED(hr);
-    }
-
     void releaseProcessor() {
         releaseInputViews();
         releaseFrameSlots();
