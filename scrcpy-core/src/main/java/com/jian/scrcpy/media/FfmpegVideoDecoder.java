@@ -97,8 +97,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private static final int SOFTWARE_DECODER_THREADS = resolveSoftwareDecoderThreads();
     private static final int FFMPEG_THREAD_SLICE = 2;
     private final AtomicLong statsDecodedFrames = new AtomicLong();
-    // hardwareFrames counts frames accepted by the renderer's native GPU
-    // presentation path (not merely frames decoded by a hardware decoder).
+    // hardwareFrames counts frames accepted by the renderer's bounded Java
+    // queue; native GPU submission and successful Present are measured separately.
     private final AtomicLong statsHardwareFrames = new AtomicLong();
     private final AtomicLong statsNativePresentationMisses = new AtomicLong();
     private final AtomicLong statsHardwareTransferAttempts = new AtomicLong();
@@ -687,7 +687,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         double scaleAverageMs = scaleCount == 0 ? 0.0 : scaleNanos / 1_000_000.0 / scaleCount;
         System.out.printf(
                 Locale.ROOT,
-                "[scrcpy-java][%s] video stats: decoded=%.1f fps, gpuNativeQueued=%.1f fps, nativePresentMisses=%d, hwToCpuTransfers=%d/%d (failed=%d), softwarePresent=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/16%n",
+                "[scrcpy-java][%s] video stats: decoded=%.1f fps, rendererAccepted=%.1f fps, nativePresentMisses=%d, hwToCpuTransfers=%d/%d (failed=%d), softwarePresent=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/16%n",
                 serial, decodedFps, hardware / seconds, nativeMisses,
                 transferSuccesses, transferAttempts, transferFailures, software / seconds,
                 queueDrops, poolMisses, scaleAverageMs,
