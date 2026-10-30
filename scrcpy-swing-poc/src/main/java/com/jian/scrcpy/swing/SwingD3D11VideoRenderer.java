@@ -23,6 +23,12 @@ import static org.bytedeco.ffmpeg.global.avutil.*;
  * can be consumed by the same device without downloading them to system memory.
  */
 public final class SwingD3D11VideoRenderer implements VideoRenderer, VideoHardwareDeviceProvider, AutoCloseable {
+    private static final class NativePointer extends Pointer {
+        NativePointer(long address) {
+            this.address = address;
+        }
+    }
+
     private final SwingVideoSurface surface;
     private final NativeD3D11Canvas canvas;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -59,7 +65,7 @@ public final class SwingD3D11VideoRenderer implements VideoRenderer, VideoHardwa
             // required caller-supplied ID3D11Device pointer.
             AVHWDeviceContext deviceContext = new AVHWDeviceContext(reference.data());
             try (PointerPointer fields = new PointerPointer(deviceContext.hwctx())) {
-                fields.put(0, new Pointer(devicePointer));
+                fields.put(0, new NativePointer(devicePointer));
             }
 
             int result = av_hwdevice_ctx_init(reference);
