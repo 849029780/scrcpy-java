@@ -32,6 +32,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     private final SwingVideoSurface surface;
     private final NativeD3D11Canvas canvas;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean firstNativePresentLogged = new AtomicBoolean();
 
     public SwingD3D11VideoRenderer(SwingVideoSurface surface) {
         this.surface = surface;
@@ -109,7 +110,8 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
                     frame.colorspace(),
                     frame.color_range());
         } catch (Throwable error) {
-            System.err.println("[scrcpy-swing] D3D11 texture presentation failed; falling back to system-memory frame: " + error);
+            System.err.println("[scrcpy-swing][" + hardwareFrame.serial()
+                    + "] D3D11 native texture presentation threw; decoder will attempt CPU readback: " + error);
             return false;
         }
 
@@ -117,6 +119,14 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
             return false;
         }
 
+        if (firstNativePresentLogged.compareAndSet(false, true)) {
+            System.out.printf("[scrcpy-swing][%s] D3D11 direct-texture presentation confirmed: "
+                            + "texture=0x%x arraySlice=%d size=%dx%d; VideoProcessorBlt + GPU completion + Present succeeded; "
+                            + "no CPU frame transfer on this path%n",
+                    hardwareFrame.serial(), texture.address(),
+                    arrayIndex == null || arrayIndex.isNull() ? 0 : arrayIndex.address(),
+                    frame.width(), frame.height());
+        }
         surface.showHardwareFrame(frame.width(), frame.height());
         // Native rendering is synchronous through VideoProcessorBlt/Present.
         // Release the retained AVFrame only after the GPU command has been queued.
