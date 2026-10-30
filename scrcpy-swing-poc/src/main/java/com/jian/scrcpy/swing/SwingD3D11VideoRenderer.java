@@ -2,8 +2,6 @@ package com.jian.scrcpy.swing;
 
 import com.jian.scrcpy.media.HardwareVideoFrame;
 import com.jian.scrcpy.media.VideoFrame;
-import com.jian.scrcpy.media.VideoHardwareDeviceProvider;
-import com.jian.scrcpy.media.VideoRenderer;
 import org.bytedeco.ffmpeg.avutil.AVBufferRef;
 import org.bytedeco.ffmpeg.avutil.AVFrame;
 import org.bytedeco.ffmpeg.avutil.AVHWDeviceContext;
@@ -11,8 +9,10 @@ import org.bytedeco.javacpp.BytePointer;
 import org.bytedeco.javacpp.Pointer;
 import org.bytedeco.javacpp.PointerPointer;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -20,26 +20,45 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.bytedeco.ffmpeg.global.avutil.*;
 
 /**
- * D3D11VA -> D3D11 Video Processor -> Swing/AWT Canvas renderer.
+ * D3D11VA -> asynchronous D3D11 Video Processor -> Swing/AWT Canvas renderer.
  *
- * The native Canvas creates the D3D11 device. FFmpeg receives an AVHWDeviceContext
- * wrapping an AddRef'd reference to that exact device, so decoded D3D11 textures
- * can be consumed by the same device without downloading them to system memory.
+ * FFmpeg and the native renderer share one D3D11 device. Each submitted frame
+ * remains referenced by HardwareVideoFrame until its native event query signals
+ * GPU completion. Native output uses independent bounded frame slots, so the
+ * decoder thread never waits for GPU completion.
  */
 public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer {
-    // Keep GPU completion waits off FFmpeg decoder threads. Workers are shared
-    // across devices instead of allocating one waiting thread per phone.
-    private static final ExecutorService PRESENT_EXECUTOR = Executors.newFixedThreadPool(
-            Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors())),
-            task -> {
-                Thread thread = new Thread(task, "scrcpy-d3d11-present");
-                thread.setDaemon(true);
-                return thread;
-            });
+    private static final ScheduledExecutorService PRESENT_EXECUTOR =
+            Executors.newScheduledThreadPool(
+                    Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors())),
+                    task -> {
+                        Thread thread = new Thread(task, "scrcpy-d3d11-present");
+                        thread.setDaemon(true);
+                        return thread;
+                    });
     private static final int MAX_QUEUED_HARDWARE_FRAMES = 2;
+
     private static final class NativePointer extends Pointer {
-        NativePointer(long address) {
-            this.address = address;
+        NativePointer(long address) { this.address = address; }
+    }
+
+    private static final class PendingFrame {
+        final HardwareVideoFrame frame;
+        final int width;
+        final int height;
+        final long texture;
+        final long arraySlice;
+
+        PendingFrame(HardwareVideoFrame frame, AVFrame avFrame) {
+            this.frame = frame;
+            this.width = avFrame.width();
+            this.height = avFrame.height();
+            BytePointer texturePointer = avFrame.data(0);
+            BytePointer arrayPointer = avFrame.data(1);
+            this.texture = texturePointer == null || texturePointer.isNull()
+                    ? 0 : texturePointer.address();
+            this.arraySlice = arrayPointer == null || arrayPointer.isNull()
+                    ? 0 : arrayPointer.address();
         }
     }
 
@@ -49,8 +68,10 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     private final AtomicBoolean firstNativePresentLogged = new AtomicBoolean();
     private final ArrayBlockingQueue<HardwareVideoFrame> pendingFrames =
             new ArrayBlockingQueue<>(MAX_QUEUED_HARDWARE_FRAMES);
+    // Accessed only by the single scheduled pump for this renderer.
+    private final Map<Long, PendingFrame> inFlight = new HashMap<>();
     private final Object drainMonitor = new Object();
-    private boolean drainScheduled;
+    private boolean pumpScheduled;
 
     public SwingD3D11VideoRenderer(SwingVideoSurface surface) {
         this.surface = surface;
@@ -63,9 +84,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
 
     @Override
     public AVBufferRef createDeviceContext(int ffmpegDeviceType) {
-        if (closed.get() || ffmpegDeviceType != AV_HWDEVICE_TYPE_D3D11VA) {
-            return null;
-        }
+        if (closed.get() || ffmpegDeviceType != AV_HWDEVICE_TYPE_D3D11VA) return null;
 
         long devicePointer;
         try {
@@ -74,6 +93,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
             System.err.println("[scrcpy-swing] D3D11 device is unavailable; using FFmpeg's default device: " + error);
             return null;
         }
+
         AVBufferRef reference = av_hwdevice_ctx_alloc(ffmpegDeviceType);
         if (reference == null || reference.isNull()) {
             canvas.releaseD3D11Device(devicePointer);
@@ -83,8 +103,6 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
 
         try {
             // AVD3D11VADeviceContext.device is the first field in hwctx.
-            // The FFmpeg 8.1.2 public header documents this field as the
-            // required caller-supplied ID3D11Device pointer.
             AVHWDeviceContext deviceContext = new AVHWDeviceContext(reference.data());
             try (PointerPointer fields = new PointerPointer(deviceContext.hwctx())) {
                 fields.put(0, new NativePointer(devicePointer));
@@ -108,14 +126,10 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     @Override
     public boolean renderHardware(HardwareVideoFrame hardwareFrame) {
         if (closed.get() || !"d3d11va".equalsIgnoreCase(hardwareFrame.backend())) return false;
-
-        // Transfer ownership only after enqueue succeeds. A full bounded queue
-        // applies backpressure to this decoder rather than dropping a retained
-        // frame or forcing a GPU-to-CPU readback.
         try {
             while (!closed.get()) {
                 if (pendingFrames.offer(hardwareFrame, 50, TimeUnit.MILLISECONDS)) {
-                    schedulePresent();
+                    schedulePump();
                     return true;
                 }
             }
@@ -126,61 +140,92 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
         }
     }
 
-    private void schedulePresent() {
+    private void schedulePump() {
         synchronized (drainMonitor) {
-            if (drainScheduled || closed.get()) return;
-            drainScheduled = true;
+            if (pumpScheduled || (closed.get() && inFlight.isEmpty())) return;
+            pumpScheduled = true;
         }
-        PRESENT_EXECUTOR.execute(this::presentOne);
+        PRESENT_EXECUTOR.execute(this::pump);
     }
 
-    private void presentOne() {
-        HardwareVideoFrame hardwareFrame = pendingFrames.poll();
+    /**
+     * Submit as many frames as the native three-slot ring accepts, then poll
+     * completion queries. A token is retired only after native GPU completion.
+     */
+    private void pump() {
         try {
-            if (hardwareFrame != null && !closed.get()) presentHardwareFrame(hardwareFrame);
-        } catch (Throwable error) {
-            System.err.println("[scrcpy-swing] asynchronous D3D11 presentation failed: " + error);
-        } finally {
-            if (hardwareFrame != null) hardwareFrame.close();
-        }
+            for (;;) {
+                boolean progressed = false;
 
-        boolean reschedule;
-        synchronized (drainMonitor) {
-            reschedule = !closed.get() && !pendingFrames.isEmpty();
-            if (!reschedule) {
-                drainScheduled = false;
-                drainMonitor.notifyAll();
+                long completedToken;
+                while ((completedToken = canvas.pollCompletedFrame()) != 0) {
+                    long token = Math.abs(completedToken);
+                    PendingFrame completed = inFlight.remove(token);
+                    if (completed != null) {
+                        if (completedToken > 0) {
+                            onPresented(completed);
+                        } else {
+                            System.err.printf("[scrcpy-swing][%s] D3D11 GPU work completed but Present failed; frame dropped%n",
+                                    completed.frame.serial());
+                        }
+                        completed.frame.close();
+                    }
+                    progressed = true;
+                }
+
+                if (!closed.get()) {
+                    HardwareVideoFrame queued = pendingFrames.peek();
+                    if (queued != null) {
+                        AVFrame avFrame = queued.frame();
+                        PendingFrame candidate = new PendingFrame(queued, avFrame);
+                        long token = candidate.texture == 0 ? -1 : canvas.submitHardwareFrame(
+                                candidate.texture, candidate.arraySlice,
+                                candidate.width, candidate.height,
+                                avFrame.colorspace(), avFrame.color_range());
+                        if (token > 0) {
+                            pendingFrames.poll();
+                            inFlight.put(token, candidate);
+                            progressed = true;
+                        } else if (token < 0) {
+                            pendingFrames.poll();
+                            queued.close();
+                            System.err.printf("[scrcpy-swing][%s] D3D11 rejected frame submission; dropping without CPU readback%n",
+                                    queued.serial());
+                            progressed = true;
+                        }
+                    }
+                }
+
+                if (!progressed) break;
+            }
+        } catch (Throwable error) {
+            System.err.println("[scrcpy-swing] asynchronous D3D11 presentation pump failed: " + error);
+            error.printStackTrace(System.err);
+        } finally {
+            synchronized (drainMonitor) {
+                pumpScheduled = false;
+                boolean again = !inFlight.isEmpty() || (!closed.get() && !pendingFrames.isEmpty());
+                if (again) {
+                    pumpScheduled = true;
+                    PRESENT_EXECUTOR.schedule(this::pump, 1, TimeUnit.MILLISECONDS);
+                } else {
+                    drainMonitor.notifyAll();
+                }
             }
         }
-        if (reschedule) PRESENT_EXECUTOR.execute(this::presentOne);
     }
 
-    private void presentHardwareFrame(HardwareVideoFrame hardwareFrame) {
-        AVFrame frame = hardwareFrame.frame();
-        BytePointer texture = frame.data(0);
-        BytePointer arrayIndex = frame.data(1);
-        if (texture == null || texture.isNull()) return;
-
-        boolean rendered = canvas.renderHardwareFrame(
-                texture.address(),
-                arrayIndex == null || arrayIndex.isNull() ? 0 : arrayIndex.address(),
-                frame.width(), frame.height(), frame.colorspace(), frame.color_range());
-        if (!rendered) {
-            System.err.printf("[scrcpy-swing][%s] D3D11 presentation rejected a retained frame; dropping without CPU readback%n",
-                    hardwareFrame.serial());
-            return;
-        }
-
+    private void onPresented(PendingFrame completed) {
         if (firstNativePresentLogged.compareAndSet(false, true)) {
-            System.out.printf("[scrcpy-swing][%s] D3D11 direct-texture presentation confirmed: "
-                            + "texture=0x%x arraySlice=%d size=%dx%d; VideoProcessorBlt + GPU completion + Present succeeded; "
+            System.out.printf("[scrcpy-swing][%s] D3D11 asynchronous presentation confirmed: "
+                            + "texture=0x%x arraySlice=%d size=%dx%d; GPU query completed before Present; "
                             + "no CPU frame transfer on this path%n",
-                    hardwareFrame.serial(), texture.address(),
-                    arrayIndex == null || arrayIndex.isNull() ? 0 : arrayIndex.address(),
-                    frame.width(), frame.height());
+                    completed.frame.serial(), completed.texture, completed.arraySlice,
+                    completed.width, completed.height);
         }
-        surface.showHardwareFrame(frame.width(), frame.height());
+        surface.showHardwareFrame(completed.width, completed.height);
     }
+
     @Override
     public void renderSoftware(VideoFrame frame) {
         surface.accept(frame);
@@ -189,24 +234,28 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
-        HardwareVideoFrame pending;
-        while ((pending = pendingFrames.poll()) != null) pending.close();
+
+        HardwareVideoFrame queued;
+        while ((queued = pendingFrames.poll()) != null) queued.close();
+        schedulePump();
+
+        boolean interrupted = false;
         synchronized (drainMonitor) {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (drainScheduled) {
-                long remaining = deadline - System.nanoTime();
-                if (remaining <= 0) {
-                    System.err.println("[scrcpy-swing] timed out waiting for D3D11 presentation worker during close");
-                    break;
-                }
+            while (pumpScheduled || !inFlight.isEmpty()) {
                 try {
-                    TimeUnit.NANOSECONDS.timedWait(drainMonitor, remaining);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    break;
+                    drainMonitor.wait(1_000);
+                    if (!pumpScheduled && !inFlight.isEmpty()) {
+                        // Keep polling until every submitted GPU operation has
+                        // completed; destroying the D3D11 device earlier would
+                        // invalidate FFmpeg-owned texture references.
+                        schedulePump();
+                    }
+                } catch (InterruptedException error) {
+                    interrupted = true;
                 }
             }
         }
         canvas.close();
+        if (interrupted) Thread.currentThread().interrupt();
     }
 }
