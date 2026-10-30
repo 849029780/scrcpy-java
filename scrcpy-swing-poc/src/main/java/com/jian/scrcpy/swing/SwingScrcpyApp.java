@@ -679,12 +679,14 @@ public final class SwingScrcpyApp {
             JavaSoundPlayer player = null;
             FfmpegVideoDecoder decoder = null;
             ScrcpySession session = null;
+            SwingVideoSurface view = null;
             try {
                 ScrcpyOptions options = settings.toOptions(device.serial(), ScrcpyOptions.defaults());
-                SwingVideoSurface view = new SwingVideoSurface();
+                view = new SwingVideoSurface();
                 player = new JavaSoundPlayer();
+                SwingVideoSurface surface = view;
                 decoder = options.video()
-                        ? new FfmpegVideoDecoder(view::accept, options.videoDecoder(),
+                        ? new FfmpegVideoDecoder(surface::accept, options.videoDecoder(),
                         VideoHardwareDeviceProvider.DEFAULT, device.serial())
                         : null;
                 session = new ScrcpySession(new Adb(System.getProperty("scrcpy.adb", "adb"), device.serial()), options);
@@ -722,6 +724,7 @@ public final class SwingScrcpyApp {
                 if (session != null) session.close();
                 if (decoder != null) decoder.close();
                 if (player != null) player.close();
+                if (view != null) view.close();
                 SwingUtilities.invokeLater(() -> {
                     status.setText((reconnect ? "自动重连 " : "连接 ") + device.displayName() + " 失败：" + e.getMessage());
                     refreshDeviceRows();
