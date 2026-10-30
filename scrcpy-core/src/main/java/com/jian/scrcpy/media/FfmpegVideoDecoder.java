@@ -14,6 +14,8 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import java.util.function.Consumer;
 
 import static org.bytedeco.ffmpeg.global.avcodec.*;
@@ -87,12 +89,15 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private final AtomicLong statsPoolMisses = new AtomicLong();
     private final AtomicLong statsScaleNanos = new AtomicLong();
     private final AtomicLong statsScaleCount = new AtomicLong();
+    private final AtomicLong statsLockWaitNanos = new AtomicLong();
+    private final AtomicLong statsLockHoldNanos = new AtomicLong();
+    private final AtomicLong statsLockContentions = new AtomicLong();
     private long statsLastReportNanos = System.nanoTime();
 
     // Keep the existing global native lock for stability with multi-device
     // decoding. Hardware decoding can be made more parallel later once every
     // backend has been stress-tested independently.
-    private static final Object FFMPEG_VIDEO_LOCK = new Object();
+    private static final ReentrantLock FFMPEG_VIDEO_LOCK = new ReentrantLock();
     // Keep the compressed backlog short. Retained Netty ByteBuf packets count
     // toward process memory and a long queue only adds latency for live video.
     private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(16);
@@ -420,9 +425,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             sessionWidth = session.width();
             sessionHeight = session.height();
             if (!DEBUG_SKIP_DECODE && announcedCodec != null && ctx == null) {
-                synchronized (FFMPEG_VIDEO_LOCK) {
+                withVideoLock(() -> {
                     init(announcedCodec);
-                }
+                    return null;
+                });
                 System.out.printf("[scrcpy-java][%s] video decoder initialized for session %dx%d%s%n",
                         serial,
                         session.width(), session.height(),
@@ -439,9 +445,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         if (DEBUG_SKIP_DECODE) return;
         if (ctx == null) {
             if (announcedCodec == null) return;
-            synchronized (FFMPEG_VIDEO_LOCK) {
+            withVideoLock(() -> {
                 init(announcedCodec);
-            }
+                return null;
+            });
         }
 
         int payloadSize = p.data().readableBytes();
@@ -449,13 +456,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         p.data().getBytes(p.data().readerIndex(), encoded, 0, payloadSize);
 
         int sendResult;
-        synchronized (FFMPEG_VIDEO_LOCK) {
+        sendResult = withVideoLock(() -> {
             av_packet_unref(packet);
-            if (av_new_packet(packet, payloadSize) < 0) return;
+            if (av_new_packet(packet, payloadSize) < 0) return AVERROR(EINVAL);
             packet.data().put(encoded, 0, payloadSize);
             packet.pts(p.pts()).dts(p.pts());
-            sendResult = avcodec_send_packet(ctx, packet);
-        }
+            return avcodec_send_packet(ctx, packet);
+        });
 
         if (sendResult < 0) {
             if (activeHardware != null && !hardwareConfirmed) {
@@ -467,9 +474,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         int receiveResult;
         for (;;) {
-            synchronized (FFMPEG_VIDEO_LOCK) {
-                receiveResult = avcodec_receive_frame(ctx, frame);
-            }
+            receiveResult = withVideoLock(() -> avcodec_receive_frame(ctx, frame));
 
             if (receiveResult < 0) break;
             if (VIDEO_STATS_ENABLED) statsDecodedFrames.incrementAndGet();
@@ -497,12 +502,11 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                     }
                 }
 
-                synchronized (FFMPEG_VIDEO_LOCK) {
+                int transferResult = withVideoLock(() -> {
                     av_frame_unref(softwareFrame);
-                    if (av_hwframe_transfer_data(softwareFrame, frame, 0) < 0) {
-                        continue;
-                    }
-                }
+                    return av_hwframe_transfer_data(softwareFrame, frame, 0);
+                });
+                if (transferResult < 0) continue;
                 source = softwareFrame;
             }
             if (DEBUG_SKIP_SWS_SCALE) continue;
@@ -541,6 +545,23 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
     }
 
+    private <T> T withVideoLock(Supplier<T> operation) {
+        boolean contended = FFMPEG_VIDEO_LOCK.isLocked();
+        long waitStarted = VIDEO_STATS_ENABLED ? System.nanoTime() : 0L;
+        FFMPEG_VIDEO_LOCK.lock();
+        long acquired = VIDEO_STATS_ENABLED ? System.nanoTime() : 0L;
+        try {
+            if (VIDEO_STATS_ENABLED) {
+                statsLockWaitNanos.addAndGet(acquired - waitStarted);
+                if (contended) statsLockContentions.incrementAndGet();
+            }
+            return operation.get();
+        } finally {
+            if (VIDEO_STATS_ENABLED) statsLockHoldNanos.addAndGet(System.nanoTime() - acquired);
+            FFMPEG_VIDEO_LOCK.unlock();
+        }
+    }
+
     private void reportVideoStatsIfDue() {
         if (!VIDEO_STATS_ENABLED) return;
         long now = System.nanoTime();
@@ -555,14 +576,19 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         long poolMisses = statsPoolMisses.getAndSet(0);
         long scaleNanos = statsScaleNanos.getAndSet(0);
         long scaleCount = statsScaleCount.getAndSet(0);
+        long lockWaitNanos = statsLockWaitNanos.getAndSet(0);
+        long lockHoldNanos = statsLockHoldNanos.getAndSet(0);
+        long lockContentions = statsLockContentions.getAndSet(0);
         double seconds = elapsed / 1_000_000_000.0;
         double decodedFps = decoded / seconds;
         double scaleAverageMs = scaleCount == 0 ? 0.0 : scaleNanos / 1_000_000.0 / scaleCount;
         System.out.printf(
                 Locale.ROOT,
-                "[scrcpy-java][%s] video stats: decoded=%.1f fps, hardware=%.1f fps, software=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, queue=%d/16%n",
+                "[scrcpy-java][%s] video stats: decoded=%.1f fps, hardware=%.1f fps, software=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockWait=%.2f ms, nativeLockHold=%.2f ms, nativeLockContended=%d, queue=%d/16%n",
                 serial, decodedFps, hardware / seconds, software / seconds,
-                queueDrops, poolMisses, scaleAverageMs, decodeQueue.size());
+                queueDrops, poolMisses, scaleAverageMs,
+                lockWaitNanos / 1_000_000.0, lockHoldNanos / 1_000_000.0,
+                lockContentions, decodeQueue.size());
     }
 
     private byte[] ensureEncodedCapacity(int size) {
