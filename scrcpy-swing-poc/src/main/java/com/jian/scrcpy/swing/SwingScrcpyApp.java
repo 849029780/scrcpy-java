@@ -690,14 +690,21 @@ public final class SwingScrcpyApp {
             FfmpegVideoDecoder decoder = null;
             ScrcpySession session = null;
             SwingVideoSurface view = null;
+            SwingD3D11VideoRenderer nativeRenderer = null;
             try {
                 ScrcpyOptions options = settings.toOptions(device.serial(), ScrcpyOptions.defaults());
                 view = new SwingVideoSurface();
                 player = new JavaSoundPlayer();
                 SwingVideoSurface surface = view;
+                if (options.video() && System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+                    nativeRenderer = new SwingD3D11VideoRenderer(surface);
+                }
+                VideoHardwareDeviceProvider hardwareProvider = nativeRenderer != null
+                        ? nativeRenderer : VideoHardwareDeviceProvider.DEFAULT;
+                VideoRenderer videoRenderer = nativeRenderer;
                 decoder = options.video()
                         ? new FfmpegVideoDecoder(surface::accept, options.videoDecoder(),
-                        VideoHardwareDeviceProvider.DEFAULT, device.serial())
+                        hardwareProvider, device.serial(), videoRenderer)
                         : null;
                 session = new ScrcpySession(new Adb(System.getProperty("scrcpy.adb", "adb"), device.serial()), options);
                 ScrcpySession running = session;
@@ -714,14 +721,16 @@ public final class SwingScrcpyApp {
                     reconnecting.remove(device.serial());
                     reconnectStates.remove(device.serial());
                     if (!desiredConnections.containsKey(device.serial()) || sessions.containsKey(device.serial())) {
-                        running.close(); if (video != null) video.close(); audio.close(); return;
+                        running.close(); if (video != null) video.close();
+                        if (nativeRenderer != null) nativeRenderer.close();
+                        audio.close(); return;
                     }
                     UhidController uhid = new UhidController(running::sendControl);
                     ClipboardController clipboard = new ClipboardController(running::sendControl);
                     running.addDeviceMessageListener(uhid::handle);
                     running.addDeviceMessageListener(clipboard::handle);
                     clipboard.onRemoteClipboard(this::applyDeviceClipboard);
-                    DeviceSession handle = new DeviceSession(running, audio, video, surface,
+                    DeviceSession handle = new DeviceSession(running, audio, video, nativeRenderer, surface,
                             new DeviceController(running::sendControl), uhid, clipboard);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
@@ -733,6 +742,7 @@ public final class SwingScrcpyApp {
                 reconnecting.remove(device.serial());
                 if (session != null) session.close();
                 if (decoder != null) decoder.close();
+                if (nativeRenderer != null) nativeRenderer.close();
                 if (player != null) player.close();
                 if (view != null) view.close();
                 SwingUtilities.invokeLater(() -> {
@@ -1435,6 +1445,7 @@ public final class SwingScrcpyApp {
         final ScrcpySession session;
         final JavaSoundPlayer audioPlayer;
         final FfmpegVideoDecoder decoder;
+        final SwingD3D11VideoRenderer nativeRenderer;
         final SwingVideoSurface view;
         final DeviceController controller;
         final UhidController uhid;
@@ -1449,9 +1460,10 @@ public final class SwingScrcpyApp {
         MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
 
         DeviceSession(ScrcpySession session, JavaSoundPlayer audioPlayer, FfmpegVideoDecoder decoder,
-                      SwingVideoSurface view, DeviceController controller, UhidController uhid,
-                      ClipboardController clipboard) {
+                      SwingD3D11VideoRenderer nativeRenderer, SwingVideoSurface view,
+                      DeviceController controller, UhidController uhid, ClipboardController clipboard) {
             this.session = session; this.audioPlayer = audioPlayer; this.decoder = decoder;
+            this.nativeRenderer = nativeRenderer;
             this.view = view; this.controller = controller; this.uhid = uhid; this.clipboard = clipboard;
         }
 
@@ -1459,6 +1471,7 @@ public final class SwingScrcpyApp {
             Throwable first = null;
             try { uhid.close(); } catch (Throwable t) { first = t; }
             try { if (decoder != null) decoder.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
+            try { if (nativeRenderer != null) nativeRenderer.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
             try { session.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
             try { view.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
             try { audioPlayer.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
