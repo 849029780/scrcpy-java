@@ -75,21 +75,24 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
     private void initialize() {
         Sdl3 localSdl = new Sdl3();
         if (!localSdl.initVideo()) {
+            String error = localSdl.error();
             localSdl.close();
-            throw new IllegalStateException("SDL_Init(SDL_INIT_VIDEO) failed: " + localSdl.error());
+            throw new IllegalStateException("SDL_Init(SDL_INIT_VIDEO) failed: " + error);
         }
 
         MemorySegment createdWindow = localSdl.createWindow(title, width, height);
         if (createdWindow.address() == 0) {
+            String error = localSdl.error();
             localSdl.close();
-            throw new IllegalStateException("SDL_CreateWindow failed: " + localSdl.error());
+            throw new IllegalStateException("SDL_CreateWindow failed: " + error);
         }
 
         MemorySegment createdRenderer = localSdl.createRenderer(createdWindow, "direct3d11");
         if (createdRenderer.address() == 0) {
+            String error = localSdl.error();
             localSdl.destroyWindow(createdWindow);
             localSdl.close();
-            throw new IllegalStateException("SDL_CreateRenderer(direct3d11) failed: " + localSdl.error());
+            throw new IllegalStateException("SDL_CreateRenderer(direct3d11) failed: " + error);
         }
 
         MemorySegment device = localSdl.rendererD3d11Device(createdRenderer);
