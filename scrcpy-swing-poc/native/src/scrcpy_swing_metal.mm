@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #import <CoreImage/CoreImage.h>
 #import <CoreVideo/CoreVideo.h>
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -43,6 +44,7 @@ id<JAWT_SurfaceLayers> getSurfaceLayers(JNIEnv* env,jobject canvas){
     }
     awt.FreeDrawingSurface(ds);
     return layers;
+}
 }
 
 extern "C" JNIEXPORT jlong JNICALL Java_com_jian_scrcpy_swing_NativeMetalCanvas_attach0(JNIEnv* env,jclass,jobject canvas){
