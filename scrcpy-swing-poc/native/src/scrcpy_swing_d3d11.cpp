@@ -1,3 +1,6 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <d3d11.h>
 #include <d3d11_4.h>
@@ -201,7 +204,7 @@ struct Renderer {
                 && processorFormat == inputFormat
                 && processorOutputWidth == width && processorOutputHeight == height) {
             UINT support = 0;
-            if (SUCCEEDED(videoDevice->CheckVideoProcessorFormat(inputFormat, &support))
+            if (SUCCEEDED(processorEnumerator->CheckVideoProcessorFormat(inputFormat, &support))
                     && (support & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT)) {
                 return true;
             }
@@ -225,9 +228,9 @@ struct Renderer {
 
         UINT inputSupport = 0;
         UINT outputSupport = 0;
-        if (FAILED(videoDevice->CheckVideoProcessorFormat(inputFormat, &inputSupport))
+        if (FAILED(processorEnumerator->CheckVideoProcessorFormat(inputFormat, &inputSupport))
                 || !(inputSupport & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT)
-                || FAILED(videoDevice->CheckVideoProcessorFormat(
+                || FAILED(processorEnumerator->CheckVideoProcessorFormat(
                         DXGI_FORMAT_B8G8R8A8_UNORM, &outputSupport))
                 || !(outputSupport & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT)) {
             releaseProcessor();
