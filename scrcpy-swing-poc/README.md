@@ -18,14 +18,43 @@ available as a separate frontend.
 - Batch file transfer and APK installation with per-device progress.
 - FFmpeg video/audio decoding through the existing `scrcpy-core` module.
 
-## Rendering note
+## Rendering
 
-The current Swing video surface is a portable BGRA/Java2D implementation. It
-keeps the newest frame and reuses its image storage, but it is not GPU
-zero-copy. The existing native D3D11 Canvas proof of concept remains in this
-module as a separate experiment and is not yet connected to FFmpeg hardware
-frames. Vulkan/D3D11 texture interop is intentionally not claimed by this
-frontend.
+On Windows, the Swing frontend now has a native D3D11 presentation path:
+
+`FFmpeg D3D11VA decode -> retained AVFrame/D3D11 texture -> D3D11 Video Processor -> AWT Canvas swap chain`
+
+The native Canvas creates the D3D11 device and supplies an AddRef'd reference to
+FFmpeg's `AVHWDeviceContext`. This keeps decoding and presentation on the same
+D3D11 device. The decoded texture is passed to the D3D11 video processor directly;
+the normal hardware presentation path does not call `av_hwframe_transfer_data`,
+`sws_scale`, or create a `BufferedImage`.
+
+The existing BGRA/Java2D renderer remains the fallback when the native library,
+D3D11 video processor, or a compatible hardware frame is unavailable. Non-Windows
+platforms continue to use the portable renderer. The native backend is Windows-only.
+
+### Build the native renderer (Windows)
+
+Requires CMake 3.24+, a Visual Studio C++ workload, Windows SDK, and JDK 25.
+From the repository root in PowerShell:
+
+```powershell
+cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
+cmake --build scrcpy-swing-poc/native/build --config Release
+$env:PATH = "$PWD\scrcpy-swing-poc\native\build\Release;$env:PATH"
+mvn -pl scrcpy-swing-poc -am install
+mvn -pl scrcpy-swing-poc exec:java
+```
+
+If CMake cannot locate JNI/JAWT, set `JAVA_HOME` to the JDK 25 installation
+before configuring. The JavaFX `scrcpy-app` module is not changed.
+
+`D3D11VA -> D3D11 Video Processor -> SwapChain` avoids a CPU frame download;
+the GPU may still perform an internal GPU-side video-processing pass to convert
+NV12/P010 into the swap-chain format. This is zero-copy with respect to the
+CPU/system-memory frame path, not a claim that no GPU resource or processing
+operation occurs.
 
 ## Build and run
 
