@@ -128,6 +128,9 @@ public final class SwingScrcpyApp {
 
         primaryHost.setOpaque(true);
         primaryHost.setBackground(Color.BLACK);
+        primaryHost.setDoubleBuffered(false);
+        workspace.setOpaque(true);
+        workspace.setDoubleBuffered(false);
         primaryHost.setPreferredSize(new Dimension(0, 0));
         primaryHost.setVisible(false);
         secondaryGrid.setBackground(new Color(24, 24, 24));
@@ -748,6 +751,7 @@ public final class SwingScrcpyApp {
         JPanel tile = new JPanel(new BorderLayout(0, 0));
         tile.setOpaque(true);
         tile.setBackground(Color.BLACK);
+        tile.setDoubleBuffered(false);
         tile.setBorder(BorderFactory.createLineBorder(new Color(68, 68, 68)));
         JLabel title = new JLabel(device.displayName());
         title.setOpaque(true); title.setBackground(Color.WHITE); title.setForeground(Color.BLACK);
@@ -756,9 +760,11 @@ public final class SwingScrcpyApp {
         JPanel videoAndNavigation = new JPanel(new BorderLayout(0, 0));
         videoAndNavigation.setOpaque(true);
         videoAndNavigation.setBackground(Color.BLACK);
+        videoAndNavigation.setDoubleBuffered(false);
         JPanel viewport = new JPanel(new BorderLayout());
         viewport.setOpaque(true);
         viewport.setBackground(Color.BLACK);
+        viewport.setDoubleBuffered(false);
         viewport.add(handle.view, BorderLayout.CENTER);
         JPanel navigation = createNavigationBar(handle, device);
         videoAndNavigation.add(viewport, BorderLayout.CENTER);
@@ -1243,14 +1249,21 @@ public final class SwingScrcpyApp {
             // rapid sequence of primary-device switches.
             detachTile(handle.tile);
         }
-        // Keep the primary container only as wide as its video plus toolbar.
-        // A fixed 780px WEST region creates large letterbox gaps on portrait devices.
+        // Clear the old host completely before installing the new device tile.
+        // Each DeviceSession owns its own SwingVideoSurface and frame buffer.
         primaryHost.removeAll();
+        primaryHost.revalidate();
+        primaryHost.repaint();
         primaryHost.add(handle.tile, BorderLayout.CENTER);
+        primaryHost.setOpaque(true);
+        primaryHost.setBackground(Color.BLACK);
         primaryHost.setVisible(true);
-        primaryHost.setPreferredSize(new Dimension(handle.tile.getPreferredSize().width, 0));
-        workspace.add(primaryHost, BorderLayout.WEST);
         resizeTile(handle, true);
+        primaryHost.setPreferredSize(new Dimension(handle.tile.getPreferredSize().width, 0));
+        if (primaryHost.getParent() != workspace) workspace.add(primaryHost, BorderLayout.WEST);
+        workspace.setComponentZOrder(primaryHost, 0);
+        primaryHost.revalidate();
+        primaryHost.repaint();
         refreshPrimaryUi();
         workspace.revalidate(); workspace.repaint();
     }
