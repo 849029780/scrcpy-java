@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit;
 
 /** macOS JAWT Canvas backed by a CAMetalLayer. */
 final class NativeMetalCanvas extends Canvas implements AutoCloseable {
-    static { System.loadLibrary("scrcpy_swing_metal"); }
+    static { NativeLibraryLoader.load("libscrcpy_swing_metal.dylib"); }
     private volatile long handle;
     private volatile boolean closed;
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
