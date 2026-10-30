@@ -549,8 +549,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF()
                 && activeHardware != null && !hardwareConfirmed) {
+            int fallbackError = receiveResult;
             withVideoLock(() -> {
-                fallbackToSoftware(encoded, payloadSize, p.pts(), "avcodec_receive_frame=" + receiveResult);
+                fallbackToSoftware(encoded, payloadSize, p.pts(), "avcodec_receive_frame=" + fallbackError);
                 return null;
             });
         }
