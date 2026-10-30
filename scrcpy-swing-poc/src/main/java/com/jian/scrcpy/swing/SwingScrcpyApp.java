@@ -49,7 +49,6 @@ import java.util.stream.Collectors;
 public final class SwingScrcpyApp {
     private static final int TILE_WIDTH = 360;
     private static final int TILE_HEIGHT = 680;
-    private static final int PRIMARY_WIDTH = 780;
     private static final int NAV_WIDTH = 40;
     private static final long RECONNECT_INTERVAL_MILLIS = 3_000;
     private static final int MAX_RECONNECT_ATTEMPTS = 20;
@@ -57,10 +56,7 @@ public final class SwingScrcpyApp {
     private final JFrame frame = new JFrame("scrcpy-java - 多设备投屏（Swing）");
     private final JLabel status = new JLabel("正在扫描 ADB 设备...");
     private final JLabel primaryStatus = new JLabel("主设备：无");
-    private final JPanel primaryHost = new JPanel(new BorderLayout()) {{
-        setOpaque(true);
-        setBackground(Color.BLACK);
-    }};
+    private final JPanel primaryHost = new JPanel(new BorderLayout());
     private final JPanel secondaryGrid = new JPanel(new WrapLayout(FlowLayout.LEFT, 10, 10));
     private final JScrollPane secondaryScroll = new JScrollPane(secondaryGrid);
     private final JPanel workspace = new JPanel(new BorderLayout(4, 0));
@@ -1240,7 +1236,6 @@ public final class SwingScrcpyApp {
             // AWT reparenting can otherwise leave stale layout state during a
             // rapid sequence of primary-device switches.
             detachTile(handle.tile);
-            primaryHost.add(handle.tile, BorderLayout.CENTER);
         }
         // Keep the primary container only as wide as its video plus toolbar.
         // A fixed 780px WEST region creates large letterbox gaps on portrait devices.
