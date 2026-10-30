@@ -38,6 +38,7 @@
         <configuration>
           <options>
             <option>--enable-native-access=javafx.graphics</option>
+            <option>--add-exports=javafx.graphics/com.sun.prism=ALL-UNNAMED</option>
           </options>
           <mainClass>com.jian.scrcpy.app.ScrcpyApp</mainClass>
         </configuration>
