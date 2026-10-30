@@ -126,7 +126,11 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private final ReentrantLock decoderNativeLock = new ReentrantLock();
     // Keep the compressed backlog short. Retained Netty ByteBuf packets count
     // toward process memory and a long queue only adds latency for live video.
-    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(16);
+    // Four packets cap per-device compressed backlog to roughly 67 ms at 60 FPS.
+    // This bounds retained Netty buffers across large multi-device sessions.
+    private static final int DECODE_QUEUE_CAPACITY = 4;
+    private final ArrayBlockingQueue<MediaMessage> decodeQueue =
+            new ArrayBlockingQueue<>(DECODE_QUEUE_CAPACITY);
     // Reused staging storage for the JavaCPP AVPacket copy. Directly wrapping a
     // Netty ByteBuf is not portable across the supported platforms/allocators.
     private byte[] encodedBuffer = new byte[0];
@@ -430,16 +434,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             releaseMessage(m);
             return;
         }
-        if (!decodeQueue.offer(m)) {
-            MediaMessage dropped = decodeQueue.poll();
-            if (dropped != null) {
-                releaseMessage(dropped);
-                if (VIDEO_STATS_ENABLED) statsQueueDrops.incrementAndGet();
-            }
-            if (!decodeQueue.offer(m)) {
-                releaseMessage(m);
-                if (VIDEO_STATS_ENABLED) statsQueueDrops.incrementAndGet();
-            }
+        BoundedMediaMessageQueue.OfferResult result = BoundedMediaMessageQueue.offer(decodeQueue, m);
+        if (result != BoundedMediaMessageQueue.OfferResult.ENQUEUED && VIDEO_STATS_ENABLED) {
+            statsQueueDrops.incrementAndGet();
         }
     }
 
@@ -687,7 +684,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         double scaleAverageMs = scaleCount == 0 ? 0.0 : scaleNanos / 1_000_000.0 / scaleCount;
         System.out.printf(
                 Locale.ROOT,
-                "[scrcpy-java][%s] video stats: decoded=%.1f fps, rendererAccepted=%.1f fps, nativePresentMisses=%d, hwToCpuTransfers=%d/%d (failed=%d), softwarePresent=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/16%n",
+                "[scrcpy-java][%s] video stats: decoded=%.1f fps, rendererAccepted=%.1f fps, nativePresentMisses=%d, hwToCpuTransfers=%d/%d (failed=%d), softwarePresent=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/%d%n",
                 serial, decodedFps, hardware / seconds, nativeMisses,
                 transferSuccesses, transferAttempts, transferFailures, software / seconds,
                 queueDrops, poolMisses, scaleAverageMs,
@@ -695,7 +692,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 lockWaitNanos / 1_000_000.0, lockHoldNanos / 1_000_000.0,
                 lockContentions,
                 deviceLockWaitNanos / 1_000_000.0, deviceLockHoldNanos / 1_000_000.0,
-                deviceLockContentions, decodeQueue.size());
+                deviceLockContentions, decodeQueue.size(), DECODE_QUEUE_CAPACITY);
     }
 
     private byte[] ensureEncodedCapacity(int size) {
