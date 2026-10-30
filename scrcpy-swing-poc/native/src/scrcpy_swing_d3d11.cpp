@@ -675,7 +675,7 @@ Java_com_jian_scrcpy_swing_NativeD3D11Canvas_releaseDevicePointer0(
     if (device) device->Release();
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
+extern "C" JNIEXPORT jlong JNICALL
 Java_com_jian_scrcpy_swing_NativeD3D11Canvas_submitHardware0(
     JNIEnv*, jclass, jlong handle, jlong texture, jlong arrayIndex,
     jint width, jint height, jint colorSpace, jint colorRange) {
