@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <d3d11.h>
+#include <d3d11_4.h>
 #include <dxgi.h>
 #include <jawt.h>
 #include <jawt_md.h>
