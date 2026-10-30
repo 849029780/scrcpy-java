@@ -430,22 +430,18 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     @Override
     protected void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
-        // SimpleChannelInboundHandler auto-releases the inbound message after
-        // channelRead0 returns. Retain one reference before transferring queue
-        // ownership to the asynchronous decoder worker. The queue helper owns
-        // this retained reference and releases it on eviction/drop; the worker
-        // releases it after decode. Do not manually release on the closed path:
-        // Netty's auto-release handles the original inbound reference.
         if (closed.get()) {
+            releaseMessage(m);
             return;
         }
-        ReferenceCountUtil.retain(m);
+        // MediaMessage is a plain record, not a ReferenceCounted wrapper.
+        // Its Packet owns the retained ByteBuf until the queue consumer (or
+        // queue eviction/drop path) releases it. Do not retain it a second time.
         BoundedMediaMessageQueue.OfferResult result = BoundedMediaMessageQueue.offer(decodeQueue, m);
         if (result != BoundedMediaMessageQueue.OfferResult.ENQUEUED && VIDEO_STATS_ENABLED) {
             statsQueueDrops.incrementAndGet();
         }
     }
-
     private void decodeLoop() {
         try {
             while (!closed.get() || !decodeQueue.isEmpty()) {
