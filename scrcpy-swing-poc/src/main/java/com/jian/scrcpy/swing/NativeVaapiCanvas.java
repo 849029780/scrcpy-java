@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit;
 
 /** X11/JAWT Canvas presented directly by VA-API. */
 final class NativeVaapiCanvas extends Canvas implements AutoCloseable {
-    static { System.loadLibrary("scrcpy_swing_vaapi"); }
+    static { NativeLibraryLoader.load("libscrcpy_swing_vaapi.so"); }
     private volatile long handle;
     private volatile boolean closed;
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
