@@ -227,8 +227,8 @@ struct Renderer {
 
         // A cached view retains its underlying decoder texture. Bound the cache
         // so unusual drivers/stream reconfiguration cannot grow native memory
-        // without limit. Rendering is serialized per renderer and the previous
-        // GPU submission has completed before an entry can be evicted.
+        // without limit. The caller applies backpressure at the limit while GPU
+        // submissions are in flight, so an input view is evicted only when safe.
         constexpr size_t MAX_CACHED_INPUT_VIEWS = 32;
         if (inputViews.size() >= MAX_CACHED_INPUT_VIEWS) {
             auto entry = inputViews.begin();
@@ -375,6 +375,10 @@ struct Renderer {
     }
 
     void detachSurface() {
+        // Reparenting may detach the HWND while frames are still executing.
+        // Wait for those queries, publish failed completion tokens for Java to
+        // release its retained AVFrames, then tear down the surface resources.
+        drainInFlight(false);
         releaseFrameSlots();
         if (renderTarget) {
             renderTarget->Release();
@@ -499,6 +503,7 @@ struct Renderer {
         if (!ensureFrameSlot(slot)) return -1;
 
         ID3D11VideoProcessorInputView* inputView = nullptr;
+        if (inputViews.size() >= 32 && hasInFlightFrames()) return 0;
         if (!ensureInputView(texture, textureAddress, static_cast<UINT>(arrayIndex),
                              textureDesc.Format, &inputView)) return -1;
 
