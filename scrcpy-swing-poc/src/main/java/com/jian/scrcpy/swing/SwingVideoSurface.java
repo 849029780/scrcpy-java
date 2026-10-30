@@ -96,17 +96,16 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
     public int frameHeight() { return frameHeight; }
 
     /**
-     * Uses a center-crop ("cover") transform: the video always fills the
-     * viewport, and any excess outside the viewport is clipped by Swing.
-     * The returned rectangle may therefore start at a negative coordinate.
+     * Aspect-fit transform: scale the complete device frame as large as
+     * possible inside the viewport without cropping or distorting it.
      */
     private Rectangle renderedBounds(int fw, int fh) {
         int cw = getWidth();
         int ch = getHeight();
         if (fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0) return new Rectangle();
-        double scale = Math.max(cw / (double) fw, ch / (double) fh);
-        int width = Math.max(1, (int) Math.ceil(fw * scale));
-        int height = Math.max(1, (int) Math.ceil(fh * scale));
+        double scale = Math.min(cw / (double) fw, ch / (double) fh);
+        int width = Math.max(1, (int) Math.round(fw * scale));
+        int height = Math.max(1, (int) Math.round(fh * scale));
         return new Rectangle((cw - width) / 2, (ch - height) / 2, width, height);
     }
 
@@ -114,9 +113,10 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         int fw = frameWidth;
         int fh = frameHeight;
         Rectangle bounds = renderedBounds(fw, fh);
-        // With center-crop, the visible viewport is the entire component;
-        // map its coordinates through the same (possibly negative) draw rect.
-        if (bounds.isEmpty() || x < 0 || y < 0 || x >= getWidth() || y >= getHeight()) return null;
+        // Ignore clicks in letterbox areas: only the actual rendered image
+        // maps to Android coordinates.
+        if (bounds.isEmpty() || x < bounds.x || y < bounds.y
+                || x >= bounds.x + bounds.width || y >= bounds.y + bounds.height) return null;
         int px = Math.min(fw - 1, Math.max(0,
                 (int) ((x - bounds.x) * fw / bounds.width)));
         int py = Math.min(fh - 1, Math.max(0,
@@ -130,12 +130,14 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
      * inside the component after the panel is expanded.
      */
     public boolean isAtImageEdge(double x, double y, int margin) {
-        if (frameWidth <= 0 || frameHeight <= 0 || getWidth() <= 0 || getHeight() <= 0) return true;
+        Rectangle bounds = renderedBounds(frameWidth, frameHeight);
+        if (bounds.isEmpty()) return true;
         int safeMargin = Math.max(0, margin);
-        // The crop fills the component, so its four visible edges are the
-        // component edges (not the larger off-screen source-image rectangle).
-        return x <= safeMargin || y <= safeMargin
-                || x >= getWidth() - safeMargin || y >= getHeight() - safeMargin;
+        int right = bounds.x + bounds.width;
+        int bottom = bounds.y + bounds.height;
+        return x < bounds.x || y < bounds.y || x >= right || y >= bottom
+                || x <= bounds.x + safeMargin || y <= bounds.y + safeMargin
+                || x >= right - safeMargin || y >= bottom - safeMargin;
     }
 
     @Override
