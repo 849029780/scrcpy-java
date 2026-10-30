@@ -44,6 +44,34 @@ jobs:
       - name: Build native Swing renderer
         run: cmake --build scrcpy-swing-poc/native/build --config Release
 
+      - name: Stage native renderer in Maven resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows)
+              target="windows-x86_64"
+              library="scrcpy_swing_d3d11.dll"
+              source="scrcpy-swing-poc/native/build/Release/$library"
+              ;;
+            Linux)
+              target="linux-x86_64"
+              library="libscrcpy_swing_vaapi.so"
+              source="scrcpy-swing-poc/native/build/$library"
+              ;;
+            macOS)
+              case "$(uname -m)" in
+                arm64|aarch64) target="macos-aarch64" ;;
+                *) target="macos-x86_64" ;;
+              esac
+              library="libscrcpy_swing_metal.dylib"
+              source="scrcpy-swing-poc/native/build/$library"
+              ;;
+            *) echo "Unsupported runner: $RUNNER_OS"; exit 1 ;;
+          esac
+          mkdir -p "scrcpy-swing-poc/src/main/resources/native/$target"
+          cp "$source" "scrcpy-swing-poc/src/main/resources/native/$target/$library"
+
       - name: Build Java modules
         run: mvn -B -ntp clean verify
 
