@@ -1075,12 +1075,9 @@ public final class SwingScrcpyApp {
     }
 
     private boolean outsideOrEdge(SwingVideoSurface view, MouseEvent e) {
-        int w = view.getWidth(), h = view.getHeight();
-        if (w <= 0 || h <= 0) return true;
-        Point p = view.getLocationOnScreen();
-        int margin = 2;
-        return e.getXOnScreen() <= p.x + margin || e.getYOnScreen() <= p.y + margin
-                || e.getXOnScreen() >= p.x + w - margin || e.getYOnScreen() >= p.y + h - margin;
+        // Use the visible phone-image bounds. The Swing component itself may
+        // contain letterbox space, especially in the enlarged primary layout.
+        return view.isAtImageEdge(e.getX(), e.getY(), 2);
     }
 
     private boolean containsScreenPoint(SwingVideoSurface view, int sx, int sy) {
