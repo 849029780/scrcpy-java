@@ -101,6 +101,16 @@ public final class BoundedMediaMessageQueue {
         }
     }
 
+    /** Returns the current number of queued messages. */
+    public int size() {
+        lock.lock();
+        try {
+            return queue.size();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public boolean isEmpty() {
         lock.lock();
         try {
