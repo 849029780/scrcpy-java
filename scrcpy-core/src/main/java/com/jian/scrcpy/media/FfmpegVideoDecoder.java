@@ -10,8 +10,6 @@ import org.bytedeco.javacpp.*;
 
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -129,8 +127,8 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // Four packets cap per-device compressed backlog to roughly 67 ms at 60 FPS.
     // This bounds retained Netty buffers across large multi-device sessions.
     private static final int DECODE_QUEUE_CAPACITY = 4;
-    private final ArrayBlockingQueue<MediaMessage> decodeQueue =
-            new ArrayBlockingQueue<>(DECODE_QUEUE_CAPACITY);
+    private final BoundedMediaMessageQueue decodeQueue =
+            new BoundedMediaMessageQueue(DECODE_QUEUE_CAPACITY);
     // Reused staging storage for the JavaCPP AVPacket copy. Directly wrapping a
     // Netty ByteBuf is not portable across the supported platforms/allocators.
     private byte[] encodedBuffer = new byte[0];
@@ -437,7 +435,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         // MediaMessage is a plain record, not a ReferenceCounted wrapper.
         // Its Packet owns the retained ByteBuf until the queue consumer (or
         // queue eviction/drop path) releases it. Do not retain it a second time.
-        BoundedMediaMessageQueue.OfferResult result = BoundedMediaMessageQueue.offer(decodeQueue, m);
+        BoundedMediaMessageQueue.OfferResult result = decodeQueue.offer(m);
         if (result != BoundedMediaMessageQueue.OfferResult.ENQUEUED && VIDEO_STATS_ENABLED) {
             statsQueueDrops.incrementAndGet();
         }
