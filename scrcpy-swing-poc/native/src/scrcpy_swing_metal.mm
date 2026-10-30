@@ -13,7 +13,7 @@
 
 namespace {
 struct Renderer {
-    NSView* view{};
+    id<JAWT_SurfaceLayers> surfaceLayers;
     CAMetalLayer* layer{};
     id<MTLDevice> device{};
     id<MTLCommandQueue> queue{};
@@ -26,33 +26,41 @@ std::atomic<jlong> nextHandle{1};
 void fail(JNIEnv* env,const char* msg){ jclass c=env->FindClass("java/lang/IllegalStateException"); if(c) env->ThrowNew(c,msg); }
 std::shared_ptr<Renderer> find(jlong h){ std::lock_guard<std::mutex> g(gMutex); auto i=renderers.find(h); return i==renderers.end()?nullptr:i->second; }
 
-NSView* getView(JNIEnv* env,jobject canvas){
-    JAWT awt{}; awt.version=JAWT_VERSION_9; if(JAWT_GetAWT(env,&awt)==JNI_FALSE) return nil;
-    JAWT_DrawingSurface* ds=awt.GetDrawingSurface(env,canvas); if(!ds) return nil;
-    NSView* view=nil; jint lock=ds->Lock(ds);
+id<JAWT_SurfaceLayers> getSurfaceLayers(JNIEnv* env,jobject canvas){
+    JAWT awt{}; awt.version=JAWT_VERSION_9;
+    if(JAWT_GetAWT(env,&awt)==JNI_FALSE) return nil;
+    JAWT_DrawingSurface* ds=awt.GetDrawingSurface(env,canvas);
+    if(!ds) return nil;
+    id<JAWT_SurfaceLayers> layers=nil;
+    jint lock=ds->Lock(ds);
     if((lock & JAWT_LOCK_ERROR)==0){
         JAWT_DrawingSurfaceInfo* info=ds->GetDrawingSurfaceInfo(ds);
         if(info && info->platformInfo){
-            auto* mac=static_cast<JAWT_MacOSXDrawingSurfaceInfo*>(info->platformInfo);
-            view=(__bridge NSView*)mac->cocoaViewRef;
+            layers=(__bridge id<JAWT_SurfaceLayers>)info->platformInfo;
         }
         if(info) ds->FreeDrawingSurfaceInfo(info);
         ds->Unlock(ds);
     }
-    awt.FreeDrawingSurface(ds); return view;
-}
+    awt.FreeDrawingSurface(ds);
+    return layers;
 }
 
 extern "C" JNIEXPORT jlong JNICALL Java_com_jian_scrcpy_swing_NativeMetalCanvas_attach0(JNIEnv* env,jclass,jobject canvas){
     @autoreleasepool {
-        NSView* view=getView(env,canvas); if(!view){ fail(env,"JAWT Cocoa view unavailable"); return 0; }
-        auto r=std::make_shared<Renderer>(); r->view=view; r->device=MTLCreateSystemDefaultDevice();
+        id<JAWT_SurfaceLayers> layers=getSurfaceLayers(env,canvas);
+        if(!layers){ fail(env,"JAWT Cocoa surface layers unavailable"); return 0; }
+        auto r=std::make_shared<Renderer>(); r->surfaceLayers=layers; r->device=MTLCreateSystemDefaultDevice();
         if(!r->device){ fail(env,"Metal device unavailable"); return 0; }
         r->queue=[r->device newCommandQueue];
         r->ciContext=[CIContext contextWithMTLDevice:r->device];
         r->layer=[CAMetalLayer layer]; r->layer.device=r->device; r->layer.pixelFormat=MTLPixelFormatBGRA8Unorm;
         r->layer.framebufferOnly=NO; r->layer.contentsScale=NSScreen.mainScreen.backingScaleFactor;
-        dispatch_sync(dispatch_get_main_queue(), ^{ view.wantsLayer=YES; view.layer=r->layer; r->layer.frame=view.bounds; });
+        jint canvasWidth=env->CallIntMethod(canvas,env->GetMethodID(env->GetObjectClass(canvas),"getWidth","()I"));
+        jint canvasHeight=env->CallIntMethod(canvas,env->GetMethodID(env->GetObjectClass(canvas),"getHeight","()I"));
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            r->layer.frame=CGRectMake(0,0,std::max(1,canvasWidth),std::max(1,canvasHeight));
+            r->surfaceLayers.layer=r->layer;
+        });
         jlong h=nextHandle.fetch_add(1); std::lock_guard<std::mutex> g(gMutex); renderers.emplace(h,r); return h;
     }
 }
@@ -61,7 +69,8 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_jian_scrcpy_swing_NativeMetalCanv
         auto r=find(h); if(!r || !pb || width<=0 || height<=0) return JNI_FALSE;
         std::lock_guard<std::mutex> g(r->mutex);
         CVPixelBufferRef pixel=(CVPixelBufferRef)(uintptr_t)pb;
-        CGSize size=r->view.bounds.size; CGFloat scale=r->view.window.backingScaleFactor ?: 1.0;
+        CGFloat scale=r->layer.contentsScale ?: 1.0;
+        CGSize size=r->layer.frame.size;
         r->layer.drawableSize=CGSizeMake(std::max<CGFloat>(1,size.width*scale),std::max<CGFloat>(1,size.height*scale));
         id<CAMetalDrawable> drawable=[r->layer nextDrawable]; if(!drawable) return JNI_FALSE;
         CIImage* image=[CIImage imageWithCVPixelBuffer:pixel];
