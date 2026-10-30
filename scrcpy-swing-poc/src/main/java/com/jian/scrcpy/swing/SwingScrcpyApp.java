@@ -693,16 +693,18 @@ public final class SwingScrcpyApp {
         // Swing components and their heavyweight Canvas peers are created on
         // the EDT. The decoder/network work below remains on a virtual thread.
         SwingVideoSurface view = new SwingVideoSurface();
-        SwingD3D11VideoRenderer nativeRenderer = null;
-        if (settings.video() && "hardware".equalsIgnoreCase(settings.videoDecoder())
-                && System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+        SwingHardwareVideoRenderer nativeRenderer = null;
+        if (settings.video() && "hardware".equalsIgnoreCase(settings.videoDecoder())) {
             try {
-                nativeRenderer = new SwingD3D11VideoRenderer(view);
+                nativeRenderer = SwingHardwareRendererFactory.create(view);
+                if (nativeRenderer != null) {
+                    System.out.println("[scrcpy-swing] native hardware renderer selected: " + nativeRenderer.backend());
+                }
             } catch (Throwable nativeError) {
-                System.err.println("[scrcpy-swing] native D3D11 renderer unavailable; using Java2D: " + nativeError);
+                System.err.println("[scrcpy-swing] native hardware renderer unavailable; using Java2D: " + nativeError);
             }
         }
-        SwingD3D11VideoRenderer renderer = nativeRenderer;
+        SwingHardwareVideoRenderer renderer = nativeRenderer;
 
         Thread.startVirtualThread(() -> {
             JavaSoundPlayer player = null;
@@ -1459,7 +1461,7 @@ public final class SwingScrcpyApp {
         final ScrcpySession session;
         final JavaSoundPlayer audioPlayer;
         final FfmpegVideoDecoder decoder;
-        final SwingD3D11VideoRenderer nativeRenderer;
+        final SwingHardwareVideoRenderer nativeRenderer;
         final SwingVideoSurface view;
         final DeviceController controller;
         final UhidController uhid;
@@ -1474,7 +1476,7 @@ public final class SwingScrcpyApp {
         MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
 
         DeviceSession(ScrcpySession session, JavaSoundPlayer audioPlayer, FfmpegVideoDecoder decoder,
-                      SwingD3D11VideoRenderer nativeRenderer, SwingVideoSurface view,
+                      SwingHardwareVideoRenderer nativeRenderer, SwingVideoSurface view,
                       DeviceController controller, UhidController uhid, ClipboardController clipboard) {
             this.session = session; this.audioPlayer = audioPlayer; this.decoder = decoder;
             this.nativeRenderer = nativeRenderer;
