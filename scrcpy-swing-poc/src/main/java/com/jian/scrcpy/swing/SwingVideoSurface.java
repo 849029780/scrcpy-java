@@ -26,7 +26,7 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
     private volatile Runnable frameSizeListener = () -> {};
     private BufferedImage image;
     private int[] pixels;
-    private volatile NativeD3D11Canvas nativeCanvas;
+    private volatile Component nativeCanvas;
 
     public SwingVideoSurface() {
         setOpaque(true);
@@ -37,7 +37,7 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         setLayout(new BorderLayout());
     }
 
-    void installNativeCanvas(NativeD3D11Canvas canvas) {
+    void installNativeCanvas(Component canvas) {
         if (nativeCanvas != null) throw new IllegalStateException("Native D3D11 Canvas already installed");
         nativeCanvas = canvas;
         add(canvas, BorderLayout.CENTER);
@@ -49,7 +49,7 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         int oldHeight = frameHeight;
         frameWidth = width;
         frameHeight = height;
-        NativeD3D11Canvas canvas = nativeCanvas;
+        Component canvas = nativeCanvas;
         if (canvas != null && !canvas.isVisible()) {
             SwingUtilities.invokeLater(() -> {
                 if (nativeCanvas == canvas) canvas.setVisible(true);
@@ -66,7 +66,7 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
 
     public void accept(VideoFrame frame) {
         if (frame == null) return;
-        NativeD3D11Canvas canvas = nativeCanvas;
+        Component canvas = nativeCanvas;
         if (canvas != null && canvas.isVisible()) {
             SwingUtilities.invokeLater(() -> {
                 if (nativeCanvas == canvas) canvas.setVisible(false);
