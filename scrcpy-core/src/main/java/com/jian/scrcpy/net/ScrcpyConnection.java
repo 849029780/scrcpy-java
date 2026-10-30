@@ -5,6 +5,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.util.AttributeKey;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -14,6 +15,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 public final class ScrcpyConnection implements AutoCloseable {
+    /** Assigned by the parent accept event loop, before child registration can run concurrently. */
+    private static final AttributeKey<Integer> ACCEPT_INDEX =
+            AttributeKey.valueOf(ScrcpyConnection.class, "acceptIndex");
+
     /**
      * All device sockets are non-blocking and can share a bounded process-wide
      * event-loop pool. Creating two one-thread groups per device scales to
@@ -158,14 +163,28 @@ public final class ScrcpyConnection implements AutoCloseable {
         listener = new ServerBootstrap()
                 .group(acceptGroup, group)
                 .channel(NioServerSocketChannel.class)
+                // The parent acceptor runs on one event loop and observes TCP accepts
+                // in order. Assign the protocol socket index here, not in the child
+                // ChannelInitializer: child registration runs on the shared multi-
+                // thread IO group and its initialization tasks may execute out of order.
+                .handler(new ChannelInboundHandlerAdapter() {
+                    @Override
+                    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+                        if (msg instanceof Channel child) {
+                            child.attr(ACCEPT_INDEX).set(accepted.getAndIncrement());
+                        }
+                        ctx.fireChannelRead(msg);
+                    }
+                })
                 .childOption(ChannelOption.TCP_NODELAY, true)
                 .childHandler(new ChannelInitializer<>() {
                     @Override protected void initChannel(Channel channel) {
-                        int i = accepted.getAndIncrement();
-                        if (i >= names.size()) {
+                        Integer acceptIndex = channel.attr(ACCEPT_INDEX).get();
+                        if (acceptIndex == null || acceptIndex >= names.size()) {
                             channel.close();
                             return;
                         }
+                        int i = acceptIndex;
                         String name = names.get(i);
                         configure(channel.pipeline(), i == 0, name,
                                 videoHandler, audioHandler, controlHandler);
@@ -175,8 +194,8 @@ public final class ScrcpyConnection implements AutoCloseable {
                             case "control" -> control = channel;
                             default -> throw new IllegalStateException("unknown socket type: " + name);
                         }
-                        System.out.printf("[scrcpy-java][%s] %s socket accepted: %s%n",
-                                sessionLabel, name, channel.remoteAddress());
+                        System.out.printf("[scrcpy-java][%s] %s socket accepted (acceptIndex=%d): %s%n",
+                                sessionLabel, name, i, channel.remoteAddress());
                     }
                 })
                 .bind(new InetSocketAddress("127.0.0.1", port))
