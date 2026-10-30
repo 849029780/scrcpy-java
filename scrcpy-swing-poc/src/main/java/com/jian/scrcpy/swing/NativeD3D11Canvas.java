@@ -87,7 +87,7 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
     public boolean renderHardwareFrame(long texture, long arrayIndex, int width, int height,
                                        int colorSpace, int colorRange) {
         long handle = nativeHandle;
-        return !closed && surfaceAttached && handle != 0 && isShowing()
+        return !closed && surfaceAttached && handle != 0 && isDisplayable()
                 && renderHardware0(handle, texture, arrayIndex, width, height, colorSpace, colorRange);
     }
 
