@@ -53,6 +53,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private static final class BgraBuffer {
         final ByteBuffer buffer;
         final BytePointer pointer;
+        // Accessed only while holding the decoder's BGRA-pool monitor.
+        boolean leased;
+        boolean retired;
+        boolean closed;
 
         BgraBuffer(int size) {
             buffer = ByteBuffer.allocateDirect(size);
@@ -60,7 +64,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
 
         void close() {
-            pointer.close();
+            if (!closed) {
+                closed = true;
+                pointer.close();
+            }
         }
     }
 
@@ -375,6 +382,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             MediaMessage m;
             while ((m = decodeQueue.poll()) != null) releaseMessage(m);
             closeNative();
+            retireBgraPool();
         }
     }
 
@@ -603,12 +611,26 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         if (bgraBufferSize != size) {
             resetBgraPool(size);
         }
-        return bgraPool.pollFirst();
+        BgraBuffer buffer = bgraPool.pollFirst();
+        if (buffer != null) {
+            buffer.leased = true;
+        }
+        return buffer;
     }
 
+    /**
+     * Retire the previous size generation without freeing buffers that are
+     * still referenced by JavaFX PixelBuffer/WritableImage instances.
+     * A leased buffer is freed only when its VideoFrame is released.
+     */
     private void resetBgraPool(int size) {
+        for (BgraBuffer buffer : bgraBuffers) {
+            buffer.retired = true;
+            if (!buffer.leased) {
+                buffer.close();
+            }
+        }
         bgraPool.clear();
-        for (BgraBuffer buffer : bgraBuffers) buffer.close();
         bgraBuffers.clear();
         bgraBufferSize = size;
         for (int i = 0; i < BGRA_POOL_SIZE; i++) {
@@ -619,11 +641,30 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private synchronized void recycleBgraBuffer(BgraBuffer buffer) {
-        if (buffer.buffer.capacity() == bgraBufferSize
-                && bgraBuffers.contains(buffer)
-                && !bgraPool.contains(buffer)) {
+        if (!buffer.leased) {
+            return;
+        }
+        buffer.leased = false;
+        if (buffer.retired || closed.get()) {
+            buffer.close();
+            return;
+        }
+        if (bgraBuffers.contains(buffer) && !bgraPool.contains(buffer)) {
             bgraPool.addLast(buffer);
         }
+    }
+
+    /** Retire the active generation when the decoder worker exits. */
+    private synchronized void retireBgraPool() {
+        for (BgraBuffer buffer : bgraBuffers) {
+            buffer.retired = true;
+            if (!buffer.leased) {
+                buffer.close();
+            }
+        }
+        bgraPool.clear();
+        bgraBuffers.clear();
+        bgraBufferSize = 0;
     }
 
     private static void releaseMessage(MediaMessage m) {
