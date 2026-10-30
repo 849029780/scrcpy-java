@@ -40,6 +40,56 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
     void installNativeCanvas(Component canvas) {
         if (nativeCanvas != null) throw new IllegalStateException("Native D3D11 Canvas already installed");
         nativeCanvas = canvas;
+
+        // A heavyweight AWT Canvas is a native child window. Mouse/key events
+        // are delivered to that child rather than bubbling to this Swing
+        // component, so explicitly forward them using coordinates in this
+        // surface's coordinate space. The normal installControls() listeners
+        // can then remain shared by Java2D and native presentation.
+        canvas.addMouseListener(new java.awt.event.MouseAdapter() {
+            private void forward(java.awt.event.MouseEvent event) {
+                Point point = SwingUtilities.convertPoint(canvas, event.getPoint(), SwingVideoSurface.this);
+                SwingVideoSurface.this.dispatchEvent(new java.awt.event.MouseEvent(
+                        SwingVideoSurface.this, event.getID(), event.getWhen(), event.getModifiersEx(),
+                        point.x, point.y, event.getXOnScreen(), event.getYOnScreen(),
+                        event.getClickCount(), event.isPopupTrigger(), event.getButton()));
+            }
+            @Override public void mouseClicked(java.awt.event.MouseEvent e) { forward(e); }
+            @Override public void mousePressed(java.awt.event.MouseEvent e) { forward(e); }
+            @Override public void mouseReleased(java.awt.event.MouseEvent e) { forward(e); }
+            @Override public void mouseEntered(java.awt.event.MouseEvent e) { forward(e); }
+            @Override public void mouseExited(java.awt.event.MouseEvent e) { forward(e); }
+        });
+        canvas.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            private void forward(java.awt.event.MouseEvent event) {
+                Point point = SwingUtilities.convertPoint(canvas, event.getPoint(), SwingVideoSurface.this);
+                SwingVideoSurface.this.dispatchEvent(new java.awt.event.MouseEvent(
+                        SwingVideoSurface.this, event.getID(), event.getWhen(), event.getModifiersEx(),
+                        point.x, point.y, event.getXOnScreen(), event.getYOnScreen(),
+                        event.getClickCount(), event.isPopupTrigger(), event.getButton()));
+            }
+            @Override public void mouseMoved(java.awt.event.MouseEvent e) { forward(e); }
+            @Override public void mouseDragged(java.awt.event.MouseEvent e) { forward(e); }
+        });
+        canvas.addMouseWheelListener(event -> {
+            Point point = SwingUtilities.convertPoint(canvas, event.getPoint(), SwingVideoSurface.this);
+            SwingVideoSurface.this.dispatchEvent(new java.awt.event.MouseWheelEvent(
+                    SwingVideoSurface.this, event.getID(), event.getWhen(), event.getModifiersEx(),
+                    point.x, point.y, event.getXOnScreen(), event.getYOnScreen(),
+                    event.getClickCount(), event.isPopupTrigger(), event.getScrollType(),
+                    event.getScrollAmount(), event.getWheelRotation(), event.getPreciseWheelRotation()));
+        });
+        canvas.addKeyListener(new java.awt.event.KeyAdapter() {
+            private void forward(java.awt.event.KeyEvent event) {
+                SwingVideoSurface.this.dispatchEvent(new java.awt.event.KeyEvent(
+                        SwingVideoSurface.this, event.getID(), event.getWhen(), event.getModifiersEx(),
+                        event.getKeyCode(), event.getKeyChar(), event.getKeyLocation()));
+            }
+            @Override public void keyPressed(java.awt.event.KeyEvent e) { forward(e); }
+            @Override public void keyReleased(java.awt.event.KeyEvent e) { forward(e); }
+            @Override public void keyTyped(java.awt.event.KeyEvent e) { forward(e); }
+        });
+
         add(canvas, BorderLayout.CENTER);
         revalidate();
     }
