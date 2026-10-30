@@ -95,21 +95,48 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
     public int frameWidth() { return frameWidth; }
     public int frameHeight() { return frameHeight; }
 
+    /**
+     * Returns the exact rectangle used by paintComponent to draw the video.
+     * The Swing component may be wider than this rectangle (notably when it
+     * is hosted by the enlarged primary-device panel).
+     */
+    private Rectangle renderedBounds(int fw, int fh) {
+        int cw = getWidth();
+        int ch = getHeight();
+        if (fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0) return new Rectangle();
+        double scale = Math.min(cw / (double) fw, ch / (double) fh);
+        int width = Math.max(1, (int) Math.round(fw * scale));
+        int height = Math.max(1, (int) Math.round(fh * scale));
+        return new Rectangle((cw - width) / 2, (ch - height) / 2, width, height);
+    }
+
     public DeviceController.ScreenPosition position(double x, double y) {
         int fw = frameWidth;
         int fh = frameHeight;
-        int cw = getWidth();
-        int ch = getHeight();
-        if (fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0) return null;
-        double scale = Math.min(cw / (double) fw, ch / (double) fh);
-        double shownW = fw * scale;
-        double shownH = fh * scale;
-        double left = (cw - shownW) / 2.0;
-        double top = (ch - shownH) / 2.0;
-        if (x < left || y < top || x >= left + shownW || y >= top + shownH) return null;
-        int px = Math.min(fw - 1, Math.max(0, (int) ((x - left) / scale)));
-        int py = Math.min(fh - 1, Math.max(0, (int) ((y - top) / scale)));
+        Rectangle bounds = renderedBounds(fw, fh);
+        if (bounds.isEmpty() || x < bounds.x || y < bounds.y
+                || x >= bounds.x + bounds.width || y >= bounds.y + bounds.height) return null;
+        int px = Math.min(fw - 1, Math.max(0,
+                (int) ((x - bounds.x) * fw / bounds.width)));
+        int py = Math.min(fh - 1, Math.max(0,
+                (int) ((y - bounds.y) * fh / bounds.height)));
         return new DeviceController.ScreenPosition(px, py, fw, fh);
+    }
+
+    /**
+     * Edge detection must use the visible video rectangle, not the whole
+     * Swing component. The primary layout can leave horizontal letterboxing
+     * inside the component after the panel is expanded.
+     */
+    public boolean isAtImageEdge(double x, double y, int margin) {
+        Rectangle bounds = renderedBounds(frameWidth, frameHeight);
+        if (bounds.isEmpty()) return true;
+        int safeMargin = Math.max(0, margin);
+        int right = bounds.x + bounds.width;
+        int bottom = bounds.y + bounds.height;
+        return x < bounds.x || y < bounds.y || x >= right || y >= bottom
+                || x <= bounds.x + safeMargin || y <= bounds.y + safeMargin
+                || x >= right - safeMargin || y >= bottom - safeMargin;
     }
 
     @Override
@@ -121,13 +148,10 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         try {
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-            double scale = Math.min(getWidth() / (double) current.getWidth(),
-                    getHeight() / (double) current.getHeight());
-            int width = Math.max(1, (int) Math.round(current.getWidth() * scale));
-            int height = Math.max(1, (int) Math.round(current.getHeight() * scale));
-            int x = (getWidth() - width) / 2;
-            int y = (getHeight() - height) / 2;
-            g.drawImage(current, x, y, width, height, null);
+            Rectangle bounds = renderedBounds(current.getWidth(), current.getHeight());
+            if (!bounds.isEmpty()) {
+                g.drawImage(current, bounds.x, bounds.y, bounds.width, bounds.height, null);
+            }
         } finally {
             g.dispose();
         }
