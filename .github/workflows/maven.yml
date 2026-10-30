@@ -1,12 +1,17 @@
 name: Maven CI
 on:
   push:
+    paths-ignore:
+      - 'scrcpy-swing-poc/src/main/resources/native/**'
   pull_request:
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -42,26 +47,86 @@ jobs:
       - name: Build Java modules
         run: mvn -B -ntp clean verify
 
-      - name: Upload Windows D3D11 renderer
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: scrcpy-swing-native-windows-x64
-          path: scrcpy-swing-poc/native/build/Release/scrcpy_swing_d3d11.dll
-          if-no-files-found: error
+      - name: Detect native artifact platform
+        id: platform
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) echo "name=windows-x86_64" >> "$GITHUB_OUTPUT" ;;
+            Linux) echo "name=linux-x86_64" >> "$GITHUB_OUTPUT" ;;
+            macOS)
+              case "$(uname -m)" in
+                arm64|aarch64) echo "name=macos-aarch64" >> "$GITHUB_OUTPUT" ;;
+                *) echo "name=macos-x86_64" >> "$GITHUB_OUTPUT" ;;
+              esac
+              ;;
+            *) echo "Unsupported runner: $RUNNER_OS"; exit 1 ;;
+          esac
 
-      - name: Upload Linux VAAPI renderer
-        if: runner.os == 'Linux'
+      - name: Upload native renderer
         uses: actions/upload-artifact@v4
         with:
-          name: scrcpy-swing-native-linux-x64
-          path: scrcpy-swing-poc/native/build/libscrcpy_swing_vaapi.so
-          if-no-files-found: error
+          name: scrcpy-swing-native-${{ steps.platform.outputs.name }}
+          path: |
+            scrcpy-swing-poc/native/build/Release/scrcpy_swing_d3d11.dll
+            scrcpy-swing-poc/native/build/libscrcpy_swing_vaapi.so
+            scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib
+          if-no-files-found: ignore
 
-      - name: Upload macOS Metal renderer
-        if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
+  publish-native:
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          name: scrcpy-swing-native-macos
-          path: scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib
-          if-no-files-found: error
+          ref: ${{ github.ref_name }}
+
+      - name: Download platform native libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scrcpy-swing-native-*
+          path: native-artifacts
+          merge-multiple: false
+
+      - name: Stage native libraries in Maven resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          resource_root="scrcpy-swing-poc/src/main/resources/native"
+          mkdir -p "$resource_root/windows-x86_64" "$resource_root/linux-x86_64"
+
+          windows_lib="$(find native-artifacts -type f -name 'scrcpy_swing_d3d11.dll' -print -quit)"
+          linux_lib="$(find native-artifacts -type f -name 'libscrcpy_swing_vaapi.so' -print -quit)"
+          macos_arm_lib="$(find native-artifacts -path '*macos-aarch64*' -type f -name 'libscrcpy_swing_metal.dylib' -print -quit)"
+          macos_x64_lib="$(find native-artifacts -path '*macos-x86_64*' -type f -name 'libscrcpy_swing_metal.dylib' -print -quit)"
+
+          test -n "$windows_lib" && cp "$windows_lib" "$resource_root/windows-x86_64/"
+          test -n "$linux_lib" && cp "$linux_lib" "$resource_root/linux-x86_64/"
+
+          if [[ -n "$macos_arm_lib" ]]; then
+            mkdir -p "$resource_root/macos-aarch64"
+            cp "$macos_arm_lib" "$resource_root/macos-aarch64/"
+          fi
+          if [[ -n "$macos_x64_lib" ]]; then
+            mkdir -p "$resource_root/macos-x86_64"
+            cp "$macos_x64_lib" "$resource_root/macos-x86_64/"
+          fi
+
+          test -f "$resource_root/windows-x86_64/scrcpy_swing_d3d11.dll"
+          test -f "$resource_root/linux-x86_64/libscrcpy_swing_vaapi.so"
+          test -f "$resource_root/macos-aarch64/libscrcpy_swing_metal.dylib" -o -f "$resource_root/macos-x86_64/libscrcpy_swing_metal.dylib"
+
+      - name: Commit bundled native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scrcpy-swing-poc/src/main/resources/native
+          if git diff --cached --quiet; then
+            echo "Native libraries are already up to date."
+            exit 0
+          fi
+          git commit -m "Bundle native renderers for supported platforms"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
