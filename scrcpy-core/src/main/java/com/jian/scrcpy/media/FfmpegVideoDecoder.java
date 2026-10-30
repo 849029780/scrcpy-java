@@ -404,7 +404,12 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         } finally {
             MediaMessage m;
             while ((m = decodeQueue.poll()) != null) releaseMessage(m);
-            closeNative();
+            // Destroy this context under the same process-wide lock as
+            // send/receive/init; another device may still be in libavcodec.
+            withVideoLock(() -> {
+                closeNative();
+                return null;
+            });
             retireBgraPool();
         }
     }
@@ -467,7 +472,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         if (sendResult < 0) {
             if (activeHardware != null && !hardwareConfirmed) {
                 logHardwarePacketFailure("avcodec_send_packet", sendResult, encoded, payloadSize, p.pts());
-                fallbackToSoftware(encoded, payloadSize, p.pts(), "avcodec_send_packet=" + sendResult);
+                withVideoLock(() -> {
+                    fallbackToSoftware(encoded, payloadSize, p.pts(), "avcodec_send_packet=" + sendResult);
+                    return null;
+                });
             }
             return;
         }
@@ -541,19 +549,26 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         if (receiveResult != AVERROR_EAGAIN() && receiveResult != AVERROR_EOF()
                 && activeHardware != null && !hardwareConfirmed) {
-            fallbackToSoftware(encoded, payloadSize, p.pts(), "avcodec_receive_frame=" + receiveResult);
+            withVideoLock(() -> {
+                fallbackToSoftware(encoded, payloadSize, p.pts(), "avcodec_receive_frame=" + receiveResult);
+                return null;
+            });
         }
     }
 
     private <T> T withVideoLock(Supplier<T> operation) {
-        boolean contended = FFMPEG_VIDEO_LOCK.isLocked();
         long waitStarted = VIDEO_STATS_ENABLED ? System.nanoTime() : 0L;
-        FFMPEG_VIDEO_LOCK.lock();
+        // tryLock() measures actual acquisition contention. isLocked() can
+        // report a race where the lock is released before this thread queues.
+        boolean acquiredImmediately = FFMPEG_VIDEO_LOCK.tryLock();
+        if (!acquiredImmediately) {
+            if (VIDEO_STATS_ENABLED) statsLockContentions.incrementAndGet();
+            FFMPEG_VIDEO_LOCK.lock();
+        }
         long acquired = VIDEO_STATS_ENABLED ? System.nanoTime() : 0L;
         try {
             if (VIDEO_STATS_ENABLED) {
                 statsLockWaitNanos.addAndGet(acquired - waitStarted);
-                if (contended) statsLockContentions.incrementAndGet();
             }
             return operation.get();
         } finally {
