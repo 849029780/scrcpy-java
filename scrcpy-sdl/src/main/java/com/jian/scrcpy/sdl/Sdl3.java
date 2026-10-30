@@ -11,6 +11,9 @@ import static java.lang.foreign.ValueLayout.*;
 
 final class Sdl3 implements AutoCloseable {
     static final int SDL_INIT_VIDEO = 0x00000020;
+    static final int SDL_EVENT_QUIT = 0x00000100;
+    static final int SDL_EVENT_WINDOW_CLOSE_REQUESTED = 0x00000210;
+    private static final long SDL_EVENT_SIZE = 128L;
     static final int SDL_PIXELFORMAT_NV12 = 0x3231564e;
     static final int SDL_TEXTUREACCESS_STATIC = 0;
     // SDL3 renderer native-device properties.
@@ -25,7 +28,8 @@ final class Sdl3 implements AutoCloseable {
     private final Arena arena = Arena.ofShared();
     private final SymbolLookup symbols;
     private final Linker linker = Linker.nativeLinker();
-    private final MethodHandle init, quit, createWindow, destroyWindow, createRenderer,
+    private final MemorySegment eventBuffer;
+    private final MethodHandle init, quit, pollEvent, getWindowId, createWindow, destroyWindow, createRenderer,
             destroyRenderer, getRendererName, getRendererProperties, getTextureProperties,
             getPointerProperty, createTexture, destroyTexture, flushRenderer,
             renderTexture, renderPresent, getError;
@@ -44,6 +48,9 @@ final class Sdl3 implements AutoCloseable {
         }
         init = fn("SDL_Init", FunctionDescriptor.of(JAVA_BOOLEAN, JAVA_INT));
         quit = fn("SDL_Quit", FunctionDescriptor.ofVoid());
+        pollEvent = fn("SDL_PollEvent", FunctionDescriptor.of(JAVA_BOOLEAN, ADDRESS));
+        getWindowId = fn("SDL_GetWindowID", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+        eventBuffer = arena.allocate(SDL_EVENT_SIZE, 8);
         createWindow = fn("SDL_CreateWindow",
                 FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_LONG));
         destroyWindow = fn("SDL_DestroyWindow", FunctionDescriptor.ofVoid(ADDRESS));
@@ -115,6 +122,15 @@ final class Sdl3 implements AutoCloseable {
     }
 
     boolean initVideo() { return (boolean) invoke(init, SDL_INIT_VIDEO); }
+
+    /** Polls one SDL event. Must only be called by the SDL video owner thread. */
+    boolean pollEvent() { return (boolean) invoke(pollEvent, eventBuffer); }
+
+    int eventType() { return eventBuffer.get(JAVA_INT, 0); }
+
+    int eventWindowId() { return eventBuffer.get(JAVA_INT, 16); }
+
+    int windowId(MemorySegment window) { return (int) invoke(getWindowId, window); }
 
     MemorySegment createWindow(String title, int width, int height) {
         return (MemorySegment) invoke(createWindow, arena.allocateFrom(title), width, height, 0L);
