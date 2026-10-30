@@ -174,7 +174,16 @@ public final class SwingScrcpyApp {
         Toolkit.getDefaultToolkit().addAWTEventListener(event -> {
             if (!(event instanceof MouseEvent e)) return;
             DeviceSession active = activeMouseInput;
-            if (active == null || active.view == null || e.getSource() == active.view) return;
+            if (active == null || active.view == null) return;
+            // Native heavyweight Canvas events originate from the Canvas child,
+            // not from SwingVideoSurface itself. Treat every descendant as part
+            // of the active video view so the global drag/release guard does
+            // not consume events before SwingVideoSurface forwards them.
+            Object source = e.getSource();
+            if (source instanceof Component component
+                    && (component == active.view || SwingUtilities.isDescendingFrom(component, active.view))) {
+                return;
+            }
             if (e.getID() == MouseEvent.MOUSE_DRAGGED) {
                 if (!containsScreenPoint(active.view, e.getXOnScreen(), e.getYOnScreen())) {
                     endMouseInput(active, e);
