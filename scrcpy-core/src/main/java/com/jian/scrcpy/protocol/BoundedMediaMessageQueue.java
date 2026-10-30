@@ -3,8 +3,8 @@ package com.jian.scrcpy.protocol;
 import io.netty.buffer.ByteBuf;
 import io.netty.util.ReferenceCountUtil;
 
-import java.util.Iterator;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.function.Predicate;
 
 /**
  * Bounded live-media queue that sheds stale media packets before control or
@@ -50,49 +50,54 @@ public final class BoundedMediaMessageQueue {
     }
 
     private static MediaMessage removeOldestNonKeyFramePacket(ArrayBlockingQueue<MediaMessage> queue) {
-        Iterator<MediaMessage> iterator = queue.iterator();
-        while (iterator.hasNext()) {
-            MediaMessage message = iterator.next();
-            if (message instanceof MediaMessage.Packet packet
-                    && !packet.config() && !packet.keyFrame()) {
-                iterator.remove();
-                return message;
-            }
-        }
-        return null;
+        return removeFirstMatching(queue, message ->
+                message instanceof MediaMessage.Packet packet
+                        && !packet.config() && !packet.keyFrame());
     }
 
     private static MediaMessage removeOldestMediaPacket(ArrayBlockingQueue<MediaMessage> queue) {
-        Iterator<MediaMessage> iterator = queue.iterator();
-        while (iterator.hasNext()) {
-            MediaMessage message = iterator.next();
-            if (message instanceof MediaMessage.Packet packet && !packet.config()) {
-                iterator.remove();
-                return message;
-            }
-        }
-        return null;
+        return removeFirstMatching(queue, message ->
+                message instanceof MediaMessage.Packet packet && !packet.config());
     }
 
     private static MediaMessage removeDuplicateControl(ArrayBlockingQueue<MediaMessage> queue,
                                                        MediaMessage incoming) {
-        Iterator<MediaMessage> iterator = queue.iterator();
-        while (iterator.hasNext()) {
-            MediaMessage queued = iterator.next();
-            boolean duplicate = incoming instanceof MediaMessage.Codec
-                    && queued instanceof MediaMessage.Codec
-                    || incoming instanceof MediaMessage.Session
-                    && queued instanceof MediaMessage.Session
-                    || incoming instanceof MediaMessage.Packet incomingPacket
-                    && incomingPacket.config()
-                    && queued instanceof MediaMessage.Packet queuedPacket
-                    && queuedPacket.config();
-            if (duplicate) {
-                iterator.remove();
-                return queued;
+        return removeFirstMatching(queue, queued ->
+                incoming instanceof MediaMessage.Codec && queued instanceof MediaMessage.Codec
+                        || incoming instanceof MediaMessage.Session && queued instanceof MediaMessage.Session
+                        || incoming instanceof MediaMessage.Packet incomingPacket
+                        && incomingPacket.config()
+                        && queued instanceof MediaMessage.Packet queuedPacket
+                        && queuedPacket.config());
+    }
+
+    /**
+     * ArrayBlockingQueue's iterator is weakly consistent. Calling iterator.remove()
+     * while the decoder thread concurrently polls can remove a different element
+     * after the queue shifts, causing a buffer to be released while it is still
+     * queued and later released again by the consumer. Find a candidate, then
+     * remove that exact object atomically under ArrayBlockingQueue's own lock.
+     */
+    private static MediaMessage removeFirstMatching(ArrayBlockingQueue<MediaMessage> queue,
+                                                    Predicate<MediaMessage> predicate) {
+        for (;;) {
+            MediaMessage candidate = null;
+            for (MediaMessage message : queue) {
+                if (predicate.test(message)) {
+                    candidate = message;
+                    break;
+                }
             }
+            if (candidate == null) {
+                return null;
+            }
+            MediaMessage selected = candidate;
+            if (queue.removeIf(message -> message == selected)) {
+                return selected;
+            }
+            // The decoder may have polled this exact candidate after iteration.
+            // Retry against the current queue; never release an item we didn't remove.
         }
-        return null;
     }
 
     private static boolean isControlOrConfig(MediaMessage message) {
