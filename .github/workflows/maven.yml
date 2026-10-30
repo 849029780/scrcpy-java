@@ -17,9 +17,7 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      windows: ${{ steps.filter.outputs.windows }}
-      linux: ${{ steps.filter.outputs.linux }}
-      macos: ${{ steps.filter.outputs.macos }}
+      matrix: ${{ steps.matrix.outputs.value }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,46 +38,51 @@ jobs:
               - 'scrcpy-swing-poc/native/CMakeLists.txt'
               - 'scrcpy-swing-poc/native/src/scrcpy_swing_metal.mm'
               - '.github/workflows/maven.yml'
+      - name: Generate only the required native build matrix
+        id: matrix
+        shell: bash
+        env:
+          WINDOWS_CHANGED: ${{ steps.filter.outputs.windows }}
+          LINUX_CHANGED: ${{ steps.filter.outputs.linux }}
+          MACOS_CHANGED: ${{ steps.filter.outputs.macos }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          include='[]'
+          add_platform() {
+            include="$(jq -c --arg platform "$1" --arg os "$2" --arg library "$3" --arg source "$4" \
+              '. + [{platform:$platform, os:$os, library:$library, source:$source}]' <<< "$include")"
+          }
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$WINDOWS_CHANGED" == "true" ]]; then
+            add_platform windows windows-latest scrcpy_swing_d3d11.dll scrcpy-swing-poc/native/build/Release/scrcpy_swing_d3d11.dll
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$LINUX_CHANGED" == "true" ]]; then
+            add_platform linux ubuntu-latest libscrcpy_swing_vaapi.so scrcpy-swing-poc/native/build/libscrcpy_swing_vaapi.so
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$MACOS_CHANGED" == "true" ]]; then
+            add_platform macos macos-latest libscrcpy_swing_metal.dylib scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib
+          fi
+          matrix="$(jq -cn --argjson include "$include" '{include:$include}')"
+          echo "value=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Native build matrix: $matrix"
 
   native:
     needs: changes
-    if: ${{ always() && needs.changes.result == 'success' }}
+    if: ${{ needs.changes.result == 'success' }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: windows
-            os: windows-latest
-            target: windows-x86_64
-            library: scrcpy_swing_d3d11.dll
-            source: scrcpy-swing-poc/native/build/Release/scrcpy_swing_d3d11.dll
-          - platform: linux
-            os: ubuntu-latest
-            target: linux-x86_64
-            library: libscrcpy_swing_vaapi.so
-            source: scrcpy-swing-poc/native/build/libscrcpy_swing_vaapi.so
-          - platform: macos
-            os: macos-latest
-            target: macos-aarch64
-            library: libscrcpy_swing_metal.dylib
-            source: scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Check whether this platform needs rebuilding
-        if: ${{ github.event_name != 'workflow_dispatch' && needs.changes.outputs[matrix.platform] != 'true' }}
-        run: echo "No native source changes for ${{ matrix.platform }}; this matrix entry should be skipped."
       - uses: actions/checkout@v4
-        if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs[matrix.platform] == 'true' }}
       - uses: actions/setup-java@v5
-        if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs[matrix.platform] == 'true' }}
         with:
           distribution: temurin
           java-version: '25'
       - name: Install Linux native renderer dependencies
-        if: ${{ matrix.platform == 'linux' && (github.event_name == 'workflow_dispatch' || needs.changes.outputs[matrix.platform] == 'true') }}
+        if: matrix.platform == 'linux'
         run: sudo apt-get update && sudo apt-get install -y libva-dev libva-x11-2 libx11-dev pkg-config
       - name: Configure native Swing renderer
-        if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs[matrix.platform] == 'true' }}
         shell: bash
         run: |
           if [[ "${{ matrix.platform }}" == "windows" ]]; then
@@ -88,20 +91,27 @@ jobs:
             cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -DCMAKE_BUILD_TYPE=Release
           fi
       - name: Build native Swing renderer
-        if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs[matrix.platform] == 'true' }}
         run: cmake --build scrcpy-swing-poc/native/build --config Release
       - name: Stage native renderer artifact
-        if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs[matrix.platform] == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "native-output/${{ matrix.target }}"
-          cp "${{ matrix.source }}" "native-output/${{ matrix.target }}/${{ matrix.library }}"
+          case "${{ matrix.platform }}" in
+            windows) target="windows-x86_64" ;;
+            linux) target="linux-x86_64" ;;
+            macos)
+              case "$(uname -m)" in
+                arm64|aarch64) target="macos-aarch64" ;;
+                *) target="macos-x86_64" ;;
+              esac
+              ;;
+          esac
+          mkdir -p "native-output/$target"
+          cp "${{ matrix.source }}" "native-output/$target/${{ matrix.library }}"
       - name: Upload native renderer
-        if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs[matrix.platform] == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: scrcpy-swing-native-${{ matrix.target }}
+          name: scrcpy-swing-native-${{ matrix.platform }}
           path: native-output/
           if-no-files-found: error
 
@@ -128,9 +138,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -d native-artifacts ]]; then
-            cp -R native-artifacts/. scrcpy-swing-poc/src/main/resources/native/
-          fi
+          cp -R native-artifacts/. scrcpy-swing-poc/src/main/resources/native/
       - name: Build Java modules once
         run: mvn -B -ntp clean verify
 
