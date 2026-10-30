@@ -12,5 +12,13 @@
       <artifactId>scrcpy-core</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- SDL3 native runtime. The Windows x64 classifier contains SDL3.dll. -->
+    <dependency>
+      <groupId>org.lwjgl</groupId>
+      <artifactId>lwjgl-sdl</artifactId>
+      <version>${lwjgl.version}</version>
+      <classifier>natives-windows</classifier>
+      <scope>runtime</scope>
+    </dependency>
   </dependencies>
 </project>
