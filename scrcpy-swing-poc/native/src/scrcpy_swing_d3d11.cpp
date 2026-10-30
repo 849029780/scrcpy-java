@@ -313,6 +313,7 @@ struct Renderer {
             const float black[4] = {0.f, 0.f, 0.f, 1.f};
             context->OMSetRenderTargets(1, &renderTarget, nullptr);
             context->ClearRenderTargetView(renderTarget, black);
+            context->OMSetRenderTargets(0, nullptr, nullptr);
 
             D3D11_VIDEO_PROCESSOR_STREAM stream{};
             stream.Enable = TRUE;
