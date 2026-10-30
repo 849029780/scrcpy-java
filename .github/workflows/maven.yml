@@ -4,8 +4,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Only the newest run for a workflow/branch is useful during active development.
-# Keep workflow name in the key so Maven CI never cancels packaging/release work.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,9 +22,46 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: maven
-      - name: Build Swing D3D11 native renderer
-        if: runner.os == 'Windows'
+
+      - name: Install Linux native renderer dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libva-dev libva-x11-2 libx11-dev pkg-config
+
+      - name: Configure native Swing renderer
+        shell: bash
         run: |
-          cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
-          cmake --build scrcpy-swing-poc/native/build --config Release
-      - run: mvn -B -ntp clean verify
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
+          else
+            cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -DCMAKE_BUILD_TYPE=Release
+          fi
+
+      - name: Build native Swing renderer
+        run: cmake --build scrcpy-swing-poc/native/build --config Release
+
+      - name: Build Java modules
+        run: mvn -B -ntp clean verify
+
+      - name: Upload Windows D3D11 renderer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrcpy-swing-native-windows-x64
+          path: scrcpy-swing-poc/native/build/Release/scrcpy_swing_d3d11.dll
+          if-no-files-found: error
+
+      - name: Upload Linux VAAPI renderer
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrcpy-swing-native-linux-x64
+          path: scrcpy-swing-poc/native/build/libscrcpy_swing_vaapi.so
+          if-no-files-found: error
+
+      - name: Upload macOS Metal renderer
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrcpy-swing-native-macos
+          path: scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib
+          if-no-files-found: error
