@@ -24,4 +24,9 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: maven
+      - name: Build Swing D3D11 native renderer
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
+          cmake --build scrcpy-swing-poc/native/build --config Release
       - run: mvn -B -ntp clean verify
