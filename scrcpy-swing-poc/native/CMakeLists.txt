@@ -1,29 +1,39 @@
 cmake_minimum_required(VERSION 3.24)
-project(scrcpy_swing_d3d11 LANGUAGES CXX)
-
-if(NOT WIN32)
-    message(FATAL_ERROR "The Swing/JAWT/D3D11 PoC currently targets Windows only.")
-endif()
+project(scrcpy_swing_native LANGUAGES CXX)
 
 find_package(JNI REQUIRED)
 
-find_library(JAWT_LIBRARY jawt
-    HINTS "$ENV{JAVA_HOME}/lib"
-    REQUIRED
-)
-
-add_library(scrcpy_swing_d3d11 SHARED
-    src/scrcpy_swing_d3d11.cpp
-)
-
-target_compile_features(scrcpy_swing_d3d11 PRIVATE cxx_std_17)
-target_include_directories(scrcpy_swing_d3d11 PRIVATE ${JNI_INCLUDE_DIRS})
-target_link_libraries(scrcpy_swing_d3d11 PRIVATE
-    ${JAWT_LIBRARY}
-    d3d11
-    dxgi
-)
-set_target_properties(scrcpy_swing_d3d11 PROPERTIES
-    OUTPUT_NAME "scrcpy_swing_d3d11"
-    WINDOWS_EXPORT_ALL_SYMBOLS OFF
-)
+if(WIN32)
+    find_library(JAWT_LIBRARY jawt HINTS "$ENV{JAVA_HOME}/lib" REQUIRED)
+    add_library(scrcpy_swing_d3d11 SHARED src/scrcpy_swing_d3d11.cpp)
+    target_compile_features(scrcpy_swing_d3d11 PRIVATE cxx_std_17)
+    target_include_directories(scrcpy_swing_d3d11 PRIVATE ${JNI_INCLUDE_DIRS})
+    target_link_libraries(scrcpy_swing_d3d11 PRIVATE ${JAWT_LIBRARY} d3d11 dxgi)
+    set_target_properties(scrcpy_swing_d3d11 PROPERTIES OUTPUT_NAME "scrcpy_swing_d3d11" WINDOWS_EXPORT_ALL_SYMBOLS OFF)
+elseif(APPLE)
+    enable_language(OBJCXX)
+    find_library(JAWT_LIBRARY jawt HINTS "$ENV{JAVA_HOME}/lib" REQUIRED)
+    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+    find_library(COREIMAGE_FRAMEWORK CoreImage REQUIRED)
+    find_library(COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+    add_library(scrcpy_swing_metal SHARED src/scrcpy_swing_metal.mm)
+    target_compile_features(scrcpy_swing_metal PRIVATE cxx_std_17)
+    target_include_directories(scrcpy_swing_metal PRIVATE ${JNI_INCLUDE_DIRS})
+    target_link_libraries(scrcpy_swing_metal PRIVATE ${JAWT_LIBRARY} ${APPKIT_FRAMEWORK} ${METAL_FRAMEWORK} ${QUARTZCORE_FRAMEWORK} ${COREIMAGE_FRAMEWORK} ${COREVIDEO_FRAMEWORK})
+    set_target_properties(scrcpy_swing_metal PROPERTIES OUTPUT_NAME "scrcpy_swing_metal")
+elseif(UNIX)
+    find_library(JAWT_LIBRARY jawt HINTS "$ENV{JAVA_HOME}/lib" REQUIRED)
+    find_package(X11 REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBVA REQUIRED libva libva-x11)
+    add_library(scrcpy_swing_vaapi SHARED src/scrcpy_swing_vaapi.cpp)
+    target_compile_features(scrcpy_swing_vaapi PRIVATE cxx_std_17)
+    target_include_directories(scrcpy_swing_vaapi PRIVATE ${JNI_INCLUDE_DIRS} ${X11_INCLUDE_DIR} ${LIBVA_INCLUDE_DIRS})
+    target_link_directories(scrcpy_swing_vaapi PRIVATE ${LIBVA_LIBRARY_DIRS})
+    target_link_libraries(scrcpy_swing_vaapi PRIVATE ${JAWT_LIBRARY} ${X11_LIBRARIES} ${LIBVA_LIBRARIES})
+    set_target_properties(scrcpy_swing_vaapi PROPERTIES OUTPUT_NAME "scrcpy_swing_vaapi")
+else()
+    message(FATAL_ERROR "Unsupported platform for Swing native hardware renderer")
+endif()
