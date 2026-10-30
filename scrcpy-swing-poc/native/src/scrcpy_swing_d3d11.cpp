@@ -10,7 +10,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <intrin.h>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -413,10 +415,22 @@ struct Renderer {
         // processor has finished reading it.
         context->End(completionQuery);
         context->Flush();
+        // Avoid continuously yielding the time slice while the GPU is
+        // processing this frame. A short pause-free spin keeps the common
+        // low-latency path responsive; after that, Sleep(1) substantially
+        // reduces CPU consumption when the GPU is busy.
+        const auto spinDeadline = std::chrono::steady_clock::now()
+                + std::chrono::microseconds(200);
         HRESULT completion = S_FALSE;
         while (completion == S_FALSE) {
             completion = context->GetData(completionQuery, nullptr, 0, 0);
-            if (completion == S_FALSE) Sleep(0);
+            if (completion == S_FALSE) {
+                if (std::chrono::steady_clock::now() < spinDeadline) {
+                    YieldProcessor();
+                } else {
+                    Sleep(1);
+                }
+            }
         }
         if (FAILED(completion)) return false;
         return SUCCEEDED(swapChain->Present(0, 0));
