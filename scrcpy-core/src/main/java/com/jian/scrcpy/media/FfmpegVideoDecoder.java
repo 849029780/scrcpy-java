@@ -91,6 +91,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // thread_count=0 auto mode may create a CPU-sized worker pool per decoder,
     // which scales poorly when several devices are connected at once.
     private static final int SOFTWARE_DECODER_THREADS = resolveSoftwareDecoderThreads();
+    private static final int FFMPEG_THREAD_SLICE = 2;
     private final AtomicLong statsDecodedFrames = new AtomicLong();
     private final AtomicLong statsHardwareFrames = new AtomicLong();
     private final AtomicLong statsSoftwareFrames = new AtomicLong();
@@ -240,7 +241,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         allocateFramesAndPacket();
         System.out.printf("[scrcpy-java][%s] video decoder: software (%s), threads=%d, threadType=%s%n",
                 serial, codecId, ctx.thread_count(),
-                (ctx.active_thread_type() & FF_THREAD_SLICE) != 0 ? "slice" : "serial");
+                (ctx.active_thread_type() & FFMPEG_THREAD_SLICE) != 0 ? "slice" : "serial");
     }
 
     private boolean tryInitHardware(AVCodec decoder, CodecId codecId, HardwareBackend backend) {
@@ -348,7 +349,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             codecContext.thread_count(SOFTWARE_DECODER_THREADS);
             // Frame threading adds decoder latency. Slice threading keeps work
             // within one frame and is ignored automatically when unsupported.
-            codecContext.thread_type(FF_THREAD_SLICE);
+            codecContext.thread_type(FFMPEG_THREAD_SLICE);
         }
         codecContext.flags(codecContext.flags() | AV_CODEC_FLAG_LOW_DELAY);
     }
