@@ -35,7 +35,7 @@ From the repository root:
 
 ```powershell
 mvn -pl scrcpy-swing-poc -am package
-mvn -pl scrcpy-swing-poc exec:java -Dexec.mainClass=com.jian.scrcpy.swing.SwingD3D11PoC
+java -Djava.library.path=scrcpy-swing-poc/native/build/Release -cp scrcpy-swing-poc/target/classes com.jian.scrcpy.swing.SwingD3D11PoC
 ```
 
 Alternatively, run `com.jian.scrcpy.swing.SwingD3D11PoC` from the IDE with the
