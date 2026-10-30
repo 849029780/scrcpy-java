@@ -20,6 +20,26 @@
 
 namespace {
 
+struct InputViewKey {
+    uintptr_t texture{};
+    UINT arraySlice{};
+    DXGI_FORMAT format{DXGI_FORMAT_UNKNOWN};
+
+    bool operator==(const InputViewKey& other) const noexcept {
+        return texture == other.texture && arraySlice == other.arraySlice
+                && format == other.format;
+    }
+};
+
+struct InputViewKeyHash {
+    size_t operator()(const InputViewKey& key) const noexcept {
+        size_t value = std::hash<uintptr_t>{}(key.texture);
+        value ^= std::hash<UINT>{}(key.arraySlice) + 0x9e3779b9 + (value << 6) + (value >> 2);
+        value ^= std::hash<UINT>{}(static_cast<UINT>(key.format)) + 0x9e3779b9 + (value << 6) + (value >> 2);
+        return value;
+    }
+};
+
 struct Renderer {
     HWND hwnd{};
     ID3D11Device* device{};
@@ -28,6 +48,8 @@ struct Renderer {
     ID3D11VideoContext* videoContext{};
     IDXGISwapChain* swapChain{};
     ID3D11RenderTargetView* renderTarget{};
+    ID3D11VideoProcessorOutputView* outputView{};
+    std::unordered_map<InputViewKey, ID3D11VideoProcessorInputView*, InputViewKeyHash> inputViews;
     ID3D11VideoProcessorEnumerator* processorEnumerator{};
     ID3D11VideoProcessor* processor{};
     ID3D11Query* completionQuery{};
@@ -50,7 +72,75 @@ struct Renderer {
         if (device) device->Release();
     }
 
+    void releaseInputViews() {
+        for (auto& entry : inputViews) {
+            if (entry.second) entry.second->Release();
+        }
+        inputViews.clear();
+    }
+
+    void releaseOutputView() {
+        if (outputView) {
+            outputView->Release();
+            outputView = nullptr;
+        }
+    }
+
+    bool ensureInputView(ID3D11Texture2D* texture, uintptr_t textureAddress,
+                         UINT arraySlice, DXGI_FORMAT format,
+                         ID3D11VideoProcessorInputView** result) {
+        const InputViewKey key{textureAddress, arraySlice, format};
+        auto found = inputViews.find(key);
+        if (found != inputViews.end()) {
+            *result = found->second;
+            return true;
+        }
+
+        D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC desc{};
+        desc.FourCC = 0;
+        desc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
+        desc.Texture2D.MipSlice = 0;
+        desc.Texture2D.ArraySlice = arraySlice;
+        ID3D11VideoProcessorInputView* view = nullptr;
+        HRESULT hr = videoDevice->CreateVideoProcessorInputView(
+            texture, processorEnumerator, &desc, &view);
+        if (FAILED(hr)) return false;
+
+        // A cached view retains its underlying decoder texture. Bound the cache
+        // so unusual drivers/stream reconfiguration cannot grow native memory
+        // without limit. Rendering is serialized per renderer and the previous
+        // GPU submission has completed before an entry can be evicted.
+        constexpr size_t MAX_CACHED_INPUT_VIEWS = 32;
+        if (inputViews.size() >= MAX_CACHED_INPUT_VIEWS) {
+            auto oldest = inputViews.begin();
+            if (oldest->second) oldest->second->Release();
+            inputViews.erase(oldest);
+        }
+        inputViews.emplace(key, view);
+        *result = view;
+        return true;
+    }
+
+    bool ensureOutputView() {
+        if (outputView) return true;
+        ID3D11Texture2D* backBuffer = nullptr;
+        HRESULT hr = swapChain->GetBuffer(
+            0, __uuidof(ID3D11Texture2D),
+            reinterpret_cast<void**>(&backBuffer));
+        if (FAILED(hr)) return false;
+
+        D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC desc{};
+        desc.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
+        desc.Texture2D.MipSlice = 0;
+        hr = videoDevice->CreateVideoProcessorOutputView(
+            backBuffer, processorEnumerator, &desc, &outputView);
+        backBuffer->Release();
+        return SUCCEEDED(hr);
+    }
+
     void releaseProcessor() {
+        releaseInputViews();
+        releaseOutputView();
         if (processor) {
             processor->Release();
             processor = nullptr;
@@ -166,6 +256,7 @@ struct Renderer {
     }
 
     void detachSurface() {
+        releaseOutputView();
         if (renderTarget) {
             renderTarget->Release();
             renderTarget = nullptr;
@@ -187,6 +278,7 @@ struct Renderer {
         if (newWidth == 0 || newHeight == 0) return false;
         if (newWidth == width && newHeight == height) return true;
 
+        releaseOutputView();
         if (renderTarget) {
             renderTarget->Release();
             renderTarget = nullptr;
@@ -264,30 +356,13 @@ struct Renderer {
             return false;
         }
 
-        ID3D11Texture2D* backBuffer = nullptr;
         ID3D11VideoProcessorInputView* inputView = nullptr;
-        ID3D11VideoProcessorOutputView* outputView = nullptr;
-        HRESULT hr = swapChain->GetBuffer(
-            0, __uuidof(ID3D11Texture2D),
-            reinterpret_cast<void**>(&backBuffer));
-        if (FAILED(hr)) return false;
-
-        D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC inputDesc{};
-        inputDesc.FourCC = 0;
-        inputDesc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
-        inputDesc.Texture2D.MipSlice = 0;
-        inputDesc.Texture2D.ArraySlice = static_cast<UINT>(arrayIndex);
-        hr = videoDevice->CreateVideoProcessorInputView(
-            texture, processorEnumerator, &inputDesc, &inputView);
-
-        if (SUCCEEDED(hr)) {
-            D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC outputDesc{};
-            outputDesc.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
-            outputDesc.Texture2D.MipSlice = 0;
-            hr = videoDevice->CreateVideoProcessorOutputView(
-                backBuffer, processorEnumerator, &outputDesc, &outputView);
+        HRESULT hr = S_OK;
+        if (!ensureInputView(texture, textureAddress, static_cast<UINT>(arrayIndex),
+                             textureDesc.Format, &inputView)
+                || !ensureOutputView()) {
+            return false;
         }
-
         if (SUCCEEDED(hr)) {
             const RECT sourceRect{0, 0, static_cast<LONG>(frameWidth), static_cast<LONG>(frameHeight)};
             const double scale = std::min(
@@ -329,10 +404,6 @@ struct Renderer {
             hr = videoContext->VideoProcessorBlt(
                 processor, outputView, 0, 1, &stream);
         }
-
-        if (outputView) outputView->Release();
-        if (inputView) inputView->Release();
-        backBuffer->Release();
 
         if (FAILED(hr)) return false;
 
