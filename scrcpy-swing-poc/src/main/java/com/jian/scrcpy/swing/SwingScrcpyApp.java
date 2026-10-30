@@ -57,10 +57,13 @@ public final class SwingScrcpyApp {
     private final JFrame frame = new JFrame("scrcpy-java - 多设备投屏（Swing）");
     private final JLabel status = new JLabel("正在扫描 ADB 设备...");
     private final JLabel primaryStatus = new JLabel("主设备：无");
-    private final JPanel primaryHost = new JPanel(new BorderLayout());
+    private final JPanel primaryHost = new JPanel(new BorderLayout()) {{
+        setOpaque(true);
+        setBackground(Color.BLACK);
+    }};
     private final JPanel secondaryGrid = new JPanel(new WrapLayout(FlowLayout.LEFT, 10, 10));
     private final JScrollPane secondaryScroll = new JScrollPane(secondaryGrid);
-    private final JPanel workspace = new JPanel(new BorderLayout(8, 0));
+    private final JPanel workspace = new JPanel(new BorderLayout(4, 0));
     private final Map<String, DeviceSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, ConnectionSettings> desiredConnections = new ConcurrentHashMap<>();
     private final Set<String> reconnecting = ConcurrentHashMap.newKeySet();
@@ -127,7 +130,8 @@ public final class SwingScrcpyApp {
         toolbar.add(status);
         toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(215, 215, 215)));
 
-        primaryHost.setBackground(new Color(24, 24, 24));
+        primaryHost.setOpaque(true);
+        primaryHost.setBackground(Color.BLACK);
         primaryHost.setPreferredSize(new Dimension(0, 0));
         primaryHost.setVisible(false);
         secondaryGrid.setBackground(new Color(24, 24, 24));
@@ -740,14 +744,18 @@ public final class SwingScrcpyApp {
         // late/repeated EDT callback after reconnect or a rapid connect action.
         if (sessions.get(device.serial()) != handle || handle.tile != null) return;
         JPanel tile = new JPanel(new BorderLayout(0, 0));
-        tile.setBackground(new Color(32, 32, 32));
+        tile.setOpaque(true);
+        tile.setBackground(Color.BLACK);
         tile.setBorder(BorderFactory.createLineBorder(new Color(68, 68, 68)));
         JLabel title = new JLabel(device.displayName());
         title.setOpaque(true); title.setBackground(Color.WHITE); title.setForeground(Color.BLACK);
         title.setFont(title.getFont().deriveFont(Font.BOLD));
         title.setBorder(new EmptyBorder(4, 6, 4, 6));
         JPanel videoAndNavigation = new JPanel(new BorderLayout(0, 0));
+        videoAndNavigation.setOpaque(true);
+        videoAndNavigation.setBackground(Color.BLACK);
         JPanel viewport = new JPanel(new BorderLayout());
+        viewport.setOpaque(true);
         viewport.setBackground(Color.BLACK);
         viewport.add(handle.view, BorderLayout.CENTER);
         JPanel navigation = createNavigationBar(handle, device);
@@ -1234,8 +1242,12 @@ public final class SwingScrcpyApp {
             detachTile(handle.tile);
             primaryHost.add(handle.tile, BorderLayout.CENTER);
         }
+        // Keep the primary container only as wide as its video plus toolbar.
+        // A fixed 780px WEST region creates large letterbox gaps on portrait devices.
+        primaryHost.removeAll();
+        primaryHost.add(handle.tile, BorderLayout.CENTER);
         primaryHost.setVisible(true);
-        primaryHost.setPreferredSize(new Dimension(PRIMARY_WIDTH, 0));
+        primaryHost.setPreferredSize(new Dimension(handle.tile.getPreferredSize().width, 0));
         workspace.add(primaryHost, BorderLayout.WEST);
         resizeTile(handle, true);
         refreshPrimaryUi();
@@ -1255,6 +1267,7 @@ public final class SwingScrcpyApp {
             old.primary = false;
             resizeTile(old, false);
         }
+        primaryHost.removeAll();
         primaryHost.setVisible(false);
         primaryHost.setPreferredSize(new Dimension(0, 0));
         workspace.remove(primaryHost);
@@ -1289,9 +1302,15 @@ public final class SwingScrcpyApp {
         if (vh > maxH) { vh = maxH; vw = (int) Math.round(vh * aspect); }
         Dimension preferred = new Dimension(vw + NAV_WIDTH, vh + 30);
         handle.tile.setPreferredSize(preferred);
+        handle.tile.setMinimumSize(preferred);
         handle.viewport.setPreferredSize(new Dimension(vw, vh));
         handle.view.setPreferredSize(new Dimension(vw, vh));
         handle.tile.revalidate();
+        if (primary && Objects.equals(primarySerial, handle.device == null ? null : handle.device.serial())) {
+            primaryHost.setPreferredSize(new Dimension(preferred.width, 0));
+            primaryHost.revalidate();
+            workspace.revalidate();
+        }
     }
 
     private void refreshPrimaryUi() {
