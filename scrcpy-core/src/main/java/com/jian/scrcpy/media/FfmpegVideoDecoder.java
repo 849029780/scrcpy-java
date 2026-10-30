@@ -80,8 +80,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             Boolean.getBoolean("scrcpy.video.debug.skip-decode");
     private static final boolean DEBUG_SKIP_SWS_SCALE =
             Boolean.getBoolean("scrcpy.video.debug.skip-sws-scale");
+    // Enabled by default so GPU zero-readback behavior is visible without
+    // requiring a JVM flag. Set -Dscrcpy.video.stats=false to silence it.
     private static final boolean VIDEO_STATS_ENABLED =
-            Boolean.getBoolean("scrcpy.video.stats");
+            Boolean.parseBoolean(System.getProperty("scrcpy.video.stats", "true"));
     // Experimental: independent AVCodecContext instances may decode in
     // parallel. Keep initialization, fallback and destruction globally
     // serialized until all hardware backends have been stress-tested.
@@ -93,7 +95,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private static final int SOFTWARE_DECODER_THREADS = resolveSoftwareDecoderThreads();
     private static final int FFMPEG_THREAD_SLICE = 2;
     private final AtomicLong statsDecodedFrames = new AtomicLong();
+    // hardwareFrames counts frames accepted by the renderer's native GPU
+    // presentation path (not merely frames decoded by a hardware decoder).
     private final AtomicLong statsHardwareFrames = new AtomicLong();
+    private final AtomicLong statsNativePresentationMisses = new AtomicLong();
+    private final AtomicLong statsHardwareTransferAttempts = new AtomicLong();
+    private final AtomicLong statsHardwareTransferSuccesses = new AtomicLong();
+    private final AtomicLong statsHardwareTransferFailures = new AtomicLong();
     private final AtomicLong statsSoftwareFrames = new AtomicLong();
     private final AtomicLong statsQueueDrops = new AtomicLong();
     private final AtomicLong statsPoolMisses = new AtomicLong();
@@ -558,11 +566,20 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                     }
                 }
 
+                // A miss here means the renderer did not present the D3D11
+                // texture directly. Count the explicit GPU->system-memory
+                // transfer separately so zero-readback can be verified.
+                statsNativePresentationMisses.incrementAndGet();
+                statsHardwareTransferAttempts.incrementAndGet();
                 int transferResult = withDecoderLock(() -> {
                     av_frame_unref(softwareFrame);
                     return av_hwframe_transfer_data(softwareFrame, frame, 0);
                 });
-                if (transferResult < 0) continue;
+                if (transferResult < 0) {
+                    statsHardwareTransferFailures.incrementAndGet();
+                    continue;
+                }
+                statsHardwareTransferSuccesses.incrementAndGet();
                 source = softwareFrame;
             }
             if (DEBUG_SKIP_SWS_SCALE) continue;
@@ -648,6 +665,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         long decoded = statsDecodedFrames.getAndSet(0);
         long hardware = statsHardwareFrames.getAndSet(0);
+        long nativeMisses = statsNativePresentationMisses.getAndSet(0);
+        long transferAttempts = statsHardwareTransferAttempts.getAndSet(0);
+        long transferSuccesses = statsHardwareTransferSuccesses.getAndSet(0);
+        long transferFailures = statsHardwareTransferFailures.getAndSet(0);
         long software = statsSoftwareFrames.getAndSet(0);
         long queueDrops = statsQueueDrops.getAndSet(0);
         long poolMisses = statsPoolMisses.getAndSet(0);
@@ -664,8 +685,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         double scaleAverageMs = scaleCount == 0 ? 0.0 : scaleNanos / 1_000_000.0 / scaleCount;
         System.out.printf(
                 Locale.ROOT,
-                "[scrcpy-java][%s] video stats: decoded=%.1f fps, hardware=%.1f fps, software=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/16%n",
-                serial, decodedFps, hardware / seconds, software / seconds,
+                "[scrcpy-java][%s] video stats: decoded=%.1f fps, gpuNativePresent=%.1f fps, nativePresentMisses=%d, hwToCpuTransfers=%d/%d (failed=%d), softwarePresent=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/16%n",
+                serial, decodedFps, hardware / seconds, nativeMisses,
+                transferSuccesses, transferAttempts, transferFailures, software / seconds,
                 queueDrops, poolMisses, scaleAverageMs,
                 PARALLEL_NATIVE_DECODE ? "parallel-device" : "global",
                 lockWaitNanos / 1_000_000.0, lockHoldNanos / 1_000_000.0,
