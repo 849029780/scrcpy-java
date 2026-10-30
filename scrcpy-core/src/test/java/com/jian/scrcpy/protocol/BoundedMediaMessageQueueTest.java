@@ -4,7 +4,12 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -67,6 +72,43 @@ class BoundedMediaMessageQueueTest {
         assertEquals(0, incomingData.refCnt());
         assertSame(codec, queue.poll());
         assertSame(session, queue.poll());
+    }
+
+    @Test
+    void concurrentConsumerAndEvictionReleaseEveryBufferExactlyOnce() throws Exception {
+        ArrayBlockingQueue<MediaMessage> queue = new ArrayBlockingQueue<>(8);
+        List<ByteBuf> buffers = new ArrayList<>();
+        AtomicBoolean producerDone = new AtomicBoolean();
+        AtomicReference<Throwable> consumerFailure = new AtomicReference<>();
+
+        Thread consumer = new Thread(() -> {
+            try {
+                while (!producerDone.get() || !queue.isEmpty()) {
+                    MediaMessage message = queue.poll(1, TimeUnit.MILLISECONDS);
+                    if (message instanceof MediaMessage.Packet packet) {
+                        packet.data().release();
+                    }
+                }
+            } catch (Throwable failure) {
+                consumerFailure.set(failure);
+            }
+        });
+        consumer.start();
+
+        for (int i = 0; i < 20_000; i++) {
+            ByteBuf data = packetBuffer();
+            buffers.add(data);
+            BoundedMediaMessageQueue.offer(queue,
+                    new MediaMessage.Packet(i, false, false, data));
+        }
+        producerDone.set(true);
+        consumer.join(5_000);
+
+        assertFalse(consumer.isAlive(), "consumer should drain the queue");
+        assertNull(consumerFailure.get(), "consumer must not double-release a buffer");
+        for (ByteBuf data : buffers) {
+            assertEquals(0, data.refCnt(), "every accepted, evicted or dropped buffer must be released");
+        }
     }
 
     private static ByteBuf packetBuffer() {
