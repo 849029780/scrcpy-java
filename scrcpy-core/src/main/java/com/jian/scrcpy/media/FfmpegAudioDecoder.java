@@ -100,18 +100,15 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
 
     @Override
     protected void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
-        // SimpleChannelInboundHandler auto-releases the inbound message after
-        // channelRead0 returns. Retain one reference before transferring queue
-        // ownership to the asynchronous decoder worker. The queue helper owns
-        // this retained reference and releases it on eviction/drop; the worker
-        // releases it after decode. Netty auto-release handles the closed path.
         if (closed.get()) {
+            releaseMessage(m);
             return;
         }
-        ReferenceCountUtil.retain(m);
+        // MediaMessage is a plain record, not a ReferenceCounted wrapper.
+        // The Packet's ByteBuf ownership transfers to the queue and is released
+        // by the worker or by the bounded-queue eviction/drop path.
         BoundedMediaMessageQueue.offer(decodeQueue, m);
     }
-
     private void decodeLoop() {
         try {
             while (!closed.get() || !decodeQueue.isEmpty()) {
