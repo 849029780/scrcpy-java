@@ -22,7 +22,7 @@ import static org.bytedeco.ffmpeg.global.avutil.*;
  * wrapping an AddRef'd reference to that exact device, so decoded D3D11 textures
  * can be consumed by the same device without downloading them to system memory.
  */
-public final class SwingD3D11VideoRenderer implements VideoRenderer, VideoHardwareDeviceProvider, AutoCloseable {
+public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer {
     private static final class NativePointer extends Pointer {
         NativePointer(long address) {
             this.address = address;
@@ -38,6 +38,9 @@ public final class SwingD3D11VideoRenderer implements VideoRenderer, VideoHardwa
         this.canvas = new NativeD3D11Canvas();
         surface.installNativeCanvas(canvas);
     }
+
+    @Override
+    public String backend() { return "d3d11va"; }
 
     @Override
     public AVBufferRef createDeviceContext(int ffmpegDeviceType) {
