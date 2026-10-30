@@ -14,10 +14,54 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 public final class ScrcpyConnection implements AutoCloseable {
-    private final EventLoopGroup group =
-            new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-    private final EventLoopGroup acceptGroup =
-            new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+    /**
+     * All device sockets are non-blocking and can share a bounded process-wide
+     * event-loop pool. Creating two one-thread groups per device scales to
+     * 100 platform threads for 50 devices and wastes thread stacks/schedulers.
+     */
+    private static final class SharedEventLoops {
+        private static EventLoopGroup ioGroup;
+        private static EventLoopGroup acceptGroup;
+        private static int references;
+
+        static synchronized Groups acquire() {
+            if (ioGroup == null || ioGroup.isShuttingDown() || ioGroup.isShutdown()) {
+                int threads = Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors()));
+                ioGroup = new MultiThreadIoEventLoopGroup(threads, NioIoHandler.newFactory());
+                acceptGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+            }
+            references++;
+            return new Groups(acceptGroup, ioGroup);
+        }
+
+        static void release() {
+            EventLoopGroup ioToClose = null;
+            EventLoopGroup acceptToClose = null;
+            synchronized (SharedEventLoops.class) {
+                if (references <= 0) return;
+                references--;
+                if (references == 0) {
+                    ioToClose = ioGroup;
+                    acceptToClose = acceptGroup;
+                    ioGroup = null;
+                    acceptGroup = null;
+                }
+            }
+            if (acceptToClose != null) {
+                acceptToClose.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
+            }
+            if (ioToClose != null) {
+                ioToClose.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
+            }
+        }
+
+        private record Groups(EventLoopGroup accept, EventLoopGroup io) {
+        }
+    }
+
+    private final SharedEventLoops.Groups eventLoops = SharedEventLoops.acquire();
+    private final EventLoopGroup group = eventLoops.io();
+    private final EventLoopGroup acceptGroup = eventLoops.accept();
     private final int port;
     private Channel video, audio, control, listener;
     private volatile ControlMessageQueue controlQueue;
@@ -171,7 +215,9 @@ public final class ScrcpyConnection implements AutoCloseable {
             try { channel.close().syncUninterruptibly(); }
             catch (Throwable t) { System.err.println("[scrcpy-java] channel close failed: " + t); }
         }
-        acceptGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
-        group.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
+        // Event loops are shared by all active device connections. Release
+        // this connection's lease; the shared groups shut down after the last
+        // device closes, keeping reconnect and partial-startup paths safe.
+        SharedEventLoops.release();
     }
 }
