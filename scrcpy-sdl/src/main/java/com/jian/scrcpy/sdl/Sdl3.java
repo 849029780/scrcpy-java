@@ -28,9 +28,27 @@ final class Sdl3 implements AutoCloseable {
 
     Sdl3() {
         String explicit = System.getProperty("scrcpy.sdl3");
-        symbols = explicit == null || explicit.isBlank()
-                ? SymbolLookup.loaderLookup()
-                : SymbolLookup.libraryLookup(Path.of(explicit), arena);
+        if (explicit != null && !explicit.isBlank()) {
+            Path libraryPath = Path.of(explicit).toAbsolutePath().normalize();
+            if (!java.nio.file.Files.isRegularFile(libraryPath)) {
+                throw new IllegalStateException("SDL3 library does not exist: " + libraryPath);
+            }
+            symbols = SymbolLookup.libraryLookup(libraryPath, arena);
+        } else {
+            // loaderLookup() only searches symbols from libraries already loaded
+            // into the JVM's native library namespace. It does not load SDL3.
+            // Load the SDL3 shared library explicitly and bind symbols to that
+            // library's lookup instead of accidentally searching the JVM process.
+            String libraryName = System.mapLibraryName("SDL3");
+            try {
+                symbols = SymbolLookup.libraryLookup(libraryName, arena);
+            } catch (RuntimeException e) {
+                throw new IllegalStateException(
+                        "Unable to load SDL3 (" + libraryName + "). Put SDL3 on the native library path "
+                                + "or set -Dscrcpy.sdl3 to the absolute path of SDL3.dll.",
+                        e);
+            }
+        }
         init = fn("SDL_Init", FunctionDescriptor.of(JAVA_BOOLEAN, JAVA_INT));
         quit = fn("SDL_Quit", FunctionDescriptor.ofVoid());
         createWindow = fn("SDL_CreateWindow",
