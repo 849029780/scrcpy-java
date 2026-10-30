@@ -82,6 +82,11 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             Boolean.getBoolean("scrcpy.video.debug.skip-sws-scale");
     private static final boolean VIDEO_STATS_ENABLED =
             Boolean.getBoolean("scrcpy.video.stats");
+    // Experimental: independent AVCodecContext instances may decode in
+    // parallel. Keep initialization, fallback and destruction globally
+    // serialized until all hardware backends have been stress-tested.
+    private static final boolean PARALLEL_NATIVE_DECODE =
+            Boolean.getBoolean("scrcpy.video.parallel-native");
     private final AtomicLong statsDecodedFrames = new AtomicLong();
     private final AtomicLong statsHardwareFrames = new AtomicLong();
     private final AtomicLong statsSoftwareFrames = new AtomicLong();
@@ -92,12 +97,18 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     private final AtomicLong statsLockWaitNanos = new AtomicLong();
     private final AtomicLong statsLockHoldNanos = new AtomicLong();
     private final AtomicLong statsLockContentions = new AtomicLong();
+    private final AtomicLong statsDeviceLockWaitNanos = new AtomicLong();
+    private final AtomicLong statsDeviceLockHoldNanos = new AtomicLong();
+    private final AtomicLong statsDeviceLockContentions = new AtomicLong();
     private long statsLastReportNanos = System.nanoTime();
 
     // Keep the existing global native lock for stability with multi-device
     // decoding. Hardware decoding can be made more parallel later once every
     // backend has been stress-tested independently.
     private static final ReentrantLock FFMPEG_VIDEO_LOCK = new ReentrantLock();
+    // A decoder worker exclusively owns its AVCodecContext, AVPacket and
+    // AVFrames. This lock is only a defensive per-instance boundary.
+    private final ReentrantLock decoderNativeLock = new ReentrantLock();
     // Keep the compressed backlog short. Retained Netty ByteBuf packets count
     // toward process memory and a long queue only adds latency for live video.
     private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(16);
@@ -461,7 +472,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         p.data().getBytes(p.data().readerIndex(), encoded, 0, payloadSize);
 
         int sendResult;
-        sendResult = withVideoLock(() -> {
+        sendResult = withDecoderLock(() -> {
             av_packet_unref(packet);
             if (av_new_packet(packet, payloadSize) < 0) return -1;
             packet.data().put(encoded, 0, payloadSize);
@@ -482,7 +493,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         int receiveResult;
         for (;;) {
-            receiveResult = withVideoLock(() -> avcodec_receive_frame(ctx, frame));
+            receiveResult = withDecoderLock(() -> avcodec_receive_frame(ctx, frame));
 
             if (receiveResult < 0) break;
             if (VIDEO_STATS_ENABLED) statsDecodedFrames.incrementAndGet();
@@ -510,7 +521,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                     }
                 }
 
-                int transferResult = withVideoLock(() -> {
+                int transferResult = withDecoderLock(() -> {
                     av_frame_unref(softwareFrame);
                     return av_hwframe_transfer_data(softwareFrame, frame, 0);
                 });
@@ -558,23 +569,36 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private <T> T withVideoLock(Supplier<T> operation) {
+        return withMeasuredLock(FFMPEG_VIDEO_LOCK, operation,
+                statsLockWaitNanos, statsLockHoldNanos, statsLockContentions);
+    }
+
+    private <T> T withDecoderLock(Supplier<T> operation) {
+        if (!PARALLEL_NATIVE_DECODE) {
+            return withVideoLock(operation);
+        }
+        return withMeasuredLock(decoderNativeLock, operation,
+                statsDeviceLockWaitNanos, statsDeviceLockHoldNanos, statsDeviceLockContentions);
+    }
+
+    private <T> T withMeasuredLock(ReentrantLock lock, Supplier<T> operation,
+                                   AtomicLong waitNanos, AtomicLong holdNanos,
+                                   AtomicLong contentions) {
         long waitStarted = VIDEO_STATS_ENABLED ? System.nanoTime() : 0L;
-        // tryLock() measures actual acquisition contention. isLocked() can
-        // report a race where the lock is released before this thread queues.
-        boolean acquiredImmediately = FFMPEG_VIDEO_LOCK.tryLock();
+        // tryLock() measures actual acquisition contention instead of racing
+        // with isLocked() and potentially over-counting waiters.
+        boolean acquiredImmediately = lock.tryLock();
         if (!acquiredImmediately) {
-            if (VIDEO_STATS_ENABLED) statsLockContentions.incrementAndGet();
-            FFMPEG_VIDEO_LOCK.lock();
+            if (VIDEO_STATS_ENABLED) contentions.incrementAndGet();
+            lock.lock();
         }
         long acquired = VIDEO_STATS_ENABLED ? System.nanoTime() : 0L;
         try {
-            if (VIDEO_STATS_ENABLED) {
-                statsLockWaitNanos.addAndGet(acquired - waitStarted);
-            }
+            if (VIDEO_STATS_ENABLED) waitNanos.addAndGet(acquired - waitStarted);
             return operation.get();
         } finally {
-            if (VIDEO_STATS_ENABLED) statsLockHoldNanos.addAndGet(System.nanoTime() - acquired);
-            FFMPEG_VIDEO_LOCK.unlock();
+            if (VIDEO_STATS_ENABLED) holdNanos.addAndGet(System.nanoTime() - acquired);
+            lock.unlock();
         }
     }
 
@@ -595,16 +619,22 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         long lockWaitNanos = statsLockWaitNanos.getAndSet(0);
         long lockHoldNanos = statsLockHoldNanos.getAndSet(0);
         long lockContentions = statsLockContentions.getAndSet(0);
+        long deviceLockWaitNanos = statsDeviceLockWaitNanos.getAndSet(0);
+        long deviceLockHoldNanos = statsDeviceLockHoldNanos.getAndSet(0);
+        long deviceLockContentions = statsDeviceLockContentions.getAndSet(0);
         double seconds = elapsed / 1_000_000_000.0;
         double decodedFps = decoded / seconds;
         double scaleAverageMs = scaleCount == 0 ? 0.0 : scaleNanos / 1_000_000.0 / scaleCount;
         System.out.printf(
                 Locale.ROOT,
-                "[scrcpy-java][%s] video stats: decoded=%.1f fps, hardware=%.1f fps, software=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockWait=%.2f ms, nativeLockHold=%.2f ms, nativeLockContended=%d, queue=%d/16%n",
+                "[scrcpy-java][%s] video stats: decoded=%.1f fps, hardware=%.1f fps, software=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/16%n",
                 serial, decodedFps, hardware / seconds, software / seconds,
                 queueDrops, poolMisses, scaleAverageMs,
+                PARALLEL_NATIVE_DECODE ? "parallel-device" : "global",
                 lockWaitNanos / 1_000_000.0, lockHoldNanos / 1_000_000.0,
-                lockContentions, decodeQueue.size());
+                lockContentions,
+                deviceLockWaitNanos / 1_000_000.0, deviceLockHoldNanos / 1_000_000.0,
+                deviceLockContentions, decodeQueue.size());
     }
 
     private byte[] ensureEncodedCapacity(int size) {
