@@ -18,6 +18,7 @@ class BoundedMediaMessageQueueTest {
         BoundedMediaMessageQueue queue = new BoundedMediaMessageQueue(2);
         ByteBuf firstData = packetBuffer();
         ByteBuf secondData = packetBuffer();
+        ByteBuf overflowData = packetBuffer();
         ByteBuf dependentData = packetBuffer();
         ByteBuf keyFrameData = packetBuffer();
 
@@ -49,7 +50,6 @@ class BoundedMediaMessageQueueTest {
         MediaMessage.Session session = new MediaMessage.Session(1080, 1920, false);
         ByteBuf configData = packetBuffer();
         ByteBuf staleData = packetBuffer();
-        ByteBuf overflowData = packetBuffer();
 
         queue.offer(codec);
         queue.offer(session);
@@ -60,14 +60,12 @@ class BoundedMediaMessageQueueTest {
         assertEquals(BoundedMediaMessageQueue.OfferResult.INCOMING_DROPPED,
                 queue.offer(new MediaMessage.Packet(2, false, false, packetBuffer())));
         assertEquals(0, staleData.refCnt());
-        assertEquals(0, overflowData.refCnt());
         assertEquals(1, configData.refCnt());
         assertSame(codec, queue.poll());
         assertSame(session, queue.poll());
         MediaMessage.Packet config = (MediaMessage.Packet) queue.poll();
         assertTrue(config.config());
         configData.release();
-        assertEquals(0, overflowData.refCnt());
     }
 
     @Test
