@@ -30,6 +30,9 @@ struct Renderer {
     UINT height{};
     UINT processorWidth{};
     UINT processorHeight{};
+    UINT processorOutputWidth{};
+    UINT processorOutputHeight{};
+    DXGI_FORMAT processorFormat{DXGI_FORMAT_UNKNOWN};
 
     ~Renderer() {
         releaseProcessor();
@@ -50,6 +53,8 @@ struct Renderer {
             processorEnumerator = nullptr;
         }
         processorWidth = processorHeight = 0;
+        processorOutputWidth = processorOutputHeight = 0;
+        processorFormat = DXGI_FORMAT_UNKNOWN;
     }
 
     bool createDevice() {
@@ -185,7 +190,9 @@ struct Renderer {
     }
 
     bool ensureVideoProcessor(UINT frameWidth, UINT frameHeight, DXGI_FORMAT inputFormat) {
-        if (processor && processorWidth == frameWidth && processorHeight == frameHeight) {
+        if (processor && processorWidth == frameWidth && processorHeight == frameHeight
+                && processorFormat == inputFormat
+                && processorOutputWidth == width && processorOutputHeight == height) {
             UINT support = 0;
             if (SUCCEEDED(videoDevice->CheckVideoProcessorFormat(inputFormat, &support))
                     && (support & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT)) {
@@ -227,6 +234,9 @@ struct Renderer {
         }
         processorWidth = frameWidth;
         processorHeight = frameHeight;
+        processorOutputWidth = width;
+        processorOutputHeight = height;
+        processorFormat = inputFormat;
         return true;
     }
 
