@@ -187,14 +187,19 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
                     long token = Math.abs(completedToken);
                     PendingFrame completed = inFlight.remove(token);
                     if (completed != null) {
-                        if (completedToken > 0) {
-                            onPresented(completed);
-                        } else {
-                            statsCompletionFailures.incrementAndGet();
-                            System.err.printf("[scrcpy-swing][%s] D3D11 GPU work completed but Present failed; frame dropped%n",
-                                    completed.frame.serial());
+                        try {
+                            if (completedToken > 0) {
+                                onPresented(completed);
+                            } else {
+                                statsCompletionFailures.incrementAndGet();
+                                System.err.printf("[scrcpy-swing][%s] D3D11 GPU completion or Present failed; frame dropped%n",
+                                        completed.frame.serial());
+                            }
+                        } finally {
+                            // The AVFrame reference must be released even if the
+                            // Swing surface callback throws after native Present.
+                            completed.frame.close();
                         }
-                        completed.frame.close();
                     }
                     progressed = true;
                 }
