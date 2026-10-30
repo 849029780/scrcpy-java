@@ -12,6 +12,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <deque>
+#include <array>
 #include <intrin.h>
 #include <functional>
 #include <memory>
@@ -43,7 +45,24 @@ struct InputViewKeyHash {
     }
 };
 
+struct FrameSlot {
+    ID3D11Texture2D* texture{};
+    ID3D11RenderTargetView* renderTarget{};
+    ID3D11VideoProcessorOutputView* outputView{};
+    ID3D11Query* completionQuery{};
+    jlong token{};
+
+    void release() {
+        if (completionQuery) { completionQuery->Release(); completionQuery = nullptr; }
+        if (outputView) { outputView->Release(); outputView = nullptr; }
+        if (renderTarget) { renderTarget->Release(); renderTarget = nullptr; }
+        if (texture) { texture->Release(); texture = nullptr; }
+        token = 0;
+    }
+};
+
 struct Renderer {
+    static constexpr size_t MAX_IN_FLIGHT_FRAMES = 3;
     HWND hwnd{};
     ID3D11Device* device{};
     ID3D11DeviceContext* context{};
@@ -51,8 +70,11 @@ struct Renderer {
     ID3D11VideoContext* videoContext{};
     IDXGISwapChain* swapChain{};
     ID3D11RenderTargetView* renderTarget{};
-    ID3D11VideoProcessorOutputView* outputView{};
     std::unordered_map<InputViewKey, ID3D11VideoProcessorInputView*, InputViewKeyHash> inputViews;
+    std::array<FrameSlot, MAX_IN_FLIGHT_FRAMES> frameSlots{};
+    std::deque<size_t> inFlightSlots;
+    std::deque<jlong> completedTokens;
+    jlong nextFrameToken{1};
     ID3D11VideoProcessorEnumerator* processorEnumerator{};
     ID3D11VideoProcessor* processor{};
     ID3D11Query* completionQuery{};
@@ -66,6 +88,7 @@ struct Renderer {
     DXGI_FORMAT processorFormat{DXGI_FORMAT_UNKNOWN};
 
     ~Renderer() {
+        drainInFlight(false);
         releaseProcessor();
         detachSurface();
         if (completionQuery) completionQuery->Release();
@@ -82,11 +105,104 @@ struct Renderer {
         inputViews.clear();
     }
 
+    void releaseFrameSlots() {
+        for (auto& slot : frameSlots) slot.release();
+        inFlightSlots.clear();
+    }
+
     void releaseOutputView() {
-        if (outputView) {
-            outputView->Release();
-            outputView = nullptr;
+        // The swap-chain output view was replaced by per-frame output views.
+    }
+
+    bool ensureFrameSlot(FrameSlot& slot) {
+        if (slot.texture && slot.renderTarget && slot.outputView && slot.completionQuery) {
+            return true;
         }
+        slot.release();
+
+        D3D11_TEXTURE2D_DESC textureDesc{};
+        textureDesc.Width = width;
+        textureDesc.Height = height;
+        textureDesc.MipLevels = 1;
+        textureDesc.ArraySize = 1;
+        textureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        textureDesc.SampleDesc.Count = 1;
+        textureDesc.Usage = D3D11_USAGE_DEFAULT;
+        textureDesc.BindFlags = D3D11_BIND_RENDER_TARGET;
+        HRESULT hr = device->CreateTexture2D(&textureDesc, nullptr, &slot.texture);
+        if (FAILED(hr)) { slot.release(); return false; }
+
+        hr = device->CreateRenderTargetView(slot.texture, nullptr, &slot.renderTarget);
+        if (FAILED(hr)) { slot.release(); return false; }
+
+        D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC outputDesc{};
+        outputDesc.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
+        outputDesc.Texture2D.MipSlice = 0;
+        hr = videoDevice->CreateVideoProcessorOutputView(
+            slot.texture, processorEnumerator, &outputDesc, &slot.outputView);
+        if (FAILED(hr)) { slot.release(); return false; }
+
+        D3D11_QUERY_DESC queryDesc{};
+        queryDesc.Query = D3D11_QUERY_EVENT;
+        hr = device->CreateQuery(&queryDesc, &slot.completionQuery);
+        if (FAILED(hr)) { slot.release(); return false; }
+        return true;
+    }
+
+    bool hasInFlightFrames() const { return !inFlightSlots.empty(); }
+
+    void drainInFlight(bool present) {
+        while (!inFlightSlots.empty()) {
+            const size_t index = inFlightSlots.front();
+            FrameSlot& slot = frameSlots[index];
+            HRESULT completion = S_FALSE;
+            while (completion == S_FALSE) {
+                completion = context->GetData(slot.completionQuery, nullptr, 0, 0);
+                if (completion == S_FALSE) Sleep(1);
+            }
+            bool shown = false;
+            if (SUCCEEDED(completion) && present && swapChain && hwnd && IsWindow(hwnd)) {
+                ID3D11Texture2D* backBuffer = nullptr;
+                if (SUCCEEDED(swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D),
+                        reinterpret_cast<void**>(&backBuffer)))) {
+                    context->CopyResource(backBuffer, slot.texture);
+                    backBuffer->Release();
+                    shown = SUCCEEDED(swapChain->Present(0, 0));
+                }
+            }
+            completedTokens.push_back(shown ? slot.token : -slot.token);
+            slot.release();
+            inFlightSlots.pop_front();
+        }
+    }
+
+    jlong pollCompletedFrame() {
+        if (!completedTokens.empty()) {
+            const jlong token = completedTokens.front();
+            completedTokens.pop_front();
+            return token;
+        }
+        if (inFlightSlots.empty()) return 0;
+
+        const size_t index = inFlightSlots.front();
+        FrameSlot& slot = frameSlots[index];
+        const HRESULT completion = context->GetData(slot.completionQuery, nullptr, 0, 0);
+        if (completion == S_FALSE) return 0;
+
+        bool shown = false;
+        if (SUCCEEDED(completion) && swapChain && hwnd && IsWindow(hwnd)) {
+            ID3D11Texture2D* backBuffer = nullptr;
+            if (SUCCEEDED(swapChain->GetBuffer(0, __uuidof(ID3D11Texture2D),
+                    reinterpret_cast<void**>(&backBuffer)))) {
+                context->CopyResource(backBuffer, slot.texture);
+                backBuffer->Release();
+                shown = SUCCEEDED(swapChain->Present(0, 0));
+            }
+        }
+        const jlong token = shown ? slot.token : -slot.token;
+        slot.release();
+        inFlightSlots.pop_front();
+        return token;
     }
 
     bool ensureInputView(ID3D11Texture2D* texture, uintptr_t textureAddress,
@@ -143,7 +259,7 @@ struct Renderer {
 
     void releaseProcessor() {
         releaseInputViews();
-        releaseOutputView();
+        releaseFrameSlots();
         if (processor) {
             processor->Release();
             processor = nullptr;
@@ -259,7 +375,7 @@ struct Renderer {
     }
 
     void detachSurface() {
-        releaseOutputView();
+        releaseFrameSlots();
         if (renderTarget) {
             renderTarget->Release();
             renderTarget = nullptr;
@@ -280,8 +396,9 @@ struct Renderer {
         const UINT newHeight = static_cast<UINT>(rect.bottom - rect.top);
         if (newWidth == 0 || newHeight == 0) return false;
         if (newWidth == width && newHeight == height) return true;
+        if (hasInFlightFrames()) return false;
 
-        releaseOutputView();
+        releaseFrameSlots();
         if (renderTarget) {
             renderTarget->Release();
             renderTarget = nullptr;
@@ -345,95 +462,93 @@ struct Renderer {
         return true;
     }
 
-    bool renderHardware(uintptr_t textureAddress, uintptr_t arrayIndex,
-                        UINT frameWidth, UINT frameHeight,
-                        int colorSpace, int colorRange) {
-        if (!resizeIfNeeded() || textureAddress == 0 || frameWidth == 0 || frameHeight == 0) {
-            return false;
+    jlong submitHardware(uintptr_t textureAddress, uintptr_t arrayIndex,
+                         UINT frameWidth, UINT frameHeight,
+                         int colorSpace, int colorRange) {
+        if (!hwnd || !IsWindow(hwnd) || textureAddress == 0
+                || frameWidth == 0 || frameHeight == 0) return -1;
+
+        RECT rect{};
+        if (!GetClientRect(hwnd, &rect)) return -1;
+        const UINT requestedWidth = static_cast<UINT>(std::max<LONG>(1, rect.right - rect.left));
+        const UINT requestedHeight = static_cast<UINT>(std::max<LONG>(1, rect.bottom - rect.top));
+        if ((requestedWidth != width || requestedHeight != height) && hasInFlightFrames()) {
+            return 0; // Backpressure until the old-size GPU submissions complete.
         }
+        if (!resizeIfNeeded()) return hasInFlightFrames() ? 0 : -1;
 
         auto* texture = reinterpret_cast<ID3D11Texture2D*>(textureAddress);
         D3D11_TEXTURE2D_DESC textureDesc{};
         texture->GetDesc(&textureDesc);
-        if (!ensureVideoProcessor(frameWidth, frameHeight, textureDesc.Format)) {
-            return false;
+
+        if (processor && (processorWidth != frameWidth || processorHeight != frameHeight
+                || processorFormat != textureDesc.Format
+                || processorOutputWidth != width || processorOutputHeight != height)
+                && hasInFlightFrames()) {
+            return 0;
         }
+        if (!ensureVideoProcessor(frameWidth, frameHeight, textureDesc.Format)) return -1;
+
+        size_t slotIndex = frameSlots.size();
+        for (size_t i = 0; i < frameSlots.size(); ++i) {
+            if (frameSlots[i].token == 0) { slotIndex = i; break; }
+        }
+        if (slotIndex == frameSlots.size()) return 0;
+
+        FrameSlot& slot = frameSlots[slotIndex];
+        if (!ensureFrameSlot(slot)) return -1;
 
         ID3D11VideoProcessorInputView* inputView = nullptr;
-        HRESULT hr = S_OK;
         if (!ensureInputView(texture, textureAddress, static_cast<UINT>(arrayIndex),
-                             textureDesc.Format, &inputView)
-                || !ensureOutputView()) {
-            return false;
-        }
-        if (SUCCEEDED(hr)) {
-            const RECT sourceRect{0, 0, static_cast<LONG>(frameWidth), static_cast<LONG>(frameHeight)};
-            const double scale = std::min(
-                width / static_cast<double>(frameWidth),
-                height / static_cast<double>(frameHeight));
-            const LONG destWidth = static_cast<LONG>(frameWidth * scale + 0.5);
-            const LONG destHeight = static_cast<LONG>(frameHeight * scale + 0.5);
-            const LONG left = (static_cast<LONG>(width) - destWidth) / 2;
-            const LONG top = (static_cast<LONG>(height) - destHeight) / 2;
-            const RECT destRect{left, top, left + destWidth, top + destHeight};
+                             textureDesc.Format, &inputView)) return -1;
 
-            D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColor{};
-            inputColor.YCbCr_Matrix = (colorSpace == 1 || colorSpace == 9 || colorSpace == 10) ? 1 : 0;
-            inputColor.Nominal_Range = colorRange == 2 ? 2 : 1;
-            D3D11_VIDEO_PROCESSOR_COLOR_SPACE outputColor{};
-            outputColor.RGB_Range = 0;
+        const RECT sourceRect{0, 0, static_cast<LONG>(frameWidth), static_cast<LONG>(frameHeight)};
+        const double scale = std::min(
+            width / static_cast<double>(frameWidth),
+            height / static_cast<double>(frameHeight));
+        const LONG destWidth = static_cast<LONG>(frameWidth * scale + 0.5);
+        const LONG destHeight = static_cast<LONG>(frameHeight * scale + 0.5);
+        const LONG left = (static_cast<LONG>(width) - destWidth) / 2;
+        const LONG top = (static_cast<LONG>(height) - destHeight) / 2;
+        const RECT destRect{left, top, left + destWidth, top + destHeight};
 
-            videoContext->VideoProcessorSetStreamFrameFormat(
-                processor, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
-            videoContext->VideoProcessorSetStreamSourceRect(processor, 0, TRUE, &sourceRect);
-            const RECT outputRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
-            videoContext->VideoProcessorSetStreamDestRect(processor, 0, TRUE, &destRect);
-            videoContext->VideoProcessorSetOutputTargetRect(processor, TRUE, &outputRect);
-            videoContext->VideoProcessorSetStreamColorSpace(processor, 0, &inputColor);
-            videoContext->VideoProcessorSetOutputColorSpace(processor, &outputColor);
+        D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColor{};
+        inputColor.YCbCr_Matrix = (colorSpace == 1 || colorSpace == 9 || colorSpace == 10) ? 1 : 0;
+        inputColor.Nominal_Range = colorRange == 2 ? 2 : 1;
+        D3D11_VIDEO_PROCESSOR_COLOR_SPACE outputColor{};
+        outputColor.RGB_Range = 0;
 
-            const float black[4] = {0.f, 0.f, 0.f, 1.f};
-            context->OMSetRenderTargets(1, &renderTarget, nullptr);
-            context->ClearRenderTargetView(renderTarget, black);
-            context->OMSetRenderTargets(0, nullptr, nullptr);
+        videoContext->VideoProcessorSetStreamFrameFormat(
+            processor, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
+        videoContext->VideoProcessorSetStreamSourceRect(processor, 0, TRUE, &sourceRect);
+        const RECT outputRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+        videoContext->VideoProcessorSetStreamDestRect(processor, 0, TRUE, &destRect);
+        videoContext->VideoProcessorSetOutputTargetRect(processor, TRUE, &outputRect);
+        videoContext->VideoProcessorSetStreamColorSpace(processor, 0, &inputColor);
+        videoContext->VideoProcessorSetOutputColorSpace(processor, &outputColor);
 
-            D3D11_VIDEO_PROCESSOR_STREAM stream{};
-            stream.Enable = TRUE;
-            stream.OutputIndex = 0;
-            stream.InputFrameOrField = 0;
-            stream.PastFrames = 0;
-            stream.FutureFrames = 0;
-            stream.pInputSurface = inputView;
-            hr = videoContext->VideoProcessorBlt(
-                processor, outputView, 0, 1, &stream);
-        }
+        const float black[4] = {0.f, 0.f, 0.f, 1.f};
+        context->OMSetRenderTargets(1, &slot.renderTarget, nullptr);
+        context->ClearRenderTargetView(slot.renderTarget, black);
+        context->OMSetRenderTargets(0, nullptr, nullptr);
 
-        if (FAILED(hr)) return false;
+        D3D11_VIDEO_PROCESSOR_STREAM stream{};
+        stream.Enable = TRUE;
+        stream.OutputIndex = 0;
+        stream.InputFrameOrField = 0;
+        stream.PastFrames = 0;
+        stream.FutureFrames = 0;
+        stream.pInputSurface = inputView;
+        const HRESULT hr = videoContext->VideoProcessorBlt(
+            processor, slot.outputView, 0, 1, &stream);
+        if (FAILED(hr)) return -1;
 
-        // AVFrame owns the decoder's texture-array slice. Do not return from
-        // this call (and let FFmpeg recycle that slice) until the video
-        // processor has finished reading it.
-        context->End(completionQuery);
+        const jlong token = nextFrameToken++;
+        slot.token = token;
+        context->End(slot.completionQuery);
         context->Flush();
-        // Avoid continuously yielding the time slice while the GPU is
-        // processing this frame. A short pause-free spin keeps the common
-        // low-latency path responsive; after that, Sleep(1) substantially
-        // reduces CPU consumption when the GPU is busy.
-        const auto spinDeadline = std::chrono::steady_clock::now()
-                + std::chrono::microseconds(200);
-        HRESULT completion = S_FALSE;
-        while (completion == S_FALSE) {
-            completion = context->GetData(completionQuery, nullptr, 0, 0);
-            if (completion == S_FALSE) {
-                if (std::chrono::steady_clock::now() < spinDeadline) {
-                    YieldProcessor();
-                } else {
-                    Sleep(1);
-                }
-            }
-        }
-        if (FAILED(completion)) return false;
-        return SUCCEEDED(swapChain->Present(0, 0));
+        inFlightSlots.push_back(slotIndex);
+        return token;
     }
 
     void renderTestColor() {
@@ -556,16 +671,25 @@ Java_com_jian_scrcpy_swing_NativeD3D11Canvas_releaseDevicePointer0(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_jian_scrcpy_swing_NativeD3D11Canvas_renderHardware0(
+Java_com_jian_scrcpy_swing_NativeD3D11Canvas_submitHardware0(
     JNIEnv*, jclass, jlong handle, jlong texture, jlong arrayIndex,
     jint width, jint height, jint colorSpace, jint colorRange) {
     auto renderer = findRenderer(handle);
-    if (!renderer) return JNI_FALSE;
+    if (!renderer) return -1;
     std::lock_guard<std::mutex> guard(renderer->mutex);
-    return renderer->renderHardware(
+    return renderer->submitHardware(
         static_cast<uintptr_t>(texture), static_cast<uintptr_t>(arrayIndex),
         static_cast<UINT>(width), static_cast<UINT>(height),
-        colorSpace, colorRange) ? JNI_TRUE : JNI_FALSE;
+        colorSpace, colorRange);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_jian_scrcpy_swing_NativeD3D11Canvas_pollCompleted0(
+    JNIEnv*, jclass, jlong handle) {
+    auto renderer = findRenderer(handle);
+    if (!renderer) return 0;
+    std::lock_guard<std::mutex> guard(renderer->mutex);
+    return renderer->pollCompletedFrame();
 }
 
 extern "C" JNIEXPORT void JNICALL
