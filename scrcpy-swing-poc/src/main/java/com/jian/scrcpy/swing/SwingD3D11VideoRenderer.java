@@ -11,7 +11,6 @@ import org.bytedeco.javacpp.BytePointer;
 import org.bytedeco.javacpp.Pointer;
 import org.bytedeco.javacpp.PointerPointer;
 
-import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.bytedeco.ffmpeg.global.avutil.*;
@@ -40,7 +39,13 @@ public final class SwingD3D11VideoRenderer implements VideoRenderer, VideoHardwa
             return null;
         }
 
-        long devicePointer = canvas.retainD3D11Device();
+        long devicePointer;
+        try {
+            devicePointer = canvas.retainD3D11Device();
+        } catch (Throwable error) {
+            System.err.println("[scrcpy-swing] D3D11 device is unavailable; using FFmpeg's default device: " + error);
+            return null;
+        }
         AVBufferRef reference = av_hwdevice_ctx_alloc(ffmpegDeviceType);
         if (reference == null || reference.isNull()) {
             canvas.releaseD3D11Device(devicePointer);
@@ -67,7 +72,8 @@ public final class SwingD3D11VideoRenderer implements VideoRenderer, VideoHardwa
             return reference;
         } catch (Throwable error) {
             av_buffer_unref(reference);
-            throw error;
+            System.err.println("[scrcpy-swing] cannot initialize shared D3D11VA device: " + error);
+            return null;
         }
     }
 
@@ -84,13 +90,19 @@ public final class SwingD3D11VideoRenderer implements VideoRenderer, VideoHardwa
             return false;
         }
 
-        boolean rendered = canvas.renderHardwareFrame(
-                texture.address(),
-                arrayIndex == null || arrayIndex.isNull() ? 0 : arrayIndex.address(),
-                frame.width(),
-                frame.height(),
-                frame.colorspace(),
-                frame.color_range());
+        boolean rendered;
+        try {
+            rendered = canvas.renderHardwareFrame(
+                    texture.address(),
+                    arrayIndex == null || arrayIndex.isNull() ? 0 : arrayIndex.address(),
+                    frame.width(),
+                    frame.height(),
+                    frame.colorspace(),
+                    frame.color_range());
+        } catch (Throwable error) {
+            System.err.println("[scrcpy-swing] D3D11 texture presentation failed; falling back to system-memory frame: " + error);
+            return false;
+        }
 
         if (!rendered) {
             return false;
