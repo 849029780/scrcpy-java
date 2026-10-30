@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -112,9 +113,9 @@ struct Renderer {
         // GPU submission has completed before an entry can be evicted.
         constexpr size_t MAX_CACHED_INPUT_VIEWS = 32;
         if (inputViews.size() >= MAX_CACHED_INPUT_VIEWS) {
-            auto oldest = inputViews.begin();
-            if (oldest->second) oldest->second->Release();
-            inputViews.erase(oldest);
+            auto entry = inputViews.begin();
+            if (entry->second) entry->second->Release();
+            inputViews.erase(entry);
         }
         inputViews.emplace(key, view);
         *result = view;
