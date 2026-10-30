@@ -18,6 +18,7 @@
         <javafx.version>25.0.1</javafx.version>
         <javacpp.version>1.5.14</javacpp.version>
         <ffmpeg.version>8.1.2-${javacpp.version}</ffmpeg.version>
+        <lwjgl.version>3.4.3</lwjgl.version>
         <junit.version>5.14.0</junit.version>
     </properties>
     <dependencyManagement>
