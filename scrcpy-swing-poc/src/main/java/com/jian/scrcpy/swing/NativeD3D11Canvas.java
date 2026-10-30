@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
     static {
-        System.loadLibrary("scrcpy_swing_d3d11");
+        NativeLibraryLoader.load("scrcpy_swing_d3d11.dll");
     }
 
     private volatile long nativeHandle;
