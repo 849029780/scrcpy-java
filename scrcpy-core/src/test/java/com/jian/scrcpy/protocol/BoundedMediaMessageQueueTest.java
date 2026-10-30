@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -15,43 +14,78 @@ import static org.junit.jupiter.api.Assertions.*;
 class BoundedMediaMessageQueueTest {
 
     @Test
-    void evictsOldestNonKeyFrameAndReleasesItsBuffer() {
+    void overflowDropsWholeReferenceChainAndWaitsForNextKeyFrame() {
         BoundedMediaMessageQueue queue = new BoundedMediaMessageQueue(2);
-        ByteBuf staleData = packetBuffer();
+        ByteBuf firstData = packetBuffer();
+        ByteBuf secondData = packetBuffer();
+        ByteBuf overflowData = packetBuffer();
+        ByteBuf dependentData = packetBuffer();
         ByteBuf keyFrameData = packetBuffer();
-        ByteBuf incomingData = packetBuffer();
-        MediaMessage.Packet stale = new MediaMessage.Packet(1, false, false, staleData);
-        MediaMessage.Packet keyFrame = new MediaMessage.Packet(2, false, true, keyFrameData);
-        MediaMessage.Packet incoming = new MediaMessage.Packet(3, false, false, incomingData);
-        queue.offer(stale);
-        queue.offer(keyFrame);
 
-        var result = queue.offer(incoming);
+        MediaMessage.Packet first = new MediaMessage.Packet(1, false, true, firstData);
+        MediaMessage.Packet second = new MediaMessage.Packet(2, false, false, secondData);
+        queue.offer(first);
+        queue.offer(second);
 
-        assertEquals(BoundedMediaMessageQueue.OfferResult.ENQUEUED_AFTER_EVICTION, result);
-        assertEquals(0, staleData.refCnt());
-        assertEquals(1, keyFrameData.refCnt());
-        assertEquals(1, incomingData.refCnt());
-        assertSame(keyFrame, queue.poll());
-        assertSame(incoming, queue.poll());
+        assertEquals(BoundedMediaMessageQueue.OfferResult.INCOMING_DROPPED,
+                queue.offer(new MediaMessage.Packet(3, false, false, overflowData)));
+        assertEquals(0, firstData.refCnt());
+        assertEquals(0, secondData.refCnt());
+        assertEquals(0, overflowData.refCnt());
+        assertTrue(queue.isEmpty());
+
+        assertEquals(BoundedMediaMessageQueue.OfferResult.INCOMING_DROPPED,
+                queue.offer(new MediaMessage.Packet(4, false, false, dependentData)));
+        assertEquals(0, dependentData.refCnt());
+
+        MediaMessage.Packet recoveryKeyFrame = new MediaMessage.Packet(5, false, true, keyFrameData);
+        assertEquals(BoundedMediaMessageQueue.OfferResult.ENQUEUED, queue.offer(recoveryKeyFrame));
+        assertSame(recoveryKeyFrame, queue.poll());
         keyFrameData.release();
-        incomingData.release();
     }
 
     @Test
-    void preservesCodecAndSessionMessagesWhenDroppingVideoPackets() {
-        BoundedMediaMessageQueue queue = new BoundedMediaMessageQueue(2);
+    void preservesCodecSessionAndConfigurationDuringKeyFrameRecovery() {
+        BoundedMediaMessageQueue queue = new BoundedMediaMessageQueue(3);
         MediaMessage.Codec codec = new MediaMessage.Codec(CodecId.H264);
+        MediaMessage.Session session = new MediaMessage.Session(1080, 1920, false);
+        ByteBuf configData = packetBuffer();
         ByteBuf staleData = packetBuffer();
+        ByteBuf overflowData = packetBuffer();
+
         queue.offer(codec);
-        queue.offer(new MediaMessage.Packet(1, false, false, staleData));
-
-        var result = queue.offer(new MediaMessage.Session(1080, 1920, false));
-
-        assertEquals(BoundedMediaMessageQueue.OfferResult.ENQUEUED_AFTER_EVICTION, result);
+        queue.offer(session);
+        queue.offer(new MediaMessage.Packet(0, true, false, configData));
+        // Queue is full; incoming inter frame triggers recovery.
+        assertEquals(BoundedMediaMessageQueue.OfferResult.INCOMING_DROPPED,
+                queue.offer(new MediaMessage.Packet(1, false, false, staleData)));
         assertEquals(0, staleData.refCnt());
+        assertEquals(1, configData.refCnt());
         assertSame(codec, queue.poll());
-        assertInstanceOf(MediaMessage.Session.class, queue.poll());
+        assertSame(session, queue.poll());
+        MediaMessage.Packet config = (MediaMessage.Packet) queue.poll();
+        assertTrue(config.config());
+        configData.release();
+        assertEquals(0, overflowData.refCnt());
+    }
+
+    @Test
+    void doesNotEvictKeyFrameAndContinueWithDependentFrames() {
+        BoundedMediaMessageQueue queue = new BoundedMediaMessageQueue(2);
+        ByteBuf keyData = packetBuffer();
+        ByteBuf interData = packetBuffer();
+        ByteBuf incomingData = packetBuffer();
+        MediaMessage.Packet key = new MediaMessage.Packet(1, false, true, keyData);
+        MediaMessage.Packet inter = new MediaMessage.Packet(2, false, false, interData);
+        queue.offer(key);
+        queue.offer(inter);
+
+        assertEquals(BoundedMediaMessageQueue.OfferResult.INCOMING_DROPPED,
+                queue.offer(new MediaMessage.Packet(3, false, false, incomingData)));
+        assertEquals(0, keyData.refCnt());
+        assertEquals(0, interData.refCnt());
+        assertEquals(0, incomingData.refCnt());
+        assertTrue(queue.isEmpty());
     }
 
     @Test
@@ -99,7 +133,7 @@ class BoundedMediaMessageQueueTest {
         for (int i = 0; i < 20_000; i++) {
             ByteBuf data = packetBuffer();
             buffers.add(data);
-            queue.offer(new MediaMessage.Packet(i, false, false, data));
+            queue.offer(new MediaMessage.Packet(i, false, i % 120 == 0, data));
         }
         producerDone.set(true);
         consumer.join(5_000);
