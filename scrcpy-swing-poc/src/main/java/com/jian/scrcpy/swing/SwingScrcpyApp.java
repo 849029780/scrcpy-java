@@ -736,6 +736,9 @@ public final class SwingScrcpyApp {
     }
 
     private void addScreen(DeviceSession handle, AdbDevice device) {
+        // A session must own exactly one tile. This also protects against a
+        // late/repeated EDT callback after reconnect or a rapid connect action.
+        if (sessions.get(device.serial()) != handle || handle.tile != null) return;
         JPanel tile = new JPanel(new BorderLayout(0, 0));
         tile.setBackground(new Color(32, 32, 32));
         tile.setBorder(BorderFactory.createLineBorder(new Color(68, 68, 68)));
@@ -1217,7 +1220,7 @@ public final class SwingScrcpyApp {
         DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
         if (old != null) {
             old.primary = false;
-            primaryHost.remove(old.tile);
+            detachTile(old.tile);
             int index = old.secondaryIndex;
             secondaryGrid.add(old.tile, Math.max(0, Math.min(index < 0 ? secondaryGrid.getComponentCount() : index, secondaryGrid.getComponentCount())));
             old.secondaryIndex = -1;
@@ -1228,7 +1231,10 @@ public final class SwingScrcpyApp {
         handle.primary = true;
         if (handle.tile != null) {
             handle.secondaryIndex = indexOfComponent(secondaryGrid, handle.tile);
-            secondaryGrid.remove(handle.tile);
+            // Remove from its actual parent, not just the expected container.
+            // AWT reparenting can otherwise leave stale layout state during a
+            // rapid sequence of primary-device switches.
+            detachTile(handle.tile);
             primaryHost.add(handle.tile, BorderLayout.CENTER);
         }
         primaryHost.setVisible(true);
@@ -1245,7 +1251,7 @@ public final class SwingScrcpyApp {
         DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
         primarySerial = null;
         if (old != null && old.tile != null) {
-            primaryHost.remove(old.tile);
+            detachTile(old.tile);
             int index = old.secondaryIndex;
             secondaryGrid.add(old.tile, Math.max(0, Math.min(index < 0 ? secondaryGrid.getComponentCount() : index, secondaryGrid.getComponentCount())));
             old.secondaryIndex = -1;
@@ -1257,6 +1263,16 @@ public final class SwingScrcpyApp {
         workspace.remove(primaryHost);
         refreshPrimaryUi();
         workspace.revalidate(); workspace.repaint();
+    }
+
+    private static void detachTile(Component tile) {
+        if (tile == null) return;
+        Container parent = tile.getParent();
+        if (parent != null) {
+            parent.remove(tile);
+            parent.revalidate();
+            parent.repaint();
+        }
     }
 
     private static int indexOfComponent(Container parent, Component child) {
