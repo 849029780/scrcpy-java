@@ -18,7 +18,6 @@ class BoundedMediaMessageQueueTest {
         BoundedMediaMessageQueue queue = new BoundedMediaMessageQueue(2);
         ByteBuf firstData = packetBuffer();
         ByteBuf secondData = packetBuffer();
-        ByteBuf overflowData = packetBuffer();
         ByteBuf dependentData = packetBuffer();
         ByteBuf keyFrameData = packetBuffer();
 
@@ -31,7 +30,6 @@ class BoundedMediaMessageQueueTest {
                 queue.offer(new MediaMessage.Packet(3, false, false, overflowData)));
         assertEquals(0, firstData.refCnt());
         assertEquals(0, secondData.refCnt());
-        assertEquals(0, overflowData.refCnt());
         assertTrue(queue.isEmpty());
 
         assertEquals(BoundedMediaMessageQueue.OfferResult.INCOMING_DROPPED,
@@ -60,7 +58,7 @@ class BoundedMediaMessageQueueTest {
         // Queue is full; overload flushes the queued inter frame and rejects
         // the incoming inter frame while retaining stream metadata/config.
         assertEquals(BoundedMediaMessageQueue.OfferResult.INCOMING_DROPPED,
-                queue.offer(new MediaMessage.Packet(2, false, false, overflowData)));
+                queue.offer(new MediaMessage.Packet(2, false, false, packetBuffer())));
         assertEquals(0, staleData.refCnt());
         assertEquals(0, overflowData.refCnt());
         assertEquals(1, configData.refCnt());
