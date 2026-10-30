@@ -206,7 +206,7 @@ struct Renderer {
     ID3D11DeviceContext* context{};
     ID3D11VideoDevice* videoDevice{};
     ID3D11VideoContext* videoContext{};
-    size_t sharedDeviceIndex{};
+    size_t sharedDeviceIndex{SharedD3D11Device::MAX_SHARED_DEVICES};
     IDXGISwapChain* swapChain{};
     ID3D11RenderTargetView* renderTarget{};
     std::unordered_map<InputViewKey, ID3D11VideoProcessorInputView*, InputViewKeyHash> inputViews;
@@ -229,7 +229,9 @@ struct Renderer {
         drainInFlight(false);
         releaseProcessor();
         detachSurface();
-        SharedD3D11Device::release(sharedDeviceIndex, device, context, videoDevice, videoContext);
+        if (sharedDeviceIndex < SharedD3D11Device::MAX_SHARED_DEVICES) {
+            SharedD3D11Device::release(sharedDeviceIndex, device, context, videoDevice, videoContext);
+        }
     }
 
     void releaseInputViews() {
