@@ -46,7 +46,7 @@ class BoundedMediaMessageQueueTest {
 
     @Test
     void preservesCodecSessionAndConfigurationDuringKeyFrameRecovery() {
-        BoundedMediaMessageQueue queue = new BoundedMediaMessageQueue(3);
+        BoundedMediaMessageQueue queue = new BoundedMediaMessageQueue(4);
         MediaMessage.Codec codec = new MediaMessage.Codec(CodecId.H264);
         MediaMessage.Session session = new MediaMessage.Session(1080, 1920, false);
         ByteBuf configData = packetBuffer();
@@ -56,10 +56,13 @@ class BoundedMediaMessageQueueTest {
         queue.offer(codec);
         queue.offer(session);
         queue.offer(new MediaMessage.Packet(0, true, false, configData));
-        // Queue is full; incoming inter frame triggers recovery.
+        queue.offer(new MediaMessage.Packet(1, false, false, staleData));
+        // Queue is full; overload flushes the queued inter frame and rejects
+        // the incoming inter frame while retaining stream metadata/config.
         assertEquals(BoundedMediaMessageQueue.OfferResult.INCOMING_DROPPED,
-                queue.offer(new MediaMessage.Packet(1, false, false, staleData)));
+                queue.offer(new MediaMessage.Packet(2, false, false, overflowData)));
         assertEquals(0, staleData.refCnt());
+        assertEquals(0, overflowData.refCnt());
         assertEquals(1, configData.refCnt());
         assertSame(codec, queue.poll());
         assertSame(session, queue.poll());
