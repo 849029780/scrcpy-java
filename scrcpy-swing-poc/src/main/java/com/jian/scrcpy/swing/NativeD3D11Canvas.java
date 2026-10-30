@@ -84,11 +84,23 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
         if (pointer != 0) releaseDevicePointer0(pointer);
     }
 
-    public boolean renderHardwareFrame(long texture, long arrayIndex, int width, int height,
-                                       int colorSpace, int colorRange) {
+    /**
+     * Submit one D3D11 frame without waiting for GPU completion.
+     *
+     * @return positive token when accepted, zero when the bounded native queue
+     *         is full (caller should retry), or -1 on a permanent submission failure.
+     */
+    public long submitHardwareFrame(long texture, long arrayIndex, int width, int height,
+                                    int colorSpace, int colorRange) {
         long handle = nativeHandle;
-        return !closed && surfaceAttached && handle != 0 && isDisplayable()
-                && renderHardware0(handle, texture, arrayIndex, width, height, colorSpace, colorRange);
+        if (closed || !surfaceAttached || handle == 0 || !isDisplayable()) return -1;
+        return submitHardware0(handle, texture, arrayIndex, width, height, colorSpace, colorRange);
+    }
+
+    /** Returns a completed token; negative tokens indicate presentation failure. */
+    public long pollCompletedFrame() {
+        long handle = nativeHandle;
+        return handle == 0 ? 0 : pollCompleted0(handle);
     }
 
     /** Retained for the standalone native-surface smoke test. */
@@ -115,8 +127,9 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
     private static native void detachSurface0(long handle);
     private static native long device0(long handle);
     private static native void releaseDevicePointer0(long pointer);
-    private static native boolean renderHardware0(long handle, long texture, long arrayIndex,
-                                                   int width, int height, int colorSpace, int colorRange);
+    private static native long submitHardware0(long handle, long texture, long arrayIndex,
+                                                int width, int height, int colorSpace, int colorRange);
+    private static native long pollCompleted0(long handle);
     private static native void render0(long handle);
     private static native void destroy0(long handle);
 }
