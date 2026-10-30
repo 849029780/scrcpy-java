@@ -138,6 +138,12 @@ public final class SwingScrcpyApp {
         secondaryScroll.getVerticalScrollBar().setUnitIncrement(24);
         workspace.setBackground(new Color(24, 24, 24));
         workspace.add(secondaryScroll, BorderLayout.CENTER);
+        workspace.addComponentListener(new ComponentAdapter() {
+            @Override public void componentResized(ComponentEvent e) {
+                DeviceSession primary = primarySerial == null ? null : sessions.get(primarySerial);
+                if (primary != null) resizeTile(primary, true);
+            }
+        });
 
         frame.add(toolbar, BorderLayout.NORTH);
         frame.add(workspace, BorderLayout.CENTER);
@@ -1289,7 +1295,13 @@ public final class SwingScrcpyApp {
     private void resizeTile(DeviceSession handle, boolean primary) {
         if (handle.tile == null) return;
         int maxW = primary ? 780 : TILE_WIDTH;
-        int maxH = primary ? 940 : TILE_HEIGHT;
+        // Fit the primary video to the currently available workspace height.
+        // Otherwise a fixed 940px tile is clipped by a shorter window and
+        // the aspect-fit renderer introduces wide horizontal side bars.
+        int availableHeight = workspace.getHeight() - 30;
+        int maxH = primary
+                ? Math.max(1, Math.min(940, availableHeight > 0 ? availableHeight : 940))
+                : TILE_HEIGHT;
         int fw = handle.view.frameWidth(), fh = handle.view.frameHeight();
         double aspect = fw > 0 && fh > 0 ? fw / (double) fh : 9.0 / 19.5;
         int vw = Math.min(maxW, (int) Math.round(maxH * aspect));
