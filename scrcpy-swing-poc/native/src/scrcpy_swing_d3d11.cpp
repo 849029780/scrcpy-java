@@ -49,6 +49,7 @@ struct FrameSlot {
     ID3D11Texture2D* texture{};
     ID3D11RenderTargetView* renderTarget{};
     ID3D11VideoProcessorOutputView* outputView{};
+    ID3D11Query* completionQuery{};
     jlong token{};
 
     void release() {
@@ -76,7 +77,6 @@ struct Renderer {
     jlong nextFrameToken{1};
     ID3D11VideoProcessorEnumerator* processorEnumerator{};
     ID3D11VideoProcessor* processor{};
-    ID3D11Query* completionQuery{};
     std::mutex mutex;
     UINT width{};
     UINT height{};
