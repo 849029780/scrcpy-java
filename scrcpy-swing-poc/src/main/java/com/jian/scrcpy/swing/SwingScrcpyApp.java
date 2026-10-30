@@ -1326,10 +1326,16 @@ public final class SwingScrcpyApp {
         double aspect = fw > 0 && fh > 0 ? fw / (double) fh : 9.0 / 19.5;
         // Fit the source aspect ratio inside both bounds. Never enlarge one
         // axis independently: this keeps the entire phone screen visible.
-        double scale = Math.min(maxW / (double) Math.max(1, fw),
-                maxH / (double) Math.max(1, fh));
-        int vw = Math.max(1, (int) Math.round((fw > 0 ? fw : 360) * scale));
-        int vh = Math.max(1, (int) Math.round((fh > 0 ? fh : 780) * scale));
+        int vw;
+        int vh;
+        if (fw > 0 && fh > 0) {
+            double scale = Math.min(maxW / (double) fw, maxH / (double) fh);
+            vw = Math.max(1, (int) Math.round(fw * scale));
+            vh = Math.max(1, (int) Math.round(fh * scale));
+        } else {
+            vw = Math.max(1, Math.min(maxW, (int) Math.round(maxH * aspect)));
+            vh = Math.max(1, (int) Math.round(vw / aspect));
+        }
         Dimension preferred = new Dimension(vw + NAV_WIDTH, vh + 30);
         handle.tile.setPreferredSize(preferred);
         handle.tile.setMinimumSize(preferred);
