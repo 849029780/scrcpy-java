@@ -61,6 +61,126 @@ struct FrameSlot {
     }
 };
 
+/**
+ * One process-wide D3D11 device/context shared by every per-window renderer.
+ * Each renderer still owns its swap chain, video processor, frame slots and
+ * input-view cache; only the expensive device/context objects are shared.
+ */
+struct SharedD3D11Device {
+    struct State {
+        std::mutex mutex;
+        ID3D11Device* device{};
+        ID3D11DeviceContext* context{};
+        ID3D11VideoDevice* videoDevice{};
+        ID3D11VideoContext* videoContext{};
+        size_t references{};
+    };
+
+    static State& state() {
+        static State value;
+        return value;
+    }
+
+    static bool acquire(ID3D11Device** outDevice,
+                        ID3D11DeviceContext** outContext,
+                        ID3D11VideoDevice** outVideoDevice,
+                        ID3D11VideoContext** outVideoContext) {
+        State& shared = state();
+        std::lock_guard<std::mutex> guard(shared.mutex);
+        if (!shared.device) {
+            const D3D_FEATURE_LEVEL levels[] = {
+                D3D_FEATURE_LEVEL_11_1,
+                D3D_FEATURE_LEVEL_11_0,
+                D3D_FEATURE_LEVEL_10_1,
+                D3D_FEATURE_LEVEL_10_0
+            };
+            D3D_FEATURE_LEVEL selected{};
+            ID3D11Device* device = nullptr;
+            ID3D11DeviceContext* context = nullptr;
+            HRESULT hr = D3D11CreateDevice(
+                nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
+                &device, &selected, &context);
+            if (FAILED(hr)) {
+                const D3D_FEATURE_LEVEL fallback[] = {
+                    D3D_FEATURE_LEVEL_11_0,
+                    D3D_FEATURE_LEVEL_10_1,
+                    D3D_FEATURE_LEVEL_10_0
+                };
+                hr = D3D11CreateDevice(
+                    nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                    D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                    fallback, ARRAYSIZE(fallback), D3D11_SDK_VERSION,
+                    &device, &selected, &context);
+            }
+            if (FAILED(hr)) {
+                if (context) context->Release();
+                if (device) device->Release();
+                return false;
+            }
+
+            ID3D11VideoDevice* videoDevice = nullptr;
+            ID3D11VideoContext* videoContext = nullptr;
+            if (FAILED(device->QueryInterface(__uuidof(ID3D11VideoDevice),
+                    reinterpret_cast<void**>(&videoDevice)))
+                    || FAILED(context->QueryInterface(__uuidof(ID3D11VideoContext),
+                    reinterpret_cast<void**>(&videoContext)))) {
+                if (videoContext) videoContext->Release();
+                if (videoDevice) videoDevice->Release();
+                context->Release();
+                device->Release();
+                return false;
+            }
+
+            // FFmpeg decoding and all per-window presentation renderers share
+            // this immediate context. Enable D3D11's built-in serialization.
+            ID3D11Multithread* multithread = nullptr;
+            if (SUCCEEDED(context->QueryInterface(__uuidof(ID3D11Multithread),
+                    reinterpret_cast<void**>(&multithread)))) {
+                multithread->SetMultithreadProtected(TRUE);
+                multithread->Release();
+            }
+
+            shared.device = device;
+            shared.context = context;
+            shared.videoDevice = videoDevice;
+            shared.videoContext = videoContext;
+        }
+
+        shared.device->AddRef();
+        shared.context->AddRef();
+        shared.videoDevice->AddRef();
+        shared.videoContext->AddRef();
+        *outDevice = shared.device;
+        *outContext = shared.context;
+        *outVideoDevice = shared.videoDevice;
+        *outVideoContext = shared.videoContext;
+        ++shared.references;
+        return true;
+    }
+
+    static void release(ID3D11Device*& device,
+                        ID3D11DeviceContext*& context,
+                        ID3D11VideoDevice*& videoDevice,
+                        ID3D11VideoContext*& videoContext) {
+        State& shared = state();
+        std::lock_guard<std::mutex> guard(shared.mutex);
+        if (videoContext) { videoContext->Release(); videoContext = nullptr; }
+        if (videoDevice) { videoDevice->Release(); videoDevice = nullptr; }
+        if (context) { context->Release(); context = nullptr; }
+        if (device) { device->Release(); device = nullptr; }
+
+        if (shared.references > 0) --shared.references;
+        if (shared.references == 0) {
+            if (shared.videoContext) { shared.videoContext->Release(); shared.videoContext = nullptr; }
+            if (shared.videoDevice) { shared.videoDevice->Release(); shared.videoDevice = nullptr; }
+            if (shared.context) { shared.context->Release(); shared.context = nullptr; }
+            if (shared.device) { shared.device->Release(); shared.device = nullptr; }
+        }
+    }
+};
+
 struct Renderer {
     static constexpr size_t MAX_IN_FLIGHT_FRAMES = 3;
     HWND hwnd{};
@@ -90,10 +210,7 @@ struct Renderer {
         drainInFlight(false);
         releaseProcessor();
         detachSurface();
-        if (videoContext) videoContext->Release();
-        if (videoDevice) videoDevice->Release();
-        if (context) context->Release();
-        if (device) device->Release();
+        SharedD3D11Device::release(device, context, videoDevice, videoContext);
     }
 
     void releaseInputViews() {
@@ -251,46 +368,8 @@ struct Renderer {
     }
 
     bool createDevice() {
-        const D3D_FEATURE_LEVEL levels[] = {
-            D3D_FEATURE_LEVEL_11_1,
-            D3D_FEATURE_LEVEL_11_0,
-            D3D_FEATURE_LEVEL_10_1,
-            D3D_FEATURE_LEVEL_10_0
-        };
-        D3D_FEATURE_LEVEL selected{};
-        HRESULT hr = D3D11CreateDevice(
-            nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
-            levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
-            &device, &selected, &context);
-        if (FAILED(hr)) {
-            const D3D_FEATURE_LEVEL fallback[] = {
-                D3D_FEATURE_LEVEL_11_0,
-                D3D_FEATURE_LEVEL_10_1,
-                D3D_FEATURE_LEVEL_10_0
-            };
-            hr = D3D11CreateDevice(
-                nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
-                fallback, ARRAYSIZE(fallback), D3D11_SDK_VERSION,
-                &device, &selected, &context);
-        }
-        if (FAILED(hr)) return false;
-
-        if (FAILED(device->QueryInterface(__uuidof(ID3D11VideoDevice),
-                reinterpret_cast<void**>(&videoDevice)))) return false;
-        if (FAILED(context->QueryInterface(__uuidof(ID3D11VideoContext),
-                reinterpret_cast<void**>(&videoContext)))) return false;
-        // FFmpeg's D3D11VA decoder and the Swing renderer share this immediate
-        // context. Enable D3D11's built-in context serialization for calls
-        // arriving from the decoder and presentation threads.
-        ID3D11Multithread* multithread = nullptr;
-        if (SUCCEEDED(context->QueryInterface(__uuidof(ID3D11Multithread),
-                reinterpret_cast<void**>(&multithread)))) {
-            multithread->SetMultithreadProtected(TRUE);
-            multithread->Release();
-        }
-        return true;
+        return SharedD3D11Device::acquire(
+            &device, &context, &videoDevice, &videoContext);
     }
 
     bool attachSurface(HWND target) {
