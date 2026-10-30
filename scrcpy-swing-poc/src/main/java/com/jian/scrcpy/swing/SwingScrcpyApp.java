@@ -782,6 +782,7 @@ public final class SwingScrcpyApp {
         JButton volumeDown = controlButton("volume-down.png", "音量减", () -> sidebarKey(handle, AndroidKeycodes.VOLUME_DOWN));
         JButton power = controlButton("power.png", "电源", () -> sidebarKey(handle, AndroidKeycodes.POWER));
         JToggleButton display = toggleButton("screen-off.png", "熄屏");
+        display.setSelected(true);
         handle.displayButton = display;
         display.addActionListener(e -> sidebarDisplayPower(handle, display.isSelected()));
         JToggleButton awake = toggleButton("stay-awake-on.png", "开启屏幕常亮");
@@ -1025,8 +1026,8 @@ public final class SwingScrcpyApp {
             case MouseEvent.BUTTON1 -> UhidMouse.BUTTON_LEFT;
             case MouseEvent.BUTTON3 -> UhidMouse.BUTTON_RIGHT;
             case MouseEvent.BUTTON2 -> UhidMouse.BUTTON_MIDDLE;
-            case MouseEvent.BUTTON4 -> UhidMouse.BUTTON_BACK;
-            case MouseEvent.BUTTON5 -> UhidMouse.BUTTON_FORWARD;
+            case 4 -> UhidMouse.BUTTON_BACK;
+            case 5 -> UhidMouse.BUTTON_FORWARD;
             default -> 0;
         };
     }
