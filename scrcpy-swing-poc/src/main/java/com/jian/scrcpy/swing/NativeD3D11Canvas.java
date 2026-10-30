@@ -93,7 +93,10 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
     public long submitHardwareFrame(long texture, long arrayIndex, int width, int height,
                                     int colorSpace, int colorRange) {
         long handle = nativeHandle;
-        if (closed || !surfaceAttached || handle == 0 || !isDisplayable()) return -1;
+        if (closed || handle == 0) return -1;
+        // AWT peer reparenting temporarily detaches the HWND. Keep the frame
+        // queued and retry after addNotify() reattaches the swap chain.
+        if (!surfaceAttached || !isDisplayable()) return 0;
         return submitHardware0(handle, texture, arrayIndex, width, height, colorSpace, colorRange);
     }
 
