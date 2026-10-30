@@ -78,13 +78,16 @@ struct SharedD3D11Device {
     };
 
     static std::mutex& poolMutex() {
-        static std::mutex value;
-        return value;
+        // Keep manager state alive until the DLL is unloaded. Renderer objects
+        // are stored in a translation-unit global map whose destruction order
+        // must not race this function-local state.
+        static auto* value = new std::mutex();
+        return *value;
     }
 
     static std::array<State, MAX_SHARED_DEVICES>& states() {
-        static std::array<State, MAX_SHARED_DEVICES> value{};
-        return value;
+        static auto* value = new std::array<State, MAX_SHARED_DEVICES>();
+        return *value;
     }
 
     static bool acquire(ID3D11Device** outDevice,
