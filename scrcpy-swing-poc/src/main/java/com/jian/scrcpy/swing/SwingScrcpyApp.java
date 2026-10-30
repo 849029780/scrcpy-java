@@ -711,7 +711,7 @@ public final class SwingScrcpyApp {
                     running.addDeviceMessageListener(uhid::handle);
                     running.addDeviceMessageListener(clipboard::handle);
                     clipboard.onRemoteClipboard(this::applyDeviceClipboard);
-                    DeviceSession handle = new DeviceSession(running, audio, video, view,
+                    DeviceSession handle = new DeviceSession(running, audio, video, surface,
                             new DeviceController(running::sendControl), uhid, clipboard);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
