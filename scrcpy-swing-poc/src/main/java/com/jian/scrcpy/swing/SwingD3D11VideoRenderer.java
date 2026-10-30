@@ -129,6 +129,13 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
         try {
             while (!closed.get()) {
                 if (pendingFrames.offer(hardwareFrame, 50, TimeUnit.MILLISECONDS)) {
+                    // close() may race with the successful offer. If shutdown
+                    // already started, remove our frame and leave ownership
+                    // with the caller, which will close it.
+                    if (closed.get()) {
+                        pendingFrames.remove(hardwareFrame);
+                        return false;
+                    }
                     schedulePump();
                     return true;
                 }
