@@ -26,6 +26,7 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
     private volatile Runnable frameSizeListener = () -> {};
     private BufferedImage image;
     private int[] pixels;
+    private volatile NativeD3D11Canvas nativeCanvas;
 
     public SwingVideoSurface() {
         setOpaque(true);
@@ -33,6 +34,30 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         setFocusable(true);
         setPreferredSize(new Dimension(360, 680));
         setDoubleBuffered(false);
+        setLayout(new BorderLayout());
+    }
+
+    void installNativeCanvas(NativeD3D11Canvas canvas) {
+        if (nativeCanvas != null) throw new IllegalStateException("Native D3D11 Canvas already installed");
+        nativeCanvas = canvas;
+        add(canvas, BorderLayout.CENTER);
+        revalidate();
+    }
+
+    void showHardwareFrame(int width, int height) {
+        int oldWidth = frameWidth;
+        int oldHeight = frameHeight;
+        frameWidth = width;
+        frameHeight = height;
+        NativeD3D11Canvas canvas = nativeCanvas;
+        if (canvas != null && !canvas.isVisible()) {
+            SwingUtilities.invokeLater(() -> {
+                if (nativeCanvas == canvas) canvas.setVisible(true);
+            });
+        }
+        if (oldWidth != width || oldHeight != height) {
+            SwingUtilities.invokeLater(frameSizeListener);
+        }
     }
 
     public void setFrameSizeListener(Runnable listener) {
@@ -41,6 +66,12 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
 
     public void accept(VideoFrame frame) {
         if (frame == null) return;
+        NativeD3D11Canvas canvas = nativeCanvas;
+        if (canvas != null && canvas.isVisible()) {
+            SwingUtilities.invokeLater(() -> {
+                if (nativeCanvas == canvas) canvas.setVisible(false);
+            });
+        }
         int oldWidth = frameWidth;
         int oldHeight = frameHeight;
         frameWidth = frame.width();
