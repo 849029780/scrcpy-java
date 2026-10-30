@@ -14,9 +14,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Swing video surface. It keeps only the newest decoded frame and copies BGRA
- * pixels into a reusable TYPE_INT_ARGB image on the EDT. This is the portable
- * baseline renderer; the native D3D11 experiment remains isolated in this module.
+ * Swing video surface. Windows sessions may display FFmpeg D3D11VA textures
+ * through the heavyweight native D3D11 Canvas. Software frames retain the
+ * portable BGRA/Java2D path as a fallback and for non-Windows platforms.
  */
 public final class SwingVideoSurface extends JComponent implements AutoCloseable {
     private final AtomicReference<VideoFrame> latest = new AtomicReference<>();
