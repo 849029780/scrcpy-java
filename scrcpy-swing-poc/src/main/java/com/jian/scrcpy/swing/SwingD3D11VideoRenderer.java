@@ -66,6 +66,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
 
     private final SwingVideoSurface surface;
     private final NativeD3D11Canvas canvas;
+    private volatile String deviceSerial = "unknown";
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean firstNativePresentLogged = new AtomicBoolean();
     private final ArrayBlockingQueue<HardwareVideoFrame> pendingFrames =
@@ -79,11 +80,12 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     // polling returns a successful Present result, never when merely queued.
     private final AtomicLong statsSubmitted = new AtomicLong();
     private final AtomicLong statsPresented = new AtomicLong();
-    private final AtomicLong statsPresentFailures = new AtomicLong();
+    private final AtomicLong statsCompletionFailures = new AtomicLong();
     private final AtomicLong statsBackpressure = new AtomicLong();
     private final AtomicLong statsSubmitNanos = new AtomicLong();
     private final AtomicLong statsSubmitToPresentNanos = new AtomicLong();
     private final AtomicLong statsMaxSubmitToPresentNanos = new AtomicLong();
+    private final AtomicLong statsMaxQueueDepth = new AtomicLong();
     private final AtomicLong statsMaxInFlight = new AtomicLong();
     private long statsLastReportNanos = System.nanoTime();
 
@@ -140,6 +142,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     @Override
     public boolean renderHardware(HardwareVideoFrame hardwareFrame) {
         if (closed.get() || !"d3d11va".equalsIgnoreCase(hardwareFrame.backend())) return false;
+        deviceSerial = hardwareFrame.serial();
         try {
             while (!closed.get()) {
                 if (pendingFrames.offer(hardwareFrame, 50, TimeUnit.MILLISECONDS)) {
@@ -150,6 +153,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
                         pendingFrames.remove(hardwareFrame);
                         return false;
                     }
+                    updateMaximum(statsMaxQueueDepth, pendingFrames.size());
                     schedulePump();
                     return true;
                 }
@@ -186,7 +190,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
                         if (completedToken > 0) {
                             onPresented(completed);
                         } else {
-                            statsPresentFailures.incrementAndGet();
+                            statsCompletionFailures.incrementAndGet();
                             System.err.printf("[scrcpy-swing][%s] D3D11 GPU work completed but Present failed; frame dropped%n",
                                     completed.frame.serial());
                         }
@@ -269,11 +273,12 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
 
         long submitted = statsSubmitted.getAndSet(0);
         long presented = statsPresented.getAndSet(0);
-        long failures = statsPresentFailures.getAndSet(0);
+        long failures = statsCompletionFailures.getAndSet(0);
         long backpressure = statsBackpressure.getAndSet(0);
         long submitNanos = statsSubmitNanos.getAndSet(0);
         long latencyNanos = statsSubmitToPresentNanos.getAndSet(0);
         long maxLatencyNanos = statsMaxSubmitToPresentNanos.getAndSet(0);
+        long maxQueue = statsMaxQueueDepth.getAndSet(0);
         long maxInFlight = statsMaxInFlight.getAndSet(0);
         double seconds = elapsed / 1_000_000_000.0;
         double submitAvgMs = submitted == 0 ? 0.0 : submitNanos / 1_000_000.0 / submitted;
@@ -281,13 +286,13 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
 
         System.out.printf(java.util.Locale.ROOT,
                 "[scrcpy-swing][%s] D3D11 stats: gpuSubmitted=%.1f fps, presented=%.1f fps, "
-                        + "presentFailed=%d, submitBackpressure=%d, submitAvg=%.3f ms, "
+                        + "completionFailures=%d, submitBackpressure=%d, submitAvg=%.3f ms, "
                         + "submitToPresentAvg=%.2f ms, submitToPresentMax=%.2f ms, "
                         + "queue=%d/%d, inFlight=%d/%d%n",
-                surface.serial(), submitted / seconds, presented / seconds,
+                deviceSerial, submitted / seconds, presented / seconds,
                 failures, backpressure, submitAvgMs, latencyAvgMs,
                 maxLatencyNanos / 1_000_000.0,
-                pendingFrames.size(), MAX_QUEUED_HARDWARE_FRAMES, inFlight.size(), maxInFlight);
+                pendingFrames.size(), maxQueue, inFlight.size(), maxInFlight);
     }
 
     private static void updateMaximum(AtomicLong target, long value) {
