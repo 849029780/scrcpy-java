@@ -7,7 +7,6 @@ import org.bytedeco.ffmpeg.avcodec.*;
 import org.bytedeco.ffmpeg.avutil.*;
 import org.bytedeco.javacpp.*;
 
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -27,8 +26,8 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     // 16 packets cap audio backlog to a short live window while retaining
     // enough buffering for normal scheduling jitter across many devices.
     private static final int DECODE_QUEUE_CAPACITY = 16;
-    private final ArrayBlockingQueue<MediaMessage> decodeQueue =
-            new ArrayBlockingQueue<>(DECODE_QUEUE_CAPACITY);
+    private final BoundedMediaMessageQueue decodeQueue =
+            new BoundedMediaMessageQueue(DECODE_QUEUE_CAPACITY);
     private byte[] encodedBuffer = new byte[0];
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
@@ -107,7 +106,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         // MediaMessage is a plain record, not a ReferenceCounted wrapper.
         // The Packet's ByteBuf ownership transfers to the queue and is released
         // by the worker or by the bounded-queue eviction/drop path.
-        BoundedMediaMessageQueue.offer(decodeQueue, m);
+        decodeQueue.offer(m);
     }
     private void decodeLoop() {
         try {
