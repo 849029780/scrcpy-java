@@ -68,6 +68,7 @@ public final class SwingScrcpyApp {
     private final Map<String, ReconnectState> reconnectStates = new ConcurrentHashMap<>();
     private final Map<String, JCheckBox> deviceChecks = new LinkedHashMap<>();
     private final Map<String, JLabel> deviceStates = new LinkedHashMap<>();
+    private volatile List<AdbDevice> knownDevices = List.of();
     private final Map<DeviceSession, DeviceController.ScreenPosition> activeTouchPositions = new ConcurrentHashMap<>();
     private final AtomicBoolean applyingRemoteClipboard = new AtomicBoolean();
     private final ScheduledExecutorService background = Executors.newScheduledThreadPool(2,
@@ -163,7 +164,7 @@ public final class SwingScrcpyApp {
         Toolkit.getDefaultToolkit().addAWTEventListener(event -> {
             if (!(event instanceof MouseEvent e)) return;
             DeviceSession active = activeMouseInput;
-            if (active == null || active.view == null) return;
+            if (active == null || active.view == null || e.getSource() == active.view) return;
             if (e.getID() == MouseEvent.MOUSE_DRAGGED) {
                 if (!containsScreenPoint(active.view, e.getXOnScreen(), e.getYOnScreen())) {
                     endMouseInput(active, e);
@@ -212,8 +213,7 @@ public final class SwingScrcpyApp {
         deviceChecks.clear();
         deviceStates.clear();
         try {
-            List<AdbDevice> found = adb.devices();
-            for (AdbDevice d : found) {
+            for (AdbDevice d : knownDevices) {
                 JCheckBox check = new JCheckBox(d.displayName() + "  [" + (sessions.containsKey(d.serial()) ? "投屏中" : d.state()) + "]");
                 check.setSelected(checkedDevices.contains(d.serial()));
                 check.addActionListener(e -> {
@@ -378,6 +378,7 @@ public final class SwingScrcpyApp {
         Thread.startVirtualThread(() -> {
             try {
                 List<AdbDevice> found = adb.devices();
+                knownDevices = List.copyOf(found);
                 SwingUtilities.invokeLater(() -> {
                     status.setText("发现 " + found.size() + " 台 ADB 设备");
                     if (deviceDialog != null && deviceDialog.isShowing()) {
@@ -394,7 +395,9 @@ public final class SwingScrcpyApp {
     private void pollAdbState() {
         if (closing) return;
         try {
-            Map<String, AdbDevice> current = adb.devices().stream().collect(Collectors.toMap(AdbDevice::serial, d -> d, (a, b) -> a));
+            List<AdbDevice> snapshot = adb.devices();
+            knownDevices = List.copyOf(snapshot);
+            Map<String, AdbDevice> current = snapshot.stream().collect(Collectors.toMap(AdbDevice::serial, d -> d, (a, b) -> a));
             List<String> lost = sessions.keySet().stream().filter(serial -> {
                 AdbDevice d = current.get(serial);
                 return d == null || !d.ready();
@@ -459,18 +462,14 @@ public final class SwingScrcpyApp {
     }
 
     private void connectSelected() {
-        List<AdbDevice> selected = new ArrayList<>();
-        try {
-            for (AdbDevice d : adb.devices()) if (checkedDevices.contains(d.serial())) selected.add(d);
-        } catch (Exception e) { status.setText("读取设备失败：" + e.getMessage()); return; }
+        List<AdbDevice> selected = knownDevices.stream()
+                .filter(d -> checkedDevices.contains(d.serial())).toList();
         connectDevices(selected);
     }
 
     private void connectAll() {
-        try {
-            connectDevices(adb.devices().stream().filter(AdbDevice::ready)
-                    .filter(d -> !sessions.containsKey(d.serial())).toList());
-        } catch (Exception e) { status.setText("读取设备失败：" + e.getMessage()); }
+        connectDevices(knownDevices.stream().filter(AdbDevice::ready)
+                .filter(d -> !sessions.containsKey(d.serial())).toList());
     }
 
     private void connectDevices(List<AdbDevice> selected) {
@@ -752,6 +751,7 @@ public final class SwingScrcpyApp {
         handle.tile = tile;
         handle.viewport = viewport;
         handle.device = device;
+        handle.view.setFrameSizeListener(() -> resizeTile(handle, isPrimary(handle)));
         installControls(handle);
         resizeTile(handle, false);
         secondaryGrid.add(tile);
@@ -1387,6 +1387,7 @@ public final class SwingScrcpyApp {
             try { uhid.close(); } catch (Throwable t) { first = t; }
             try { if (decoder != null) decoder.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
             try { session.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
+            try { view.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
             try { audioPlayer.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
             if (first != null) throw new IllegalStateException("Failed to close device session", first);
         }
