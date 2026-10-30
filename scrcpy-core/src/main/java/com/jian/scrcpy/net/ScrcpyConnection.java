@@ -47,11 +47,13 @@ public final class ScrcpyConnection implements AutoCloseable {
                     acceptGroup = null;
                 }
             }
+            // Initiate shutdown without blocking the Swing/connection close
+            // caller. Netty completes the graceful shutdown asynchronously.
             if (acceptToClose != null) {
-                acceptToClose.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
+                acceptToClose.shutdownGracefully(0, 2, TimeUnit.SECONDS);
             }
             if (ioToClose != null) {
-                ioToClose.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
+                ioToClose.shutdownGracefully(0, 2, TimeUnit.SECONDS);
             }
         }
 
