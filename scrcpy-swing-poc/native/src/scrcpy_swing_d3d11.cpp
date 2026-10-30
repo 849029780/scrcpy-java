@@ -298,8 +298,9 @@ struct Renderer {
             videoContext->VideoProcessorSetStreamFrameFormat(
                 processor, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
             videoContext->VideoProcessorSetStreamSourceRect(processor, 0, TRUE, &sourceRect);
+            const RECT outputRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
             videoContext->VideoProcessorSetStreamDestRect(processor, 0, TRUE, &destRect);
-            videoContext->VideoProcessorSetOutputTargetRect(processor, TRUE, &destRect);
+            videoContext->VideoProcessorSetOutputTargetRect(processor, TRUE, &outputRect);
             videoContext->VideoProcessorSetStreamColorSpace(processor, 0, &inputColor);
             videoContext->VideoProcessorSetOutputColorSpace(processor, &outputColor);
 
