@@ -694,7 +694,8 @@ public final class SwingScrcpyApp {
         // the EDT. The decoder/network work below remains on a virtual thread.
         SwingVideoSurface view = new SwingVideoSurface();
         SwingD3D11VideoRenderer nativeRenderer = null;
-        if (settings.video() && System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+        if (settings.video() && "hardware".equalsIgnoreCase(settings.videoDecoder())
+                && System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
             try {
                 nativeRenderer = new SwingD3D11VideoRenderer(view);
             } catch (Throwable nativeError) {
