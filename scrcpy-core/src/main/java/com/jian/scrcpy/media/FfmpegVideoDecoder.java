@@ -458,7 +458,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         int sendResult;
         sendResult = withVideoLock(() -> {
             av_packet_unref(packet);
-            if (av_new_packet(packet, payloadSize) < 0) return AVERROR(EINVAL);
+            if (av_new_packet(packet, payloadSize) < 0) return -1;
             packet.data().put(encoded, 0, payloadSize);
             packet.pts(p.pts()).dts(p.pts());
             return avcodec_send_packet(ctx, packet);
