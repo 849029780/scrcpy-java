@@ -291,7 +291,7 @@ struct Renderer {
 
             D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColor{};
             inputColor.YCbCr_Matrix = (colorSpace == 1 || colorSpace == 9 || colorSpace == 10) ? 1 : 0;
-            inputColor.Nominal_Range = colorRange == 2 ? 1 : 2;
+            inputColor.Nominal_Range = colorRange == 2 ? 2 : 1;
             D3D11_VIDEO_PROCESSOR_COLOR_SPACE outputColor{};
             outputColor.RGB_Range = 0;
 
