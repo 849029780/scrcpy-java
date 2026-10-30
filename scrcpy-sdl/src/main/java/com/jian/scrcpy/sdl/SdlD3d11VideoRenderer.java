@@ -6,9 +6,9 @@ import com.jian.scrcpy.media.VideoRenderer;
 import org.bytedeco.ffmpeg.avutil.AVBufferRef;
 
 import java.lang.foreign.MemorySegment;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 import static org.bytedeco.ffmpeg.global.avutil.AV_HWDEVICE_TYPE_D3D11VA;
 import static org.bytedeco.ffmpeg.global.avutil.av_buffer_unref;
@@ -25,14 +25,15 @@ import static org.bytedeco.ffmpeg.global.avutil.av_buffer_unref;
  * only queues frames. Call pump() from the SDL event/render loop.</p>
  */
 public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable {
-    private static final int QUEUE_SIZE = 2;
-
     private final String title;
     private final int width;
     private final int height;
     private final java.util.concurrent.CompletableFuture<Void> initialized =
             new java.util.concurrent.CompletableFuture<>();
-    private final BlockingQueue<HardwareVideoFrame> pending = new ArrayBlockingQueue<>(QUEUE_SIZE);
+    // Latest-frame mailbox: keeping more than one decoded GPU surface only
+    // adds presentation latency for a live mirror. Replaced frames are released
+    // immediately without GPU->CPU transfer or GPU copy.
+    private final AtomicReference<HardwareVideoFrame> pending = new AtomicReference<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean closeRequested = new AtomicBoolean();
 
@@ -157,14 +158,10 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
             frame.close();
             return false;
         }
-        if (!pending.offer(frame)) {
-            HardwareVideoFrame old = pending.poll();
-            if (old != null) old.close();
-            if (!pending.offer(frame)) {
-                frame.close();
-                return false;
-            }
-        }
+        HardwareVideoFrame old = pending.getAndSet(frame);
+        if (old != null) old.close();
+        Thread thread = renderThread;
+        if (thread != null) LockSupport.unpark(thread);
         return true;
     }
 
@@ -178,7 +175,7 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
      */
     public boolean pump() {
         if (closed.get()) return false;
-        HardwareVideoFrame frame = pending.poll();
+        HardwareVideoFrame frame = pending.getAndSet(null);
         if (frame == null) return false;
 
         try {
@@ -220,12 +217,13 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
             initialize();
             initialized.complete(null);
             while (!closeRequested.get()) {
-                pump();
-                Thread.sleep(4);
+                if (!pump()) {
+                    // renderHardware() unparks immediately when a new GPU frame
+                    // arrives. The timeout only prevents a lost wakeup from
+                    // stalling the owner thread indefinitely.
+                    LockSupport.parkNanos(4_000_000L);
+                }
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            if (!initialized.isDone()) initialized.completeExceptionally(e);
         } catch (Throwable t) {
             if (!initialized.isDone()) initialized.completeExceptionally(t);
             else t.printStackTrace(System.err);
@@ -255,8 +253,8 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
 
     private void destroyOnOwnerThread() {
         if (!closed.compareAndSet(false, true)) return;
-        HardwareVideoFrame frame;
-        while ((frame = pending.poll()) != null) frame.close();
+        HardwareVideoFrame frame = pending.getAndSet(null);
+        if (frame != null) frame.close();
 
         Sdl3 localSdl = sdl;
         SdlD3d11Interop localInterop = interop;
