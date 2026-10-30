@@ -2,7 +2,11 @@ package com.jian.scrcpy.sdl;
 
 import java.lang.foreign.*;
 import java.lang.invoke.MethodHandle;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import static java.lang.foreign.ValueLayout.*;
 
 final class Sdl3 implements AutoCloseable {
@@ -30,24 +34,13 @@ final class Sdl3 implements AutoCloseable {
         String explicit = System.getProperty("scrcpy.sdl3");
         if (explicit != null && !explicit.isBlank()) {
             Path libraryPath = Path.of(explicit).toAbsolutePath().normalize();
-            if (!java.nio.file.Files.isRegularFile(libraryPath)) {
+            if (!Files.isRegularFile(libraryPath)) {
                 throw new IllegalStateException("SDL3 library does not exist: " + libraryPath);
             }
             symbols = SymbolLookup.libraryLookup(libraryPath, arena);
         } else {
-            // loaderLookup() only searches symbols from libraries already loaded
-            // into the JVM's native library namespace. It does not load SDL3.
-            // Load the SDL3 shared library explicitly and bind symbols to that
-            // library's lookup instead of accidentally searching the JVM process.
-            String libraryName = System.mapLibraryName("SDL3");
-            try {
-                symbols = SymbolLookup.libraryLookup(libraryName, arena);
-            } catch (RuntimeException e) {
-                throw new IllegalStateException(
-                        "Unable to load SDL3 (" + libraryName + "). Put SDL3 on the native library path "
-                                + "or set -Dscrcpy.sdl3 to the absolute path of SDL3.dll.",
-                        e);
-            }
+            symbols = loadBundledWindowsX64(arena)
+                    .orElseGet(() -> loadFromNativeLibraryPath(arena));
         }
         init = fn("SDL_Init", FunctionDescriptor.of(JAVA_BOOLEAN, JAVA_INT));
         quit = fn("SDL_Quit", FunctionDescriptor.ofVoid());
@@ -71,6 +64,49 @@ final class Sdl3 implements AutoCloseable {
                 FunctionDescriptor.of(JAVA_BOOLEAN, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
         renderPresent = fn("SDL_RenderPresent", FunctionDescriptor.of(JAVA_BOOLEAN, ADDRESS));
         getError = fn("SDL_GetError", FunctionDescriptor.of(ADDRESS));
+    }
+
+
+    /**
+     * Loads the SDL3 runtime shipped in the LWJGL native classifier. Keeping
+     * the DLL inside its dependency JAR means users do not need to install SDL3
+     * or configure java.library.path themselves.
+     */
+    private static java.util.Optional<SymbolLookup> loadBundledWindowsX64(Arena arena) {
+        String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        String arch = System.getProperty("os.arch", "").toLowerCase(java.util.Locale.ROOT);
+        if (!os.contains("win") || !(arch.equals("amd64") || arch.equals("x86_64"))) {
+            return java.util.Optional.empty();
+        }
+
+        String resource = "windows/x64/org/lwjgl/sdl/SDL3.dll";
+        ClassLoader loader = Sdl3.class.getClassLoader();
+        try (InputStream input = loader.getResourceAsStream(resource)) {
+            if (input == null) return java.util.Optional.empty();
+
+            Path directory = Files.createTempDirectory("scrcpy-sdl3-");
+            Path library = directory.resolve("SDL3.dll");
+            Files.copy(input, library, StandardCopyOption.REPLACE_EXISTING);
+            library.toFile().deleteOnExit();
+            directory.toFile().deleteOnExit();
+            System.err.println("[scrcpy-sdl] loaded bundled SDL3 runtime: " + library);
+            return java.util.Optional.of(SymbolLookup.libraryLookup(library, arena));
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to extract bundled SDL3.dll from " + resource, e);
+        }
+    }
+
+    private static SymbolLookup loadFromNativeLibraryPath(Arena arena) {
+        String libraryName = System.mapLibraryName("SDL3");
+        try {
+            return SymbolLookup.libraryLookup(libraryName, arena);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException(
+                    "Bundled SDL3 runtime is unavailable and " + libraryName
+                            + " could not be loaded from the native library path. "
+                            + "Add the LWJGL natives-windows dependency or set -Dscrcpy.sdl3 to an absolute DLL path.",
+                    e);
+        }
     }
 
     private MethodHandle fn(String name, FunctionDescriptor descriptor) {
