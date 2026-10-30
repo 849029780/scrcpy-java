@@ -541,7 +541,8 @@ struct Renderer {
         const jlong token = nextFrameToken++;
         slot.token = token;
         context->End(slot.completionQuery);
-        context->Flush();
+        // GetData(flags=0) in the shared poller flushes pending commands when
+        // required. Avoid forcing a driver submission/flush for every frame.
         inFlightSlots.push_back(slotIndex);
         return token;
     }
