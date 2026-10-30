@@ -4,6 +4,7 @@
 #include <jawt.h>
 #include <jawt_md.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -19,37 +20,39 @@ struct Renderer {
     HWND hwnd{};
     ID3D11Device* device{};
     ID3D11DeviceContext* context{};
+    ID3D11VideoDevice* videoDevice{};
+    ID3D11VideoContext* videoContext{};
     IDXGISwapChain* swapChain{};
     ID3D11RenderTargetView* renderTarget{};
+    ID3D11VideoProcessorEnumerator* processorEnumerator{};
+    ID3D11VideoProcessor* processor{};
     UINT width{};
     UINT height{};
+    UINT processorWidth{};
+    UINT processorHeight{};
 
     ~Renderer() {
-        if (renderTarget) renderTarget->Release();
-        if (swapChain) swapChain->Release();
+        releaseProcessor();
+        detachSurface();
+        if (videoContext) videoContext->Release();
+        if (videoDevice) videoDevice->Release();
         if (context) context->Release();
         if (device) device->Release();
     }
 
-    bool create(HWND target) {
-        hwnd = target;
-        RECT rect{};
-        if (!GetClientRect(hwnd, &rect)) return false;
-        width = static_cast<UINT>(rect.right - rect.left);
-        height = static_cast<UINT>(rect.bottom - rect.top);
-        if (width == 0 || height == 0) return false;
+    void releaseProcessor() {
+        if (processor) {
+            processor->Release();
+            processor = nullptr;
+        }
+        if (processorEnumerator) {
+            processorEnumerator->Release();
+            processorEnumerator = nullptr;
+        }
+        processorWidth = processorHeight = 0;
+    }
 
-        DXGI_SWAP_CHAIN_DESC desc{};
-        desc.BufferDesc.Width = width;
-        desc.BufferDesc.Height = height;
-        desc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        desc.BufferCount = 2;
-        desc.OutputWindow = hwnd;
-        desc.Windowed = TRUE;
-        desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-
+    bool createDevice() {
         const D3D_FEATURE_LEVEL levels[] = {
             D3D_FEATURE_LEVEL_11_1,
             D3D_FEATURE_LEVEL_11_0,
@@ -57,28 +60,86 @@ struct Renderer {
             D3D_FEATURE_LEVEL_10_0
         };
         D3D_FEATURE_LEVEL selected{};
-        HRESULT hr = D3D11CreateDeviceAndSwapChain(
+        HRESULT hr = D3D11CreateDevice(
             nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
             levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
-            &desc, &swapChain, &device, &selected, &context);
+            &device, &selected, &context);
         if (FAILED(hr)) {
-            // Some older runtimes do not accept the 11.1 feature-level token.
             const D3D_FEATURE_LEVEL fallback[] = {
                 D3D_FEATURE_LEVEL_11_0,
                 D3D_FEATURE_LEVEL_10_1,
                 D3D_FEATURE_LEVEL_10_0
             };
-            hr = D3D11CreateDeviceAndSwapChain(
+            hr = D3D11CreateDevice(
                 nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
                 fallback, ARRAYSIZE(fallback), D3D11_SDK_VERSION,
-                &desc, &swapChain, &device, &selected, &context);
+                &device, &selected, &context);
         }
-        return SUCCEEDED(hr) && createRenderTarget();
+        if (FAILED(hr)) return false;
+
+        if (FAILED(device->QueryInterface(__uuidof(ID3D11VideoDevice),
+                reinterpret_cast<void**>(&videoDevice)))) return false;
+        if (FAILED(context->QueryInterface(__uuidof(ID3D11VideoContext),
+                reinterpret_cast<void**>(&videoContext)))) return false;
+
+        // FFmpeg's D3D11VA decoder and the Swing renderer share this immediate
+        // context. Enable D3D11's built-in context serialization for calls
+        // arriving from the decoder and presentation threads.
+        ID3D11Multithread* multithread = nullptr;
+        if (SUCCEEDED(context->QueryInterface(__uuidof(ID3D11Multithread),
+                reinterpret_cast<void**>(&multithread)))) {
+            multithread->SetMultithreadProtected(TRUE);
+            multithread->Release();
+        }
+        return true;
+    }
+
+    bool attachSurface(HWND target) {
+        if (!device || !target || !IsWindow(target)) return false;
+        hwnd = target;
+
+        RECT rect{};
+        if (!GetClientRect(hwnd, &rect)) return false;
+        width = static_cast<UINT>(std::max<LONG>(1, rect.right - rect.left));
+        height = static_cast<UINT>(std::max<LONG>(1, rect.bottom - rect.top));
+
+        IDXGIDevice* dxgiDevice = nullptr;
+        IDXGIAdapter* adapter = nullptr;
+        IDXGIFactory* factory = nullptr;
+        HRESULT hr = device->QueryInterface(__uuidof(IDXGIDevice),
+                reinterpret_cast<void**>(&dxgiDevice));
+        if (SUCCEEDED(hr)) hr = dxgiDevice->GetAdapter(&adapter);
+        if (SUCCEEDED(hr)) hr = adapter->GetParent(__uuidof(IDXGIFactory),
+                reinterpret_cast<void**>(&factory));
+
+        if (SUCCEEDED(hr)) {
+            DXGI_SWAP_CHAIN_DESC desc{};
+            desc.BufferDesc.Width = width;
+            desc.BufferDesc.Height = height;
+            desc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            desc.SampleDesc.Count = 1;
+            desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+            desc.BufferCount = 2;
+            desc.OutputWindow = hwnd;
+            desc.Windowed = TRUE;
+            desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+            hr = factory->CreateSwapChain(device, &desc, &swapChain);
+        }
+
+        if (factory) factory->Release();
+        if (adapter) adapter->Release();
+        if (dxgiDevice) dxgiDevice->Release();
+        if (FAILED(hr)) {
+            hwnd = nullptr;
+            return false;
+        }
+        return createRenderTarget();
     }
 
     bool createRenderTarget() {
+        if (!swapChain) return false;
         ID3D11Texture2D* backBuffer = nullptr;
         HRESULT hr = swapChain->GetBuffer(
             0, __uuidof(ID3D11Texture2D),
@@ -89,33 +150,178 @@ struct Renderer {
         return SUCCEEDED(hr);
     }
 
-    void render() {
-        if (!hwnd || !IsWindow(hwnd) || !swapChain) return;
+    void detachSurface() {
+        if (renderTarget) {
+            renderTarget->Release();
+            renderTarget = nullptr;
+        }
+        if (swapChain) {
+            swapChain->Release();
+            swapChain = nullptr;
+        }
+        hwnd = nullptr;
+        width = height = 0;
+    }
+
+    bool resizeIfNeeded() {
+        if (!hwnd || !IsWindow(hwnd) || !swapChain) return false;
         RECT rect{};
-        if (!GetClientRect(hwnd, &rect)) return;
+        if (!GetClientRect(hwnd, &rect)) return false;
         const UINT newWidth = static_cast<UINT>(rect.right - rect.left);
         const UINT newHeight = static_cast<UINT>(rect.bottom - rect.top);
-        if (newWidth == 0 || newHeight == 0) return;
+        if (newWidth == 0 || newHeight == 0) return false;
+        if (newWidth == width && newHeight == height) return true;
 
-        if (newWidth != width || newHeight != height) {
-            if (renderTarget) {
-                renderTarget->Release();
-                renderTarget = nullptr;
+        if (renderTarget) {
+            renderTarget->Release();
+            renderTarget = nullptr;
+        }
+        HRESULT hr = swapChain->ResizeBuffers(
+            0, newWidth, newHeight, DXGI_FORMAT_UNKNOWN, 0);
+        if (FAILED(hr)) return false;
+        width = newWidth;
+        height = newHeight;
+        return createRenderTarget();
+    }
+
+    bool ensureVideoProcessor(UINT frameWidth, UINT frameHeight, DXGI_FORMAT inputFormat) {
+        if (processor && processorWidth == frameWidth && processorHeight == frameHeight) {
+            UINT support = 0;
+            if (SUCCEEDED(videoDevice->CheckVideoProcessorFormat(inputFormat, &support))
+                    && (support & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT)) {
+                return true;
             }
-            if (SUCCEEDED(swapChain->ResizeBuffers(
-                    0, newWidth, newHeight, DXGI_FORMAT_UNKNOWN, 0))) {
-                width = newWidth;
-                height = newHeight;
-                if (!createRenderTarget()) return;
-            } else {
-                return;
-            }
+            return false;
         }
 
-        const float testColor[] = {0.035f, 0.12f, 0.22f, 1.0f};
+        releaseProcessor();
+        D3D11_VIDEO_PROCESSOR_CONTENT_DESC desc{};
+        desc.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
+        desc.InputFrameRate = {60, 1};
+        desc.InputWidth = frameWidth;
+        desc.InputHeight = frameHeight;
+        desc.OutputFrameRate = {60, 1};
+        desc.OutputWidth = width;
+        desc.OutputHeight = height;
+        desc.Usage = D3D11_VIDEO_USAGE_PLAYBACK_NORMAL;
+
+        HRESULT hr = videoDevice->CreateVideoProcessorEnumerator(
+            &desc, &processorEnumerator);
+        if (FAILED(hr)) return false;
+
+        UINT inputSupport = 0;
+        UINT outputSupport = 0;
+        if (FAILED(videoDevice->CheckVideoProcessorFormat(inputFormat, &inputSupport))
+                || !(inputSupport & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT)
+                || FAILED(videoDevice->CheckVideoProcessorFormat(
+                        DXGI_FORMAT_B8G8R8A8_UNORM, &outputSupport))
+                || !(outputSupport & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT)) {
+            releaseProcessor();
+            return false;
+        }
+
+        hr = videoDevice->CreateVideoProcessor(processorEnumerator, 0, &processor);
+        if (FAILED(hr)) {
+            releaseProcessor();
+            return false;
+        }
+        processorWidth = frameWidth;
+        processorHeight = frameHeight;
+        return true;
+    }
+
+    bool renderHardware(uintptr_t textureAddress, uintptr_t arrayIndex,
+                        UINT frameWidth, UINT frameHeight,
+                        int colorSpace, int colorRange) {
+        if (!resizeIfNeeded() || textureAddress == 0 || frameWidth == 0 || frameHeight == 0) {
+            return false;
+        }
+
+        auto* texture = reinterpret_cast<ID3D11Texture2D*>(textureAddress);
+        D3D11_TEXTURE2D_DESC textureDesc{};
+        texture->GetDesc(&textureDesc);
+        if (!ensureVideoProcessor(frameWidth, frameHeight, textureDesc.Format)) {
+            return false;
+        }
+
+        ID3D11Texture2D* backBuffer = nullptr;
+        ID3D11VideoProcessorInputView* inputView = nullptr;
+        ID3D11VideoProcessorOutputView* outputView = nullptr;
+        HRESULT hr = swapChain->GetBuffer(
+            0, __uuidof(ID3D11Texture2D),
+            reinterpret_cast<void**>(&backBuffer));
+        if (FAILED(hr)) return false;
+
+        D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC inputDesc{};
+        inputDesc.FourCC = 0;
+        inputDesc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
+        inputDesc.Texture2D.MipSlice = 0;
+        inputDesc.Texture2D.ArraySlice = static_cast<UINT>(arrayIndex);
+        hr = videoDevice->CreateVideoProcessorInputView(
+            texture, processorEnumerator, &inputDesc, &inputView);
+
+        if (SUCCEEDED(hr)) {
+            D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC outputDesc{};
+            outputDesc.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
+            outputDesc.Texture2D.MipSlice = 0;
+            hr = videoDevice->CreateVideoProcessorOutputView(
+                backBuffer, processorEnumerator, &outputDesc, &outputView);
+        }
+
+        if (SUCCEEDED(hr)) {
+            const RECT sourceRect{0, 0, static_cast<LONG>(frameWidth), static_cast<LONG>(frameHeight)};
+            const double scale = std::min(
+                width / static_cast<double>(frameWidth),
+                height / static_cast<double>(frameHeight));
+            const LONG destWidth = static_cast<LONG>(frameWidth * scale + 0.5);
+            const LONG destHeight = static_cast<LONG>(frameHeight * scale + 0.5);
+            const LONG left = (static_cast<LONG>(width) - destWidth) / 2;
+            const LONG top = (static_cast<LONG>(height) - destHeight) / 2;
+            const RECT destRect{left, top, left + destWidth, top + destHeight};
+
+            D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColor{};
+            inputColor.YCbCr_Matrix = (colorSpace == 1 || colorSpace == 9 || colorSpace == 10) ? 1 : 0;
+            inputColor.Nominal_Range = colorRange == 2 ? 1 : 2;
+            D3D11_VIDEO_PROCESSOR_COLOR_SPACE outputColor{};
+            outputColor.RGB_Range = 0;
+
+            videoContext->VideoProcessorSetStreamFrameFormat(
+                processor, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
+            videoContext->VideoProcessorSetStreamSourceRect(processor, 0, TRUE, &sourceRect);
+            videoContext->VideoProcessorSetStreamDestRect(processor, 0, TRUE, &destRect);
+            videoContext->VideoProcessorSetOutputTargetRect(processor, TRUE, &destRect);
+            videoContext->VideoProcessorSetStreamColorSpace(processor, 0, &inputColor);
+            videoContext->VideoProcessorSetOutputColorSpace(processor, &outputColor);
+
+            const float black[4] = {0.f, 0.f, 0.f, 1.f};
+            context->OMSetRenderTargets(1, &renderTarget, nullptr);
+            context->ClearRenderTargetView(renderTarget, black);
+
+            D3D11_VIDEO_PROCESSOR_STREAM stream{};
+            stream.Enable = TRUE;
+            stream.OutputIndex = 0;
+            stream.InputFrameOrField = 0;
+            stream.PastFrames = 0;
+            stream.FutureFrames = 0;
+            stream.pInputSurface = inputView;
+            hr = videoContext->VideoProcessorBlt(
+                processor, outputView, 0, 1, &stream);
+        }
+
+        if (outputView) outputView->Release();
+        if (inputView) inputView->Release();
+        backBuffer->Release();
+
+        if (FAILED(hr)) return false;
+        return SUCCEEDED(swapChain->Present(0, 0));
+    }
+
+    void renderTestColor() {
+        if (!resizeIfNeeded() || !renderTarget) return;
+        const float color[4] = {0.035f, 0.12f, 0.22f, 1.0f};
         context->OMSetRenderTargets(1, &renderTarget, nullptr);
-        context->ClearRenderTargetView(renderTarget, testColor);
-        swapChain->Present(1, 0);
+        context->ClearRenderTargetView(renderTarget, color);
+        swapChain->Present(0, 0);
     }
 };
 
@@ -169,8 +375,8 @@ Java_com_jian_scrcpy_swing_NativeD3D11Canvas_attach0(
     if (!hwnd) return 0;
 
     auto renderer = std::make_unique<Renderer>();
-    if (!renderer->create(hwnd)) {
-        throwJava(env, "D3D11 device or swap-chain initialization failed");
+    if (!renderer->createDevice() || !renderer->attachSurface(hwnd)) {
+        throwJava(env, "D3D11 device, video processor, or swap-chain initialization failed");
         return 0;
     }
 
@@ -181,15 +387,65 @@ Java_com_jian_scrcpy_swing_NativeD3D11Canvas_attach0(
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_jian_scrcpy_swing_NativeD3D11Canvas_attachSurface0(
+    JNIEnv* env, jclass, jlong handle, jobject canvas) {
+    HWND hwnd = getCanvasHwnd(env, canvas);
+    if (!hwnd) return;
+    std::lock_guard<std::mutex> guard(g_mutex);
+    auto it = g_renderers.find(handle);
+    if (it == g_renderers.end() || !it->second->attachSurface(hwnd)) {
+        throwJava(env, "Could not reattach D3D11 swap chain to the Canvas HWND");
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_jian_scrcpy_swing_NativeD3D11Canvas_detachSurface0(
+    JNIEnv*, jclass, jlong handle) {
+    std::lock_guard<std::mutex> guard(g_mutex);
+    auto it = g_renderers.find(handle);
+    if (it != g_renderers.end()) it->second->detachSurface();
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_jian_scrcpy_swing_NativeD3D11Canvas_device0(
+    JNIEnv*, jclass, jlong handle) {
+    std::lock_guard<std::mutex> guard(g_mutex);
+    auto it = g_renderers.find(handle);
+    if (it == g_renderers.end() || !it->second->device) return 0;
+    it->second->device->AddRef();
+    return reinterpret_cast<jlong>(it->second->device);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_jian_scrcpy_swing_NativeD3D11Canvas_releaseDevicePointer0(
+    JNIEnv*, jclass, jlong pointer) {
+    auto* device = reinterpret_cast<ID3D11Device*>(pointer);
+    if (device) device->Release();
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_jian_scrcpy_swing_NativeD3D11Canvas_renderHardware0(
+    JNIEnv*, jclass, jlong handle, jlong texture, jlong arrayIndex,
+    jint width, jint height, jint colorSpace, jint colorRange) {
+    std::lock_guard<std::mutex> guard(g_mutex);
+    auto it = g_renderers.find(handle);
+    if (it == g_renderers.end()) return JNI_FALSE;
+    return it->second->renderHardware(
+        static_cast<uintptr_t>(texture), static_cast<uintptr_t>(arrayIndex),
+        static_cast<UINT>(width), static_cast<UINT>(height),
+        colorSpace, colorRange) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_jian_scrcpy_swing_NativeD3D11Canvas_render0(
     JNIEnv*, jclass, jlong handle) {
     std::lock_guard<std::mutex> guard(g_mutex);
     auto it = g_renderers.find(handle);
-    if (it != g_renderers.end()) it->second->render();
+    if (it != g_renderers.end()) it->second->renderTestColor();
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_jian_scrcpy_swing_NativeD3D11Canvas_detach0(
+Java_com_jian_scrcpy_swing_NativeD3D11Canvas_destroy0(
     JNIEnv*, jclass, jlong handle) {
     std::lock_guard<std::mutex> guard(g_mutex);
     g_renderers.erase(handle);
