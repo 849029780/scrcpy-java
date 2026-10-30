@@ -626,6 +626,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             return;
         }
         while (avcodec_receive_frame(ctx, frame) >= 0) {
+            if (VIDEO_STATS_ENABLED) statsDecodedFrames.incrementAndGet();
             if (DEBUG_SKIP_RENDER) continue;
             converter(frame.width(), frame.height(), frame.format());
             if (DEBUG_SKIP_SWS_SCALE) continue;
