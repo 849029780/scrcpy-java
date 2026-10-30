@@ -6,6 +6,11 @@ import com.jian.scrcpy.media.VideoRenderer;
 import org.bytedeco.ffmpeg.avutil.AVBufferRef;
 
 import java.lang.foreign.MemorySegment;
+import java.util.Set;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
@@ -16,23 +21,16 @@ import static org.bytedeco.ffmpeg.global.avutil.av_buffer_unref;
 /**
  * Experimental SDL3/Direct3D11 hardware-frame presentation backend.
  *
- * <p>FFmpeg D3D11 frames stay on the GPU. The decoder hands an owned
- * {@link HardwareVideoFrame} to this renderer; {@link #pump()} then copies the
- * underlying ID3D11Texture2D directly into an SDL-owned NV12 texture and
- * presents it. No av_hwframe_transfer_data() or swscale() is used.</p>
- *
- * <p>SDL video/render calls must run on the SDL thread, so renderHardware()
- * only queues frames. Call pump() from the SDL event/render loop.</p>
+ * <p>SDL video APIs are process-global and must be serialized on one SDL
+ * video thread. All device windows/renderers are therefore owned by the
+ * shared Runtime below, while each device retains its own D3D11 renderer,
+ * FFmpeg device context, interop resources and latest-frame mailbox.</p>
  */
 public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable {
     private final String title;
     private final int width;
     private final int height;
-    private final java.util.concurrent.CompletableFuture<Void> initialized =
-            new java.util.concurrent.CompletableFuture<>();
-    // Latest-frame mailbox: keeping more than one decoded GPU surface only
-    // adds presentation latency for a live mirror. Replaced frames are released
-    // immediately without GPU->CPU transfer or GPU copy.
+    private final CompletableFuture<Void> initialized = new CompletableFuture<>();
     private final AtomicReference<HardwareVideoFrame> pending = new AtomicReference<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean closeRequested = new AtomicBoolean();
@@ -43,7 +41,6 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
     private volatile SdlD3d11HardwareDeviceProvider deviceProvider;
     private volatile AVBufferRef ffmpegDevice;
     private volatile SdlD3d11Interop interop;
-    private volatile Thread renderThread;
 
     private SdlD3d11VideoRenderer(String title, int width, int height) {
         this.title = title;
@@ -52,104 +49,73 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
     }
 
     /**
-     * Creates the renderer and starts its SDL owner thread. SDL video,
-     * renderer, D3D11 interop and FFmpeg device initialization all happen on
-     * that same platform thread. The method returns only after the shared
-     * D3D11 device provider is ready for the decoder.
+     * Creates a per-device SDL window on the single shared SDL video thread.
+     * The returned decoder provider is backed by this window's D3D11 device.
      */
     public static SdlD3d11VideoRenderer create(String title, int width, int height) {
         if (width <= 0 || height <= 0) throw new IllegalArgumentException("Invalid video size");
         SdlD3d11VideoRenderer result = new SdlD3d11VideoRenderer(title, width, height);
-        result.renderThread = Thread.ofPlatform()
-                .name("scrcpy-sdl")
-                .start(result::pumpLoop);
         try {
-            result.initialized.join();
-        } catch (java.util.concurrent.CompletionException e) {
-            result.requestClose();
+            Runtime.call(() -> {
+                result.initialize(Runtime.sdl());
+                Runtime.renderers.add(result);
+                return null;
+            });
+            result.initialized.complete(null);
+            return result;
+        } catch (RuntimeException e) {
+            result.initialized.completeExceptionally(e);
+            result.closeRequested.set(true);
+            Runtime.execute(() -> {
+                Runtime.renderers.remove(result);
+                result.destroyOnOwnerThread();
+            });
             throw e;
         }
-        return result;
-    }
-
-    private void initialize() {
-        Sdl3 localSdl = new Sdl3();
-        if (!localSdl.initVideo()) {
-            String error = localSdl.error();
-            localSdl.close();
-            throw new IllegalStateException("SDL_Init(SDL_INIT_VIDEO) failed: " + error);
-        }
-
-        MemorySegment createdWindow = localSdl.createWindow(title, width, height);
-        if (createdWindow.address() == 0) {
-            String error = localSdl.error();
-            localSdl.close();
-            throw new IllegalStateException("SDL_CreateWindow failed: " + error);
-        }
-
-        MemorySegment createdRenderer = localSdl.createRenderer(createdWindow, "direct3d11");
-        if (createdRenderer.address() == 0) {
-            String error = localSdl.error();
-            localSdl.destroyWindow(createdWindow);
-            localSdl.close();
-            throw new IllegalStateException("SDL_CreateRenderer(direct3d11) failed: " + error);
-        }
-
-        MemorySegment device = localSdl.rendererD3d11Device(createdRenderer);
-        if (device.address() == 0) {
-            localSdl.destroyRenderer(createdRenderer);
-            localSdl.destroyWindow(createdWindow);
-            localSdl.close();
-            throw new IllegalStateException("SDL renderer did not expose ID3D11Device*");
-        }
-
-        SdlD3d11HardwareDeviceProvider localProvider = new SdlD3d11HardwareDeviceProvider(device);
-        AVBufferRef localFfmpegDevice =
-                localProvider.createDeviceContext(AV_HWDEVICE_TYPE_D3D11VA);
-        if (localFfmpegDevice == null || localFfmpegDevice.isNull()) {
-            localProvider.close();
-            localSdl.destroyRenderer(createdRenderer);
-            localSdl.destroyWindow(createdWindow);
-            localSdl.close();
-            throw new IllegalStateException("FFmpeg D3D11VA device initialization failed");
-        }
-
-        MemorySegment deviceContext = localProvider.deviceContext(localFfmpegDevice);
-        if (deviceContext.address() == 0) {
-            av_buffer_unref(localFfmpegDevice);
-            localProvider.close();
-            localSdl.destroyRenderer(createdRenderer);
-            localSdl.destroyWindow(createdWindow);
-            localSdl.close();
-            throw new IllegalStateException("FFmpeg D3D11VA device has no immediate context");
-        }
-
-        SdlD3d11Interop localInterop;
-        try {
-            localInterop = new SdlD3d11Interop(
-                    localSdl, createdRenderer, deviceContext, width, height);
-        } catch (Throwable t) {
-            av_buffer_unref(localFfmpegDevice);
-            localProvider.close();
-            localSdl.destroyRenderer(createdRenderer);
-            localSdl.destroyWindow(createdWindow);
-            localSdl.close();
-            throw t;
-        }
-
-        sdl = localSdl;
-        window = createdWindow;
-        renderer = createdRenderer;
-        deviceProvider = localProvider;
-        ffmpegDevice = localFfmpegDevice;
-        interop = localInterop;
     }
 
     /**
-     * Supplies the renderer-owned D3D11 device to FfmpegVideoDecoder.
-     * The decoder therefore allocates D3D11VA surfaces on the same GPU device
-     * used by this SDL renderer.
+     * Runs only on the shared SDL owner thread. The shared SDL subsystem is
+     * initialized exactly once by Runtime; this method creates device-local
+     * resources only.
      */
+    private void initialize(Sdl3 localSdl) {
+        sdl = localSdl;
+        try {
+            window = localSdl.createWindow(title, width, height);
+            if (window.address() == 0) {
+                throw new IllegalStateException("SDL_CreateWindow failed: " + localSdl.error());
+            }
+
+            renderer = localSdl.createRenderer(window, "direct3d11");
+            if (renderer.address() == 0) {
+                throw new IllegalStateException("SDL_CreateRenderer(direct3d11) failed: " + localSdl.error());
+            }
+
+            MemorySegment device = localSdl.rendererD3d11Device(renderer);
+            if (device.address() == 0) {
+                throw new IllegalStateException("SDL renderer did not expose ID3D11Device*");
+            }
+
+            deviceProvider = new SdlD3d11HardwareDeviceProvider(device);
+            ffmpegDevice = deviceProvider.createDeviceContext(AV_HWDEVICE_TYPE_D3D11VA);
+            if (ffmpegDevice == null || ffmpegDevice.isNull()) {
+                throw new IllegalStateException("FFmpeg D3D11VA device initialization failed");
+            }
+
+            MemorySegment deviceContext = deviceProvider.deviceContext(ffmpegDevice);
+            if (deviceContext.address() == 0) {
+                throw new IllegalStateException("FFmpeg D3D11VA device has no immediate context");
+            }
+
+            interop = new SdlD3d11Interop(localSdl, renderer, deviceContext, width, height);
+        } catch (Throwable t) {
+            destroyOnOwnerThread();
+            if (t instanceof RuntimeException runtimeException) throw runtimeException;
+            throw new IllegalStateException("Unable to initialize SDL D3D11 renderer", t);
+        }
+    }
+
     public com.jian.scrcpy.media.VideoHardwareDeviceProvider hardwareDeviceProvider() {
         awaitInitialized();
         return deviceProvider;
@@ -163,8 +129,7 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
         }
         HardwareVideoFrame old = pending.getAndSet(frame);
         if (old != null) old.close();
-        Thread thread = renderThread;
-        if (thread != null) LockSupport.unpark(thread);
+        Runtime.wake();
         return true;
     }
 
@@ -173,11 +138,9 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
         frame.close();
     }
 
-    /**
-     * Render at most one queued frame. Must run on the SDL owner thread.
-     */
-    public boolean pump() {
-        if (closed.get()) return false;
+    /** Must be called by Runtime on the shared SDL owner thread. */
+    private boolean pump() {
+        if (closed.get() || closeRequested.get()) return false;
         HardwareVideoFrame frame = pending.getAndSet(null);
         if (frame == null) return false;
 
@@ -210,35 +173,13 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
         return renderer;
     }
 
-    /**
-     * Owns the SDL video subsystem for the lifetime of this renderer.
-     * Creation and destruction therefore happen on the same platform thread
-     * that performs rendering.
-     */
-    public void pumpLoop() {
-        try {
-            initialize();
-            initialized.complete(null);
-            while (!closeRequested.get()) {
-                if (!pump()) {
-                    // renderHardware() unparks immediately when a new GPU frame
-                    // arrives. The timeout only prevents a lost wakeup from
-                    // stalling the owner thread indefinitely.
-                    LockSupport.parkNanos(4_000_000L);
-                }
-            }
-        } catch (Throwable t) {
-            if (!initialized.isDone()) initialized.completeExceptionally(t);
-            else t.printStackTrace(System.err);
-        } finally {
-            destroyOnOwnerThread();
-        }
-    }
-
     public void requestClose() {
-        closeRequested.set(true);
-        Thread thread = renderThread;
-        if (thread != null) thread.interrupt();
+        if (!closeRequested.compareAndSet(false, true)) return;
+        Runtime.execute(() -> {
+            Runtime.renderers.remove(this);
+            destroyOnOwnerThread();
+        });
+        Runtime.wake();
     }
 
     @Override
@@ -247,13 +188,10 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
     }
 
     private void awaitInitialized() {
-        try {
-            initialized.join();
-        } catch (java.util.concurrent.CompletionException e) {
-            throw e;
-        }
+        initialized.join();
     }
 
+    /** Releases this device's resources. Must run on the shared SDL thread. */
     private void destroyOnOwnerThread() {
         if (!closed.compareAndSet(false, true)) return;
         HardwareVideoFrame frame = pending.getAndSet(null);
@@ -266,13 +204,124 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
         MemorySegment localRenderer = renderer;
         MemorySegment localWindow = window;
 
+        interop = null;
+        ffmpegDevice = null;
+        deviceProvider = null;
+        renderer = MemorySegment.NULL;
+        window = MemorySegment.NULL;
+        sdl = null;
+
         if (localInterop != null && localSdl != null) localInterop.destroy(localSdl);
         if (localFfmpegDevice != null) av_buffer_unref(localFfmpegDevice);
         if (localProvider != null) localProvider.close();
         if (localSdl != null) {
             if (localRenderer != null && localRenderer.address() != 0) localSdl.destroyRenderer(localRenderer);
             if (localWindow != null && localWindow.address() != 0) localSdl.destroyWindow(localWindow);
-            localSdl.close();
+        }
+    }
+
+    /**
+     * SDL3 has one process-wide video subsystem and a main-thread video API.
+     * Keep one DLL mapping, one SDL_Init call and one owner thread for every
+     * connected device. Device creation/destruction is serialized through
+     * commands; frame presentation is multiplexed on the same thread.
+     */
+    private static final class Runtime {
+        private static final BlockingQueue<Runnable> commands = new LinkedBlockingQueue<>();
+        private static final Set<SdlD3d11VideoRenderer> renderers =
+                java.util.concurrent.ConcurrentHashMap.newKeySet();
+        private static final CompletableFuture<Sdl3> ready = new CompletableFuture<>();
+        private static volatile Thread ownerThread;
+
+        private static Sdl3 sdl() {
+            return ready.join();
+        }
+
+        private static synchronized void startIfNeeded() {
+            if (ownerThread != null) return;
+            ownerThread = Thread.ofPlatform()
+                    .daemon()
+                    .name("scrcpy-sdl-video")
+                    .start(Runtime::run);
+        }
+
+        private static void run() {
+            Sdl3 runtimeSdl = null;
+            try {
+                runtimeSdl = new Sdl3();
+                if (!runtimeSdl.initVideo()) {
+                    String error = runtimeSdl.error();
+                    runtimeSdl.close();
+                    runtimeSdl = null;
+                    throw new IllegalStateException("SDL_Init(SDL_INIT_VIDEO) failed: " + error);
+                }
+                ready.complete(runtimeSdl);
+
+                while (true) {
+                    Runnable command = commands.poll(4, TimeUnit.MILLISECONDS);
+                    if (command != null) {
+                        try {
+                            command.run();
+                        } catch (Throwable t) {
+                            System.err.println("[scrcpy-sdl] SDL owner command failed:");
+                            t.printStackTrace(System.err);
+                        }
+                    }
+
+                    for (SdlD3d11VideoRenderer videoRenderer : renderers) {
+                        try {
+                            videoRenderer.pump();
+                        } catch (Throwable t) {
+                            System.err.printf("[scrcpy-sdl] renderer failed (%s): %s%n",
+                                    videoRenderer.title, t);
+                            t.printStackTrace(System.err);
+                            renderers.remove(videoRenderer);
+                            videoRenderer.closeRequested.set(true);
+                            videoRenderer.destroyOnOwnerThread();
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                ready.completeExceptionally(t);
+                System.err.println("[scrcpy-sdl] SDL video runtime stopped:");
+                t.printStackTrace(System.err);
+            }
+        }
+
+        private static <T> T call(java.util.concurrent.Callable<T> action) {
+            startIfNeeded();
+            ready.join();
+            CompletableFuture<T> result = new CompletableFuture<>();
+            commands.add(() -> {
+                try {
+                    result.complete(action.call());
+                } catch (Throwable t) {
+                    result.completeExceptionally(t);
+                }
+            });
+            wake();
+            return result.join();
+        }
+
+        private static void execute(Runnable action) {
+            startIfNeeded();
+            if (ready.isCompletedExceptionally()) return;
+            if (!ready.isDone()) {
+                ready.whenComplete((ignored, error) -> {
+                    if (error == null) {
+                        commands.add(action);
+                        wake();
+                    }
+                });
+                return;
+            }
+            commands.add(action);
+            wake();
+        }
+
+        private static void wake() {
+            Thread thread = ownerThread;
+            if (thread != null) LockSupport.unpark(thread);
         }
     }
 }
