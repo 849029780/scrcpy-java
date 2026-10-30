@@ -22,7 +22,7 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
     public NativeD3D11Canvas() {
         setBackground(java.awt.Color.BLACK);
         setFocusable(true);
-        setVisible(false);
+        setVisible(true);
     }
 
     @Override
