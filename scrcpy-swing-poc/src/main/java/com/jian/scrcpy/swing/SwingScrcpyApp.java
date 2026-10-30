@@ -697,7 +697,11 @@ public final class SwingScrcpyApp {
                 player = new JavaSoundPlayer();
                 SwingVideoSurface surface = view;
                 if (options.video() && System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
-                    nativeRenderer = new SwingD3D11VideoRenderer(surface);
+                    try {
+                        nativeRenderer = new SwingD3D11VideoRenderer(surface);
+                    } catch (Throwable nativeError) {
+                        System.err.println("[scrcpy-swing] native D3D11 renderer unavailable; using Java2D: " + nativeError);
+                    }
                 }
                 VideoHardwareDeviceProvider hardwareProvider = nativeRenderer != null
                         ? nativeRenderer : VideoHardwareDeviceProvider.DEFAULT;
