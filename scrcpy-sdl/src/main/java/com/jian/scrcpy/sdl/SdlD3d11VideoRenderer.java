@@ -37,6 +37,7 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
 
     private volatile Sdl3 sdl;
     private volatile MemorySegment window = MemorySegment.NULL;
+    private volatile int windowId;
     private volatile MemorySegment renderer = MemorySegment.NULL;
     private volatile SdlD3d11HardwareDeviceProvider deviceProvider;
     private volatile AVBufferRef ffmpegDevice;
@@ -85,6 +86,10 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
             window = localSdl.createWindow(title, width, height);
             if (window.address() == 0) {
                 throw new IllegalStateException("SDL_CreateWindow failed: " + localSdl.error());
+            }
+            windowId = localSdl.windowId(window);
+            if (windowId == 0) {
+                throw new IllegalStateException("SDL_GetWindowID failed: " + localSdl.error());
             }
 
             renderer = localSdl.createRenderer(window, "direct3d11");
@@ -136,6 +141,15 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
     @Override
     public void renderSoftware(VideoFrame frame) {
         frame.close();
+    }
+
+    /** Handles a native close request on the SDL owner thread. */
+    private void handleWindowClose(int eventWindowId) {
+        if (windowId != eventWindowId || closed.get()) return;
+        closeRequested.set(true);
+        Runtime.renderers.remove(this);
+        destroyOnOwnerThread();
+        System.err.printf("[scrcpy-sdl] SDL window closed: %s (windowId=%d)%n", title, eventWindowId);
     }
 
     /** Must be called by Runtime on the shared SDL owner thread. */
@@ -258,6 +272,27 @@ public final class SdlD3d11VideoRenderer implements VideoRenderer, AutoCloseable
                 ready.complete(runtimeSdl);
 
                 while (true) {
+                    // SDL_PollEvent also pumps the platform event queue. It must run
+                    // on the same thread that called SDL_Init(SDL_INIT_VIDEO).
+                    while (runtimeSdl.pollEvent()) {
+                        int eventType = runtimeSdl.eventType();
+                        if (eventType == Sdl3.SDL_EVENT_QUIT) {
+                            for (SdlD3d11VideoRenderer videoRenderer : Set.copyOf(renderers)) {
+                                videoRenderer.closeRequested.set(true);
+                                renderers.remove(videoRenderer);
+                                videoRenderer.destroyOnOwnerThread();
+                            }
+                        } else if (eventType == Sdl3.SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+                            int eventWindowId = runtimeSdl.eventWindowId();
+                            for (SdlD3d11VideoRenderer videoRenderer : renderers) {
+                                if (videoRenderer.windowId == eventWindowId) {
+                                    videoRenderer.handleWindowClose(eventWindowId);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     Runnable command = commands.poll(4, TimeUnit.MILLISECONDS);
                     if (command != null) {
                         try {
