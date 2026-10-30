@@ -87,6 +87,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // serialized until all hardware backends have been stress-tested.
     private static final boolean PARALLEL_NATIVE_DECODE =
             Boolean.getBoolean("scrcpy.video.parallel-native");
+    // Keep software decoding bounded for multi-device sessions. FFmpeg's
+    // thread_count=0 auto mode may create a CPU-sized worker pool per decoder,
+    // which scales poorly when several devices are connected at once.
+    private static final int SOFTWARE_DECODER_THREADS = resolveSoftwareDecoderThreads();
     private final AtomicLong statsDecodedFrames = new AtomicLong();
     private final AtomicLong statsHardwareFrames = new AtomicLong();
     private final AtomicLong statsSoftwareFrames = new AtomicLong();
@@ -168,6 +172,30 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         };
     }
 
+    private static int resolveSoftwareDecoderThreads() {
+        int available = Math.max(1, Runtime.getRuntime().availableProcessors());
+        int defaultThreads = Math.max(1, Math.min(2, available / 4));
+        String configured = System.getProperty("scrcpy.video.threads");
+        if (configured == null || configured.isBlank()) {
+            return defaultThreads;
+        }
+        try {
+            int requested = Integer.parseInt(configured.trim());
+            if (requested < 1) {
+                System.err.printf("[scrcpy-java] invalid scrcpy.video.threads=%s; using %d%n",
+                        configured, defaultThreads);
+                return defaultThreads;
+            }
+            // More decoder threads than logical processors only increases
+            // scheduling pressure for this live, multi-device workload.
+            return Math.min(requested, available);
+        } catch (NumberFormatException e) {
+            System.err.printf("[scrcpy-java] invalid scrcpy.video.threads=%s; using %d%n",
+                    configured, defaultThreads);
+            return defaultThreads;
+        }
+    }
+
     private static int avId(CodecId c) {
         return switch (c) {
             case H264 -> AV_CODEC_ID_H264;
@@ -210,7 +238,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             throw new IllegalStateException("cannot open software decoder " + codecId);
         }
         allocateFramesAndPacket();
-        System.out.printf("[scrcpy-java][%s] video decoder: software (%s)%n", serial, codecId);
+        System.out.printf("[scrcpy-java][%s] video decoder: software (%s), threads=%d, threadType=%s%n",
+                serial, codecId, ctx.thread_count(),
+                (ctx.active_thread_type() & FF_THREAD_SLICE) != 0 ? "slice" : "serial");
     }
 
     private boolean tryInitHardware(AVCodec decoder, CodecId codecId, HardwareBackend backend) {
@@ -313,7 +343,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         // get_format(). Pre-setting YUV420P can interfere with that negotiation.
         if (sessionWidth > 0) codecContext.width(sessionWidth);
         if (sessionHeight > 0) codecContext.height(sessionHeight);
-        if (!hardware) codecContext.pix_fmt(AV_PIX_FMT_YUV420P);
+        if (!hardware) {
+            codecContext.pix_fmt(AV_PIX_FMT_YUV420P);
+            codecContext.thread_count(SOFTWARE_DECODER_THREADS);
+            // Frame threading adds decoder latency. Slice threading keeps work
+            // within one frame and is ignored automatically when unsupported.
+            codecContext.thread_type(FF_THREAD_SLICE);
+        }
         codecContext.flags(codecContext.flags() | AV_CODEC_FLAG_LOW_DELAY);
     }
 
