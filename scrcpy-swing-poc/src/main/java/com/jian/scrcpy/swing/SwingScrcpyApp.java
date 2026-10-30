@@ -58,7 +58,7 @@ public final class SwingScrcpyApp {
     private final JLabel status = new JLabel("正在扫描 ADB 设备...");
     private final JLabel primaryStatus = new JLabel("主设备：无");
     private final JPanel primaryHost = new JPanel(new BorderLayout());
-    private final JPanel secondaryGrid = new JPanel(new GridLayout(0, 3, 10, 10));
+    private final JPanel secondaryGrid = new JPanel(new WrapLayout(FlowLayout.LEFT, 10, 10));
     private final JScrollPane secondaryScroll = new JScrollPane(secondaryGrid);
     private final JPanel workspace = new JPanel(new BorderLayout(8, 0));
     private final Map<String, DeviceSession> sessions = new ConcurrentHashMap<>();
@@ -133,6 +133,7 @@ public final class SwingScrcpyApp {
         secondaryGrid.setBackground(new Color(24, 24, 24));
         secondaryGrid.setBorder(new EmptyBorder(10, 10, 10, 10));
         secondaryScroll.setBorder(BorderFactory.createEmptyBorder());
+        secondaryScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         secondaryScroll.getViewport().setBackground(new Color(24, 24, 24));
         secondaryScroll.getVerticalScrollBar().setUnitIncrement(24);
         workspace.setBackground(new Color(24, 24, 24));
