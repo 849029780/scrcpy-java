@@ -84,11 +84,13 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // requiring a JVM flag. Set -Dscrcpy.video.stats=false to silence it.
     private static final boolean VIDEO_STATS_ENABLED =
             Boolean.parseBoolean(System.getProperty("scrcpy.video.stats", "true"));
-    // Experimental: independent AVCodecContext instances may decode in
-    // parallel. Keep initialization, fallback and destruction globally
-    // serialized until all hardware backends have been stress-tested.
+    // Each FfmpegVideoDecoder owns its AVCodecContext, AVPacket, AVFrames and
+    // hardware device. Serialize packet send/receive per decoder, not process-wide,
+    // so independent devices can decode concurrently. Initialization, fallback
+    // and destruction remain globally serialized as a conservative FFmpeg boundary.
+    // Set -Dscrcpy.video.parallel-native=false to restore the legacy global mode.
     private static final boolean PARALLEL_NATIVE_DECODE =
-            Boolean.getBoolean("scrcpy.video.parallel-native");
+            Boolean.parseBoolean(System.getProperty("scrcpy.video.parallel-native", "true"));
     // Keep software decoding bounded for multi-device sessions. FFmpeg's
     // thread_count=0 auto mode may create a CPU-sized worker pool per decoder,
     // which scales poorly when several devices are connected at once.
