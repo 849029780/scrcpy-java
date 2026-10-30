@@ -26,6 +26,8 @@ struct Renderer {
     ID3D11RenderTargetView* renderTarget{};
     ID3D11VideoProcessorEnumerator* processorEnumerator{};
     ID3D11VideoProcessor* processor{};
+    ID3D11Query* completionQuery{};
+    std::mutex mutex;
     UINT width{};
     UINT height{};
     UINT processorWidth{};
@@ -37,6 +39,7 @@ struct Renderer {
     ~Renderer() {
         releaseProcessor();
         detachSurface();
+        if (completionQuery) completionQuery->Release();
         if (videoContext) videoContext->Release();
         if (videoDevice) videoDevice->Release();
         if (context) context->Release();
@@ -88,6 +91,9 @@ struct Renderer {
                 reinterpret_cast<void**>(&videoDevice)))) return false;
         if (FAILED(context->QueryInterface(__uuidof(ID3D11VideoContext),
                 reinterpret_cast<void**>(&videoContext)))) return false;
+        D3D11_QUERY_DESC queryDesc{};
+        queryDesc.Query = D3D11_QUERY_EVENT;
+        if (FAILED(device->CreateQuery(&queryDesc, &completionQuery))) return false;
 
         // FFmpeg's D3D11VA decoder and the Swing renderer share this immediate
         // context. Enable D3D11's built-in context serialization for calls
@@ -324,6 +330,18 @@ struct Renderer {
         backBuffer->Release();
 
         if (FAILED(hr)) return false;
+
+        // AVFrame owns the decoder's texture-array slice. Do not return from
+        // this call (and let FFmpeg recycle that slice) until the video
+        // processor has finished reading it.
+        context->End(completionQuery);
+        context->Flush();
+        HRESULT completion = S_FALSE;
+        while (completion == S_FALSE) {
+            completion = context->GetData(completionQuery, nullptr, 0, 0);
+            if (completion == S_FALSE) Sleep(0);
+        }
+        if (FAILED(completion)) return false;
         return SUCCEEDED(swapChain->Present(0, 0));
     }
 
@@ -337,8 +355,14 @@ struct Renderer {
 };
 
 std::mutex g_mutex;
-std::unordered_map<jlong, std::unique_ptr<Renderer>> g_renderers;
+std::unordered_map<jlong, std::shared_ptr<Renderer>> g_renderers;
 std::atomic<jlong> g_nextHandle{1};
+
+std::shared_ptr<Renderer> findRenderer(jlong handle) {
+    std::lock_guard<std::mutex> guard(g_mutex);
+    auto it = g_renderers.find(handle);
+    return it == g_renderers.end() ? nullptr : it->second;
+}
 
 void throwJava(JNIEnv* env, const char* message) {
     jclass type = env->FindClass("java/lang/IllegalStateException");
@@ -385,7 +409,7 @@ Java_com_jian_scrcpy_swing_NativeD3D11Canvas_attach0(
     HWND hwnd = getCanvasHwnd(env, canvas);
     if (!hwnd) return 0;
 
-    auto renderer = std::make_unique<Renderer>();
+    auto renderer = std::make_shared<Renderer>();
     if (!renderer->createDevice() || !renderer->attachSurface(hwnd)) {
         throwJava(env, "D3D11 device, video processor, or swap-chain initialization failed");
         return 0;
@@ -402,9 +426,13 @@ Java_com_jian_scrcpy_swing_NativeD3D11Canvas_attachSurface0(
     JNIEnv* env, jclass, jlong handle, jobject canvas) {
     HWND hwnd = getCanvasHwnd(env, canvas);
     if (!hwnd) return;
-    std::lock_guard<std::mutex> guard(g_mutex);
-    auto it = g_renderers.find(handle);
-    if (it == g_renderers.end() || !it->second->attachSurface(hwnd)) {
+    auto renderer = findRenderer(handle);
+    if (!renderer) {
+        throwJava(env, "D3D11 renderer handle is no longer valid");
+        return;
+    }
+    std::lock_guard<std::mutex> guard(renderer->mutex);
+    if (!renderer->attachSurface(hwnd)) {
         throwJava(env, "Could not reattach D3D11 swap chain to the Canvas HWND");
     }
 }
@@ -412,19 +440,21 @@ Java_com_jian_scrcpy_swing_NativeD3D11Canvas_attachSurface0(
 extern "C" JNIEXPORT void JNICALL
 Java_com_jian_scrcpy_swing_NativeD3D11Canvas_detachSurface0(
     JNIEnv*, jclass, jlong handle) {
-    std::lock_guard<std::mutex> guard(g_mutex);
-    auto it = g_renderers.find(handle);
-    if (it != g_renderers.end()) it->second->detachSurface();
+    auto renderer = findRenderer(handle);
+    if (!renderer) return;
+    std::lock_guard<std::mutex> guard(renderer->mutex);
+    renderer->detachSurface();
 }
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_jian_scrcpy_swing_NativeD3D11Canvas_device0(
     JNIEnv*, jclass, jlong handle) {
-    std::lock_guard<std::mutex> guard(g_mutex);
-    auto it = g_renderers.find(handle);
-    if (it == g_renderers.end() || !it->second->device) return 0;
-    it->second->device->AddRef();
-    return reinterpret_cast<jlong>(it->second->device);
+    auto renderer = findRenderer(handle);
+    if (!renderer) return 0;
+    std::lock_guard<std::mutex> guard(renderer->mutex);
+    if (!renderer->device) return 0;
+    renderer->device->AddRef();
+    return reinterpret_cast<jlong>(renderer->device);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -438,10 +468,10 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_jian_scrcpy_swing_NativeD3D11Canvas_renderHardware0(
     JNIEnv*, jclass, jlong handle, jlong texture, jlong arrayIndex,
     jint width, jint height, jint colorSpace, jint colorRange) {
-    std::lock_guard<std::mutex> guard(g_mutex);
-    auto it = g_renderers.find(handle);
-    if (it == g_renderers.end()) return JNI_FALSE;
-    return it->second->renderHardware(
+    auto renderer = findRenderer(handle);
+    if (!renderer) return JNI_FALSE;
+    std::lock_guard<std::mutex> guard(renderer->mutex);
+    return renderer->renderHardware(
         static_cast<uintptr_t>(texture), static_cast<uintptr_t>(arrayIndex),
         static_cast<UINT>(width), static_cast<UINT>(height),
         colorSpace, colorRange) ? JNI_TRUE : JNI_FALSE;
@@ -450,9 +480,10 @@ Java_com_jian_scrcpy_swing_NativeD3D11Canvas_renderHardware0(
 extern "C" JNIEXPORT void JNICALL
 Java_com_jian_scrcpy_swing_NativeD3D11Canvas_render0(
     JNIEnv*, jclass, jlong handle) {
-    std::lock_guard<std::mutex> guard(g_mutex);
-    auto it = g_renderers.find(handle);
-    if (it != g_renderers.end()) it->second->renderTestColor();
+    auto renderer = findRenderer(handle);
+    if (!renderer) return;
+    std::lock_guard<std::mutex> guard(renderer->mutex);
+    renderer->renderTestColor();
 }
 
 extern "C" JNIEXPORT void JNICALL
