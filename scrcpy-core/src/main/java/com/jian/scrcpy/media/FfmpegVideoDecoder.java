@@ -521,6 +521,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             if (av_new_packet(packet, payloadSize) < 0) return -1;
             packet.data().put(encoded, 0, payloadSize);
             packet.pts(p.pts()).dts(p.pts());
+            // Preserve scrcpy's access-unit key-frame metadata for FFmpeg.
+            // This is especially important after queue overload recovery.
+            packet.flags(p.keyFrame() ? AV_PKT_FLAG_KEY : 0);
             return avcodec_send_packet(ctx, packet);
         });
 
