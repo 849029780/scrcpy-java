@@ -177,6 +177,8 @@ public final class ScrcpyApp extends Application {
             Platform.exit();
         });
         stage.show();
+        // Inspect the actual Prism backend only after the JavaFX pipeline has initialized.
+        Platform.runLater(PrismPipelineDiagnostics::log);
         // A desktop focus change must never leave a remote keyboard key or
         // mouse button logically pressed. JavaFX can stop delivering release
         // events when another window becomes active.
