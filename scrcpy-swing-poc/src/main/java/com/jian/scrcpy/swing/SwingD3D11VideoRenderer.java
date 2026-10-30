@@ -11,6 +11,10 @@ import org.bytedeco.javacpp.BytePointer;
 import org.bytedeco.javacpp.Pointer;
 import org.bytedeco.javacpp.PointerPointer;
 
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.bytedeco.ffmpeg.global.avutil.*;
@@ -23,6 +27,16 @@ import static org.bytedeco.ffmpeg.global.avutil.*;
  * can be consumed by the same device without downloading them to system memory.
  */
 public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer {
+    // Keep GPU completion waits off FFmpeg decoder threads. Workers are shared
+    // across devices instead of allocating one waiting thread per phone.
+    private static final ExecutorService PRESENT_EXECUTOR = Executors.newFixedThreadPool(
+            Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors())),
+            task -> {
+                Thread thread = new Thread(task, "scrcpy-d3d11-present");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private static final int MAX_QUEUED_HARDWARE_FRAMES = 2;
     private static final class NativePointer extends Pointer {
         NativePointer(long address) {
             this.address = address;
@@ -33,6 +47,10 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     private final NativeD3D11Canvas canvas;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean firstNativePresentLogged = new AtomicBoolean();
+    private final ArrayBlockingQueue<HardwareVideoFrame> pendingFrames =
+            new ArrayBlockingQueue<>(MAX_QUEUED_HARDWARE_FRAMES);
+    private final Object drainMonitor = new Object();
+    private boolean drainScheduled;
 
     public SwingD3D11VideoRenderer(SwingVideoSurface surface) {
         this.surface = surface;
@@ -89,34 +107,68 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
 
     @Override
     public boolean renderHardware(HardwareVideoFrame hardwareFrame) {
-        if (closed.get() || !"d3d11va".equalsIgnoreCase(hardwareFrame.backend())) {
+        if (closed.get() || !"d3d11va".equalsIgnoreCase(hardwareFrame.backend())) return false;
+
+        // Transfer ownership only after enqueue succeeds. A full bounded queue
+        // applies backpressure to this decoder rather than dropping a retained
+        // frame or forcing a GPU-to-CPU readback.
+        try {
+            while (!closed.get()) {
+                if (pendingFrames.offer(hardwareFrame, 50, TimeUnit.MILLISECONDS)) {
+                    schedulePresent();
+                    return true;
+                }
+            }
+            return false;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
             return false;
         }
+    }
 
+    private void schedulePresent() {
+        synchronized (drainMonitor) {
+            if (drainScheduled || closed.get()) return;
+            drainScheduled = true;
+        }
+        PRESENT_EXECUTOR.execute(this::presentOne);
+    }
+
+    private void presentOne() {
+        HardwareVideoFrame hardwareFrame = pendingFrames.poll();
+        try {
+            if (hardwareFrame != null && !closed.get()) presentHardwareFrame(hardwareFrame);
+        } catch (Throwable error) {
+            System.err.println("[scrcpy-swing] asynchronous D3D11 presentation failed: " + error);
+        } finally {
+            if (hardwareFrame != null) hardwareFrame.close();
+        }
+
+        boolean reschedule;
+        synchronized (drainMonitor) {
+            reschedule = !closed.get() && !pendingFrames.isEmpty();
+            if (!reschedule) {
+                drainScheduled = false;
+                drainMonitor.notifyAll();
+            }
+        }
+        if (reschedule) PRESENT_EXECUTOR.execute(this::presentOne);
+    }
+
+    private void presentHardwareFrame(HardwareVideoFrame hardwareFrame) {
         AVFrame frame = hardwareFrame.frame();
         BytePointer texture = frame.data(0);
         BytePointer arrayIndex = frame.data(1);
-        if (texture == null || texture.isNull()) {
-            return false;
-        }
+        if (texture == null || texture.isNull()) return;
 
-        boolean rendered;
-        try {
-            rendered = canvas.renderHardwareFrame(
-                    texture.address(),
-                    arrayIndex == null || arrayIndex.isNull() ? 0 : arrayIndex.address(),
-                    frame.width(),
-                    frame.height(),
-                    frame.colorspace(),
-                    frame.color_range());
-        } catch (Throwable error) {
-            System.err.println("[scrcpy-swing][" + hardwareFrame.serial()
-                    + "] D3D11 native texture presentation threw; decoder will attempt CPU readback: " + error);
-            return false;
-        }
-
+        boolean rendered = canvas.renderHardwareFrame(
+                texture.address(),
+                arrayIndex == null || arrayIndex.isNull() ? 0 : arrayIndex.address(),
+                frame.width(), frame.height(), frame.colorspace(), frame.color_range());
         if (!rendered) {
-            return false;
+            System.err.printf("[scrcpy-swing][%s] D3D11 presentation rejected a retained frame; dropping without CPU readback%n",
+                    hardwareFrame.serial());
+            return;
         }
 
         if (firstNativePresentLogged.compareAndSet(false, true)) {
@@ -128,12 +180,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
                     frame.width(), frame.height());
         }
         surface.showHardwareFrame(frame.width(), frame.height());
-        // Native rendering is synchronous through VideoProcessorBlt/Present.
-        // Release the retained AVFrame only after the GPU command has been queued.
-        hardwareFrame.close();
-        return true;
     }
-
     @Override
     public void renderSoftware(VideoFrame frame) {
         surface.accept(frame);
@@ -141,8 +188,25 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
 
     @Override
     public void close() {
-        if (closed.compareAndSet(false, true)) {
-            canvas.close();
+        if (!closed.compareAndSet(false, true)) return;
+        HardwareVideoFrame pending;
+        while ((pending = pendingFrames.poll()) != null) pending.close();
+        synchronized (drainMonitor) {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (drainScheduled) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    System.err.println("[scrcpy-swing] timed out waiting for D3D11 presentation worker during close");
+                    break;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedWait(drainMonitor, remaining);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
+        canvas.close();
     }
 }
