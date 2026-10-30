@@ -466,15 +466,19 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 || decodeQueue.size() > DECODE_QUEUE_LOW_WATERMARK) {
             return;
         }
-        context.executor().execute(() -> {
-            if (closed.get() || !context.channel().isActive()
-                    || decodeQueue.size() > DECODE_QUEUE_LOW_WATERMARK) {
-                return;
-            }
-            if (videoReadsPaused.compareAndSet(true, false)) {
-                context.channel().config().setAutoRead(true);
-            }
-        });
+        try {
+            context.executor().execute(() -> {
+                if (closed.get() || !context.channel().isActive()
+                        || decodeQueue.size() > DECODE_QUEUE_LOW_WATERMARK) {
+                    return;
+                }
+                if (videoReadsPaused.compareAndSet(true, false)) {
+                    context.channel().config().setAutoRead(true);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // The channel event loop is shutting down; the connection is closing.
+        }
     }
 
     private void decodeLoop() {
