@@ -13,6 +13,7 @@ import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 import static org.bytedeco.ffmpeg.global.avcodec.*;
@@ -77,6 +78,16 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             Boolean.getBoolean("scrcpy.video.debug.skip-decode");
     private static final boolean DEBUG_SKIP_SWS_SCALE =
             Boolean.getBoolean("scrcpy.video.debug.skip-sws-scale");
+    private static final boolean VIDEO_STATS_ENABLED =
+            Boolean.getBoolean("scrcpy.video.stats");
+    private final AtomicLong statsDecodedFrames = new AtomicLong();
+    private final AtomicLong statsHardwareFrames = new AtomicLong();
+    private final AtomicLong statsSoftwareFrames = new AtomicLong();
+    private final AtomicLong statsQueueDrops = new AtomicLong();
+    private final AtomicLong statsPoolMisses = new AtomicLong();
+    private final AtomicLong statsScaleNanos = new AtomicLong();
+    private final AtomicLong statsScaleCount = new AtomicLong();
+    private long statsLastReportNanos = System.nanoTime();
 
     // Keep the existing global native lock for stability with multi-device
     // decoding. Hardware decoding can be made more parallel later once every
@@ -358,8 +369,14 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         }
         if (!decodeQueue.offer(m)) {
             MediaMessage dropped = decodeQueue.poll();
-            releaseMessage(dropped);
-            if (!decodeQueue.offer(m)) releaseMessage(m);
+            if (dropped != null) {
+                releaseMessage(dropped);
+                if (VIDEO_STATS_ENABLED) statsQueueDrops.incrementAndGet();
+            }
+            if (!decodeQueue.offer(m)) {
+                releaseMessage(m);
+                if (VIDEO_STATS_ENABLED) statsQueueDrops.incrementAndGet();
+            }
         }
     }
 
@@ -369,6 +386,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 MediaMessage m = decodeQueue.take();
                 try {
                     decodeMessage(m);
+                    reportVideoStatsIfDue();
                 } finally {
                     releaseMessage(m);
                 }
@@ -454,6 +472,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             }
 
             if (receiveResult < 0) break;
+            if (VIDEO_STATS_ENABLED) statsDecodedFrames.incrementAndGet();
 
             if (activeHardware != null && !hardwareConfirmed) {
                 hardwareConfirmed = true;
@@ -472,7 +491,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                     } finally {
                         if (!accepted) hardwareFrame.close();
                     }
-                    if (accepted) continue;
+                    if (accepted) {
+                        if (VIDEO_STATS_ENABLED) statsHardwareFrames.incrementAndGet();
+                        continue;
+                    }
                 }
 
                 synchronized (FFMPEG_VIDEO_LOCK) {
@@ -487,8 +509,12 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
             converter(source.width(), source.height(), source.format());
             BgraBuffer output = acquireBgraBuffer(width * height * 4);
-            if (output == null) continue;
+            if (output == null) {
+                if (VIDEO_STATS_ENABLED) statsPoolMisses.incrementAndGet();
+                continue;
+            }
             configureRgbDestination(output);
+            long scaleStarted = VIDEO_STATS_ENABLED ? System.nanoTime() : 0L;
             int scaled = sws_scale(
                     sws,
                     source.data(),
@@ -497,6 +523,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                     source.height(),
                     rgb.data(),
                     rgb.linesize());
+            if (VIDEO_STATS_ENABLED) {
+                statsScaleNanos.addAndGet(System.nanoTime() - scaleStarted);
+                statsScaleCount.incrementAndGet();
+            }
             if (scaled <= 0) {
                 recycleBgraBuffer(output);
                 continue;
@@ -509,6 +539,30 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                 && activeHardware != null && !hardwareConfirmed) {
             fallbackToSoftware(encoded, payloadSize, p.pts(), "avcodec_receive_frame=" + receiveResult);
         }
+    }
+
+    private void reportVideoStatsIfDue() {
+        if (!VIDEO_STATS_ENABLED) return;
+        long now = System.nanoTime();
+        long elapsed = now - statsLastReportNanos;
+        if (elapsed < 5_000_000_000L) return;
+        statsLastReportNanos = now;
+
+        long decoded = statsDecodedFrames.getAndSet(0);
+        long hardware = statsHardwareFrames.getAndSet(0);
+        long software = statsSoftwareFrames.getAndSet(0);
+        long queueDrops = statsQueueDrops.getAndSet(0);
+        long poolMisses = statsPoolMisses.getAndSet(0);
+        long scaleNanos = statsScaleNanos.getAndSet(0);
+        long scaleCount = statsScaleCount.getAndSet(0);
+        double seconds = elapsed / 1_000_000_000.0;
+        double decodedFps = decoded / seconds;
+        double scaleAverageMs = scaleCount == 0 ? 0.0 : scaleNanos / 1_000_000.0 / scaleCount;
+        System.out.printf(
+                Locale.ROOT,
+                "[scrcpy-java][%s] video stats: decoded=%.1f fps, hardware=%.1f fps, software=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, queue=%d/16%n",
+                serial, decodedFps, hardware / seconds, software / seconds,
+                queueDrops, poolMisses, scaleAverageMs, decodeQueue.size());
     }
 
     private byte[] ensureEncodedCapacity(int size) {
@@ -576,9 +630,17 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             converter(frame.width(), frame.height(), frame.format());
             if (DEBUG_SKIP_SWS_SCALE) continue;
             BgraBuffer output = acquireBgraBuffer(width * height * 4);
-            if (output == null) continue;
+            if (output == null) {
+                if (VIDEO_STATS_ENABLED) statsPoolMisses.incrementAndGet();
+                continue;
+            }
             configureRgbDestination(output);
+            long scaleStarted = VIDEO_STATS_ENABLED ? System.nanoTime() : 0L;
             int scaled = sws_scale(sws, frame.data(), frame.linesize(), 0, frame.height(), rgb.data(), rgb.linesize());
+            if (VIDEO_STATS_ENABLED) {
+                statsScaleNanos.addAndGet(System.nanoTime() - scaleStarted);
+                statsScaleCount.incrementAndGet();
+            }
             if (scaled <= 0) {
                 recycleBgraBuffer(output);
                 continue;
@@ -595,6 +657,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private void publishFrame(BgraBuffer output, long pts) {
+        if (VIDEO_STATS_ENABLED) statsSoftwareFrames.incrementAndGet();
         output.buffer.position(0);
         output.buffer.limit(width * height * 4);
         VideoFrame videoFrame = new VideoFrame(
