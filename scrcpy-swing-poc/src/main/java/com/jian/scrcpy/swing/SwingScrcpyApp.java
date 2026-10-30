@@ -1307,19 +1307,29 @@ public final class SwingScrcpyApp {
 
     private void resizeTile(DeviceSession handle, boolean primary) {
         if (handle.tile == null) return;
-        int maxW = primary ? 780 : TILE_WIDTH;
-        // Fit the primary video to the currently available workspace height.
-        // Otherwise a fixed 940px tile is clipped by a shorter window and
-        // the aspect-fit renderer introduces wide horizontal side bars.
-        int availableHeight = workspace.getHeight() - 30;
-        int maxH = primary
-                ? Math.max(1, Math.min(940, availableHeight > 0 ? availableHeight : 940))
-                : TILE_HEIGHT;
+        int availableWidth = Math.max(1, workspace.getWidth() - 24);
+        int maxW;
+        int maxH;
+        if (primary) {
+            // Give the primary device the largest proportional area available.
+            // Keep room for secondary devices on the right when they exist;
+            // with a single device, let the primary use the whole workspace.
+            boolean hasSecondary = secondaryGrid.getComponentCount() > 0;
+            maxW = Math.max(1, (int) (availableWidth * (hasSecondary ? 0.58 : 1.0)) - NAV_WIDTH);
+            int availableHeight = workspace.getHeight() - 30;
+            maxH = Math.max(1, availableHeight > 0 ? availableHeight : 940);
+        } else {
+            maxW = TILE_WIDTH;
+            maxH = TILE_HEIGHT;
+        }
         int fw = handle.view.frameWidth(), fh = handle.view.frameHeight();
         double aspect = fw > 0 && fh > 0 ? fw / (double) fh : 9.0 / 19.5;
-        int vw = Math.min(maxW, (int) Math.round(maxH * aspect));
-        int vh = (int) Math.round(vw / aspect);
-        if (vh > maxH) { vh = maxH; vw = (int) Math.round(vh * aspect); }
+        // Fit the source aspect ratio inside both bounds. Never enlarge one
+        // axis independently: this keeps the entire phone screen visible.
+        double scale = Math.min(maxW / (double) Math.max(1, fw),
+                maxH / (double) Math.max(1, fh));
+        int vw = Math.max(1, (int) Math.round((fw > 0 ? fw : 360) * scale));
+        int vh = Math.max(1, (int) Math.round((fh > 0 ? fh : 780) * scale));
         Dimension preferred = new Dimension(vw + NAV_WIDTH, vh + 30);
         handle.tile.setPreferredSize(preferred);
         handle.tile.setMinimumSize(preferred);
