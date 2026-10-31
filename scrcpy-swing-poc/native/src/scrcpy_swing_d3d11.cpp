@@ -583,18 +583,12 @@ struct Renderer {
         if (!ensureInputView(texture, textureAddress, static_cast<UINT>(arrayIndex),
                              textureDesc.Format, &inputView)) return -1;
 
-        // Preserve every pixel from the decoded frame. The Swing viewport
-        // is sized to the same aspect ratio, so fitting the complete source
-        // into the destination avoids both cropping and letterbox bars.
+        // Fill the complete Swing viewport. All landscape (or portrait)
+        // tiles share the same target dimensions; stretching the decoded
+        // frame avoids renderer-generated letterbox bars between devices
+        // whose encoded aspect ratios differ slightly.
         const RECT sourceRect{0, 0, static_cast<LONG>(frameWidth), static_cast<LONG>(frameHeight)};
-        const double scale = std::min(
-            width / static_cast<double>(frameWidth),
-            height / static_cast<double>(frameHeight));
-        const LONG destWidth = static_cast<LONG>(frameWidth * scale + 0.5);
-        const LONG destHeight = static_cast<LONG>(frameHeight * scale + 0.5);
-        const LONG left = (static_cast<LONG>(width) - destWidth) / 2;
-        const LONG top = (static_cast<LONG>(height) - destHeight) / 2;
-        const RECT destRect{left, top, left + destWidth, top + destHeight};
+        const RECT destRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
 
         D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColor{};
         inputColor.YCbCr_Matrix = (colorSpace == 1 || colorSpace == 9 || colorSpace == 10) ? 1 : 0;
