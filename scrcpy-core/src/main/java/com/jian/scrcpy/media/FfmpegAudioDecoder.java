@@ -26,8 +26,11 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     // 16 packets cap audio backlog to a short live window while retaining
     // enough buffering for normal scheduling jitter across many devices.
     private static final int DECODE_QUEUE_CAPACITY = 16;
-    private final BoundedMediaMessageQueue decodeQueue =
-            new BoundedMediaMessageQueue(DECODE_QUEUE_CAPACITY);
+    // Audio packets are independent: unlike predictive video frames, an audio
+    // packet can be dropped without waiting for a key frame. Keep the newest
+    // live audio by evicting the oldest queued media packet on overload.
+    private final AudioMediaMessageQueue decodeQueue =
+            new AudioMediaMessageQueue(DECODE_QUEUE_CAPACITY);
     private byte[] encodedBuffer = new byte[0];
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
@@ -114,15 +117,18 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
                 MediaMessage m = decodeQueue.take();
                 try {
                     decodeMessage(m);
+                } catch (Throwable packetFailure) {
+                    // A malformed packet or transient native/output failure must
+                    // not permanently kill this session's audio worker.
+                    System.err.println("[scrcpy-java][" + sessionLabel
+                            + "] audio message processing failed; continuing: " + packetFailure);
+                    packetFailure.printStackTrace(System.err);
                 } finally {
                     releaseMessage(m);
                 }
             }
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
-        } catch (Throwable t) {
-            System.err.println("[scrcpy-java][" + sessionLabel + "] audio decode worker failed: " + t);
-            t.printStackTrace(System.err);
         } finally {
             MediaMessage m;
             while ((m = decodeQueue.poll()) != null) releaseMessage(m);
@@ -196,7 +202,15 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             if (ret >= 0) {
                 AudioFrame pcm = toPcm(frame, pts);
                 if (pcm != null) {
-                    sink.accept(pcm);
+                    try {
+                        sink.accept(pcm);
+                    } catch (Throwable outputFailure) {
+                        // Playback device failures are isolated from decoding.
+                        // JavaSoundPlayer closes a broken line so the next PCM
+                        // frame can attempt to reopen the output device.
+                        System.err.println("[scrcpy-java][" + sessionLabel
+                                + "] audio output failed; decoder remains active: " + outputFailure);
+                    }
                 }
                 continue;
             }

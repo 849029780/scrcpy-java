@@ -23,8 +23,17 @@ public final class JavaSoundPlayer implements AutoCloseable {
                 outputBuffer[p] = (byte) s;
                 outputBuffer[p + 1] = (byte) (s >>> 8);
             }
-            line.write(outputBuffer, 0, bytes);
+            try {
+                line.write(outputBuffer, 0, bytes);
+            } catch (RuntimeException outputFailure) {
+                // A disconnected/reconfigured Windows audio endpoint can leave
+                // SourceDataLine unusable. Close it now; the next frame retries
+                // opening the current default output device.
+                close();
+                throw outputFailure;
+            }
         } catch (LineUnavailableException e) {
+            close();
             throw new IllegalStateException(e);
         }
     }
