@@ -127,19 +127,19 @@ public final class SwingScrcpyApp {
         toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(215, 215, 215)));
 
         primaryHost.setOpaque(true);
-        primaryHost.setBackground(Color.BLACK);
+        primaryHost.setBackground(Color.WHITE);
         primaryHost.setDoubleBuffered(false);
         workspace.setOpaque(true);
         workspace.setDoubleBuffered(false);
         primaryHost.setPreferredSize(new Dimension(0, 0));
         primaryHost.setVisible(false);
-        secondaryGrid.setBackground(new Color(24, 24, 24));
+        secondaryGrid.setBackground(Color.WHITE);
         secondaryGrid.setBorder(new EmptyBorder(10, 10, 10, 10));
         secondaryScroll.setBorder(BorderFactory.createEmptyBorder());
         secondaryScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        secondaryScroll.getViewport().setBackground(new Color(24, 24, 24));
+        secondaryScroll.getViewport().setBackground(Color.WHITE);
         secondaryScroll.getVerticalScrollBar().setUnitIncrement(24);
-        workspace.setBackground(new Color(24, 24, 24));
+        workspace.setBackground(Color.WHITE);
         workspace.add(secondaryScroll, BorderLayout.CENTER);
         workspace.addComponentListener(new ComponentAdapter() {
             @Override public void componentResized(ComponentEvent e) {
@@ -205,6 +205,7 @@ public final class SwingScrcpyApp {
         deviceDialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         JPanel list = new JPanel();
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+        list.setBackground(UIManager.getColor("List.background"));
         rebuildDeviceRows(list);
         JScrollPane scroll = new JScrollPane(list);
         scroll.setPreferredSize(new Dimension(620, 440));
@@ -241,7 +242,11 @@ public final class SwingScrcpyApp {
                 });
                 JLabel state = new JLabel(sessions.containsKey(d.serial()) ? "投屏中" : d.state());
                 JPanel row = new JPanel(new BorderLayout(8, 0));
-                row.setBorder(new EmptyBorder(4, 8, 4, 8));
+                row.setOpaque(true);
+                row.setBackground(UIManager.getColor("List.background"));
+                row.setBorder(new EmptyBorder(2, 6, 2, 6));
+                row.setAlignmentX(Component.LEFT_ALIGNMENT);
+                row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
                 row.add(check, BorderLayout.CENTER);
                 row.add(state, BorderLayout.EAST);
                 list.add(row);
@@ -785,7 +790,7 @@ public final class SwingScrcpyApp {
         if (sessions.get(device.serial()) != handle || handle.tile != null) return;
         JPanel tile = new JPanel(new BorderLayout(0, 0));
         tile.setOpaque(true);
-        tile.setBackground(Color.BLACK);
+        tile.setBackground(Color.WHITE);
         tile.setDoubleBuffered(false);
         tile.setBorder(BorderFactory.createLineBorder(new Color(68, 68, 68)));
         JLabel title = new JLabel(device.displayName());
@@ -794,11 +799,11 @@ public final class SwingScrcpyApp {
         title.setBorder(new EmptyBorder(4, 6, 4, 6));
         JPanel videoAndNavigation = new JPanel(new BorderLayout(0, 0));
         videoAndNavigation.setOpaque(true);
-        videoAndNavigation.setBackground(Color.BLACK);
+        videoAndNavigation.setBackground(Color.WHITE);
         videoAndNavigation.setDoubleBuffered(false);
         JPanel viewport = new JPanel(new BorderLayout());
         viewport.setOpaque(true);
-        viewport.setBackground(Color.BLACK);
+        viewport.setBackground(Color.WHITE);
         viewport.setDoubleBuffered(false);
         viewport.add(handle.view, BorderLayout.CENTER);
         JPanel navigation = createNavigationBar(handle, device);
