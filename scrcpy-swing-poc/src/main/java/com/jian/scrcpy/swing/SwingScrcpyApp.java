@@ -932,12 +932,22 @@ public final class SwingScrcpyApp {
         detachTile(handle.tile);
         handle.floatingFrame = null;
         handle.floatingHost = null;
-        Container target = handle.embeddedParent;
+        // If this device became the logical primary while floating, restoring
+        // it must promote the embedded tile into the enlarged left-side host,
+        // rather than returning it to the container it originally came from.
+        boolean primary = isPrimary(handle);
+        Container target = primary ? primaryHost : handle.embeddedParent;
         if (target == null || (target != primaryHost && target != secondaryGrid)) {
-            target = isPrimary(handle) ? primaryHost : secondaryGrid;
+            target = secondaryGrid;
         }
         if (target == primaryHost) {
+            primaryHost.removeAll();
             primaryHost.add(handle.tile, BorderLayout.CENTER);
+            primaryHost.setOpaque(true);
+            primaryHost.setBackground(Color.WHITE);
+            primaryHost.setVisible(true);
+            if (primaryHost.getParent() != workspace) workspace.add(primaryHost, BorderLayout.WEST);
+            workspace.setComponentZOrder(primaryHost, 0);
         } else {
             int index = handle.embeddedIndex >= 0
                     ? indexClamp(handle.embeddedIndex, secondaryGrid.getComponentCount())
@@ -950,7 +960,10 @@ public final class SwingScrcpyApp {
         handle.embeddedParent = null;
         handle.embeddedIndex = -1;
         if (handle.popOutButton != null) handle.popOutButton.setToolTipText("弹出独立窗口");
-        resizeTile(handle, isPrimary(handle));
+        resizeTile(handle, primary);
+        if (primary) {
+            primaryHost.setPreferredSize(new Dimension(handle.tile.getPreferredSize().width, 0));
+        }
         target.revalidate();
         target.repaint();
         workspace.revalidate();
