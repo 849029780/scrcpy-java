@@ -24,6 +24,61 @@ final class WrapLayout extends FlowLayout {
         return size;
     }
 
+    /**
+     * FlowLayout normally vertically centers shorter components within a row.
+     * Device tiles have different heights when portrait and landscape devices
+     * share a row, so that behavior makes landscape tiles float halfway down
+     * beside portrait tiles. Keep every tile anchored to the row's top edge.
+     */
+    @Override
+    public void layoutContainer(Container target) {
+        synchronized (target.getTreeLock()) {
+            Insets insets = target.getInsets();
+            int hgap = getHgap();
+            int vgap = getVgap();
+            int maxWidth = Math.max(1, target.getWidth() - insets.left - insets.right - hgap * 2);
+            int y = insets.top + vgap;
+            int rowWidth = 0;
+            int rowHeight = 0;
+            List<Component> row = new ArrayList<>();
+
+            for (Component component : target.getComponents()) {
+                if (!component.isVisible()) continue;
+                Dimension size = component.getPreferredSize();
+                int nextWidth = rowWidth == 0 ? size.width : rowWidth + hgap + size.width;
+                if (!row.isEmpty() && nextWidth > maxWidth) {
+                    layoutRow(row, rowWidth, rowHeight, maxWidth, insets.left + hgap, y, hgap);
+                    y += rowHeight + vgap;
+                    row.clear();
+                    rowWidth = 0;
+                    rowHeight = 0;
+                }
+                if (!row.isEmpty()) rowWidth += hgap;
+                row.add(component);
+                rowWidth += size.width;
+                rowHeight = Math.max(rowHeight, size.height);
+            }
+            if (!row.isEmpty()) {
+                layoutRow(row, rowWidth, rowHeight, maxWidth, insets.left + hgap, y, hgap);
+            }
+        }
+    }
+
+    private void layoutRow(List<Component> row, int rowWidth, int rowHeight,
+                           int maxWidth, int startX, int y, int hgap) {
+        int x = startX;
+        if (getAlignment() == CENTER) {
+            x += Math.max(0, (maxWidth - rowWidth) / 2);
+        } else if (getAlignment() == RIGHT || getAlignment() == TRAILING) {
+            x += Math.max(0, maxWidth - rowWidth);
+        }
+        for (Component component : row) {
+            Dimension size = component.getPreferredSize();
+            component.setBounds(x, y, size.width, size.height);
+            x += size.width + hgap;
+        }
+    }
+
     private Dimension layoutSize(Container target, boolean preferred) {
         synchronized (target.getTreeLock()) {
             int availableWidth = target.getSize().width;
