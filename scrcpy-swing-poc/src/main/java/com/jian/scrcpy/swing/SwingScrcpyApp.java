@@ -1494,6 +1494,8 @@ public final class SwingScrcpyApp {
     private void resizeTile(DeviceSession handle, boolean primary) {
         if (handle.tile == null) return;
         int availableWidth = Math.max(1, workspace.getWidth() - 24);
+        int frameWidth = handle.view.frameWidth();
+        int frameHeight = handle.view.frameHeight();
         int maxW;
         int maxH;
         if (primary && !handle.landscape) {
@@ -1503,21 +1505,23 @@ public final class SwingScrcpyApp {
                     (int) (availableWidth * (hasSecondary ? 0.58 : 1.0)) - NAV_WIDTH);
             maxH = Math.max(1,
                     workspace.getHeight() > 30 ? workspace.getHeight() - 30 : 940);
+        } else if (handle.landscape) {
+            // All landscape devices share an exact viewport height. Derive
+            // each width from its decoded frame ratio instead of fitting into
+            // a fixed width AND height box (which made heights vary by ratio).
+            maxH = TILE_WIDTH;
+            maxW = frameWidth > 0 && frameHeight > 0
+                    ? Math.max(1, (int) Math.round(frameWidth * (maxH / (double) frameHeight)))
+                    : TILE_HEIGHT;
         } else {
-            // Landscape devices use one shared viewport bound regardless of
-            // primary/secondary status. This prevents the primary tile from
-            // becoming taller than secondary tiles after a 90-degree rotation.
-            // The decoded frame aspect ratio is preserved below.
-            maxW = handle.landscape ? TILE_HEIGHT : TILE_WIDTH;
-            maxH = handle.landscape ? TILE_WIDTH : TILE_HEIGHT;
+            maxW = TILE_WIDTH;
+            maxH = TILE_HEIGHT;
         }
         // Size the video viewport to the actual decoded frame aspect ratio.
         // SwingVideoSurface uses this same frame size for its image-edge
         // detection. Matching the viewport to that rectangle makes the native
         // D3D11 destination cover the complete viewport instead of introducing
         // letterbox/pillarbox margins on all four sides.
-        int frameWidth = handle.view.frameWidth();
-        int frameHeight = handle.view.frameHeight();
         int vw = maxW;
         int vh = maxH;
         if (frameWidth > 0 && frameHeight > 0) {
