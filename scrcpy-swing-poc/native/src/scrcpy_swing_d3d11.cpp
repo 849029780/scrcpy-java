@@ -17,6 +17,7 @@
 #include <intrin.h>
 #include <functional>
 #include <memory>
+#include <cstdio>
 #include <mutex>
 #include <unordered_map>
 
@@ -404,6 +405,9 @@ struct Renderer {
         if (!GetClientRect(hwnd, &rect)) return false;
         width = static_cast<UINT>(std::max<LONG>(1, rect.right - rect.left));
         height = static_cast<UINT>(std::max<LONG>(1, rect.bottom - rect.top));
+        std::printf("[scrcpy-swing][native-geometry] attach hwnd=%p client=%ldx%ld swapchain-request=%ux%u\\n",
+                hwnd, rect.right - rect.left, rect.bottom - rect.top, width, height);
+        std::fflush(stdout);
 
         IDXGIDevice* dxgiDevice = nullptr;
         IDXGIAdapter* adapter = nullptr;
@@ -488,6 +492,9 @@ struct Renderer {
         if (FAILED(hr)) return false;
         width = newWidth;
         height = newHeight;
+        std::printf("[scrcpy-swing][native-geometry] resize hwnd=%p client=%ldx%ld swapchain=%ux%u\\n",
+                hwnd, rect.right - rect.left, rect.bottom - rect.top, width, height);
+        std::fflush(stdout);
         return createRenderTarget();
     }
 
@@ -600,6 +607,17 @@ struct Renderer {
             processor, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
         videoContext->VideoProcessorSetStreamSourceRect(processor, 0, TRUE, &sourceRect);
         const RECT outputRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+        static std::atomic<bool> firstGeometryLogged{false};
+        if (!firstGeometryLogged.exchange(true)) {
+            std::printf("[scrcpy-swing][native-geometry] first-submit hwnd=%p frame=%ux%u "
+                        "texture=%ux%u swapchain=%ux%u source=%ld,%ld-%ld,%ld "
+                        "dest=%ld,%ld-%ld,%ld output=%ld,%ld-%ld,%ld\\n",
+                    hwnd, frameWidth, frameHeight, textureDesc.Width, textureDesc.Height,
+                    width, height, sourceRect.left, sourceRect.top, sourceRect.right, sourceRect.bottom,
+                    destRect.left, destRect.top, destRect.right, destRect.bottom,
+                    outputRect.left, outputRect.top, outputRect.right, outputRect.bottom);
+            std::fflush(stdout);
+        }
         videoContext->VideoProcessorSetStreamDestRect(processor, 0, TRUE, &destRect);
         videoContext->VideoProcessorSetOutputTargetRect(processor, TRUE, &outputRect);
         videoContext->VideoProcessorSetStreamColorSpace(processor, 0, &inputColor);
