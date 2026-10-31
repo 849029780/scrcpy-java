@@ -12,7 +12,7 @@ final class NativeVaapiCanvas extends Canvas implements AutoCloseable {
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
 
     NativeVaapiCanvas() {
-        setBackground(java.awt.Color.BLACK);
+        setBackground(java.awt.Color.WHITE);
         setVisible(true);
     }
 

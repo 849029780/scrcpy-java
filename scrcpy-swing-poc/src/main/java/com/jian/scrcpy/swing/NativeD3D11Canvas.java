@@ -20,7 +20,7 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
     private final CompletableFuture<Void> deviceReady = new CompletableFuture<>();
 
     public NativeD3D11Canvas() {
-        setBackground(java.awt.Color.BLACK);
+        setBackground(java.awt.Color.WHITE);
         setFocusable(true);
         setVisible(true);
     }
