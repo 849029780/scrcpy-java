@@ -821,12 +821,10 @@ public final class SwingScrcpyApp {
         navigationScroll.setBackground(new Color(24, 24, 24));
         navigationScroll.getViewport().setOpaque(true);
         navigationScroll.getViewport().setBackground(new Color(24, 24, 24));
-        // Keep the sidebar close to the actual 34px controls. The narrow
-        // scrollbar still remains available when landscape height requires it.
+        // Show the scrollbar only when the controls exceed the available
+        // viewport height. Keep it narrow so it minimally affects the video area.
         navigationScroll.getVerticalScrollBar().setPreferredSize(new Dimension(8, 0));
-        // Reserve the scrollbar width even when controls fit vertically so the
-        // button column has identical usable width in portrait and landscape.
-        navigationScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+        navigationScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
         navigationScroll.setPreferredSize(new Dimension(NAV_WIDTH, TILE_HEIGHT));
         navigationScroll.setMinimumSize(new Dimension(NAV_WIDTH, 1));
         navigationScroll.setMaximumSize(new Dimension(NAV_WIDTH, Integer.MAX_VALUE));
