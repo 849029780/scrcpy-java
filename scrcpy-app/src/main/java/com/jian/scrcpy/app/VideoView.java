@@ -26,7 +26,7 @@ public final class VideoView extends ImageView {
     private record PixelSurface(PixelBuffer<ByteBuffer> pixels, WritableImage image) {}
 
     public VideoView() {
-        setPreserveRatio(true);
+        setPreserveRatio(false);
         setSmooth(true);
     }
 
