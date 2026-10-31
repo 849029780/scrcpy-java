@@ -1493,11 +1493,15 @@ public final class SwingScrcpyApp {
             maxW = handle.landscape ? TILE_HEIGHT : TILE_WIDTH;
             maxH = handle.landscape ? TILE_WIDTH : TILE_HEIGHT;
         }
-        // Keep every tile of the same orientation exactly the same size.
-        // The decoded frame is fitted inside this fixed viewport by the
-        // renderer; it must not determine the outer tile dimensions.
-        int vw = maxW;
-        int vh = maxH;
+        // Size the actual viewport from the decoded output resolution.
+        // This makes the native Canvas match the frame aspect ratio instead
+        // of fitting a differently-shaped frame into a fixed landscape box.
+        // maxW/maxH remain the available bounds, not the viewport dimensions.
+        int frameWidth = handle.view.frameWidth();
+        int frameHeight = handle.view.frameHeight();
+        Dimension fitted = VideoFrameGeometry.fit(frameWidth, frameHeight, maxW, maxH);
+        int vw = fitted.width;
+        int vh = fitted.height;
         if (!handle.landscape) {
             handle.portraitViewportWidth = vw;
             handle.portraitViewportHeight = vh;
