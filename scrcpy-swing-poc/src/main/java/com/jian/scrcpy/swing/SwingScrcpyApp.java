@@ -56,7 +56,7 @@ public final class SwingScrcpyApp {
     private final JFrame frame = new JFrame("scrcpy-java - 多设备投屏（Swing）");
     private final JLabel status = new JLabel("正在扫描 ADB 设备...");
     private final JLabel primaryStatus = new JLabel("主设备：无");
-    private final JPanel primaryHost = new JPanel(new BorderLayout());
+    private final JPanel primaryHost = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
     private final JPanel secondaryGrid = new JPanel(new WrapLayout(FlowLayout.LEFT, 10, 10));
     private final JScrollPane secondaryScroll = new JScrollPane(secondaryGrid);
     private final JPanel workspace = new JPanel(new BorderLayout(4, 0));
@@ -1297,7 +1297,7 @@ public final class SwingScrcpyApp {
         primaryHost.repaint();
         primaryHost.add(handle.tile, BorderLayout.CENTER);
         primaryHost.setOpaque(true);
-        primaryHost.setBackground(Color.BLACK);
+        primaryHost.setBackground(Color.WHITE);
         primaryHost.setVisible(true);
         resizeTile(handle, true);
         primaryHost.setPreferredSize(new Dimension(handle.tile.getPreferredSize().width, 0));
