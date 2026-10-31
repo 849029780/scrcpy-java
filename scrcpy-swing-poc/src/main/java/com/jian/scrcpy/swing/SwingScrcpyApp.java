@@ -925,7 +925,6 @@ public final class SwingScrcpyApp {
     private void restoreTile(DeviceSession handle) {
         if (handle == null || handle.floatingFrame == null || handle.tile == null) return;
         JFrame floating = handle.floatingFrame;
-        JPanel host = handle.floatingHost;
         detachTile(handle.tile);
         handle.floatingFrame = null;
         handle.floatingHost = null;
@@ -1523,6 +1522,10 @@ public final class SwingScrcpyApp {
 
     private void setPrimary(DeviceSession handle) {
         if (handle.device == null || isPrimary(handle)) return;
+        // Primary/secondary layout transitions are performed by the main
+        // workspace. Reattach a popped-out tile first to avoid orphaning its
+        // independent frame when its tile is moved between hosts.
+        if (handle.floatingFrame != null) restoreTile(handle);
         releaseAllTransientInput();
         DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
         if (old != null) {
@@ -1566,6 +1569,7 @@ public final class SwingScrcpyApp {
         releaseAllTransientInput();
         desiredPrimarySerial = null;
         DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
+        if (old != null && old.floatingFrame != null) restoreTile(old);
         primarySerial = null;
         if (old != null && old.tile != null) {
             detachTile(old.tile);
