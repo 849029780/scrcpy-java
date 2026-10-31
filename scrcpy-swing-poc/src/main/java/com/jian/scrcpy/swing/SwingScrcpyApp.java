@@ -1477,17 +1477,29 @@ public final class SwingScrcpyApp {
         }
         int fw = handle.view.frameWidth(), fh = handle.view.frameHeight();
         double aspect = fw > 0 && fh > 0 ? fw / (double) fh : 9.0 / 19.5;
-        // Fit the source aspect ratio inside both bounds. Never enlarge one
-        // axis independently: this keeps the entire phone screen visible.
         int vw;
         int vh;
-        if (fw > 0 && fh > 0) {
-            double scale = Math.min(maxW / (double) fw, maxH / (double) fh);
-            vw = Math.max(1, (int) Math.round(fw * scale));
-            vh = Math.max(1, (int) Math.round(fh * scale));
+        if (handle.landscape && handle.portraitViewportWidth > 0 && handle.portraitViewportHeight > 0) {
+            // Preserve the exact viewport size used by this device in portrait.
+            // A landscape frame must use that same footprint with width/height
+            // exchanged, rather than being re-fitted to the current workspace.
+            vw = handle.portraitViewportHeight;
+            vh = handle.portraitViewportWidth;
         } else {
-            vw = Math.max(1, Math.min(maxW, (int) Math.round(maxH * aspect)));
-            vh = Math.max(1, (int) Math.round(vw / aspect));
+            // Fit the portrait frame to the normal portrait bounds. Keep these
+            // actual rendered dimensions so landscape can swap them exactly.
+            if (fw > 0 && fh > 0) {
+                double scale = Math.min(maxW / (double) fw, maxH / (double) fh);
+                vw = Math.max(1, (int) Math.round(fw * scale));
+                vh = Math.max(1, (int) Math.round(fh * scale));
+            } else {
+                vw = Math.max(1, Math.min(maxW, (int) Math.round(maxH * aspect)));
+                vh = Math.max(1, (int) Math.round(vw / aspect));
+            }
+            if (!handle.landscape) {
+                handle.portraitViewportWidth = vw;
+                handle.portraitViewportHeight = vh;
+            }
         }
         // The tile's video viewport must have exactly the calculated video
         // dimensions. A fixed "+30" header allowance is not reliable: the
@@ -1623,6 +1635,7 @@ public final class SwingScrcpyApp {
         boolean primary, stayAwake, displayPower = true, landscape, orientationPending;
         boolean relativePointerValid, recentering, relativeCaptured;
         int secondaryIndex = -1;
+        int portraitViewportWidth, portraitViewportHeight;
         MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
 
         DeviceSession(ScrcpySession session, JavaSoundPlayer audioPlayer, FfmpegVideoDecoder decoder,
