@@ -49,7 +49,7 @@ import java.util.stream.Collectors;
 public final class SwingScrcpyApp {
     private static final int TILE_WIDTH = 360;
     private static final int TILE_HEIGHT = 680;
-    private static final int NAV_WIDTH = 56;
+    private static final int NAV_WIDTH = 46;
     private static final long RECONNECT_INTERVAL_MILLIS = 3_000;
     private static final int MAX_RECONNECT_ATTEMPTS = 20;
 
@@ -821,7 +821,12 @@ public final class SwingScrcpyApp {
         navigationScroll.setBackground(new Color(24, 24, 24));
         navigationScroll.getViewport().setOpaque(true);
         navigationScroll.getViewport().setBackground(new Color(24, 24, 24));
+        // Keep the sidebar close to the actual 34px controls. The narrow
+        // scrollbar still remains available when landscape height requires it.
+        navigationScroll.getVerticalScrollBar().setPreferredSize(new Dimension(8, 0));
         navigationScroll.setPreferredSize(new Dimension(NAV_WIDTH, TILE_HEIGHT));
+        navigationScroll.setMinimumSize(new Dimension(NAV_WIDTH, 1));
+        navigationScroll.setMaximumSize(new Dimension(NAV_WIDTH, Integer.MAX_VALUE));
         videoAndNavigation.add(viewport, BorderLayout.CENTER);
         videoAndNavigation.add(navigationScroll, BorderLayout.EAST);
         tile.add(title, BorderLayout.NORTH);
