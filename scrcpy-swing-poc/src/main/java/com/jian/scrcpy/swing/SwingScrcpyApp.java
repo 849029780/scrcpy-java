@@ -891,6 +891,21 @@ public final class SwingScrcpyApp {
         handle.embeddedParent = oldParent;
         handle.embeddedIndex = indexOfComponent(oldParent, handle.tile);
 
+        // When the embedded primary is detached, remove the now-empty left
+        // primary host entirely so the secondary WrapLayout can reclaim that
+        // space and reflow every remaining device from the top-left corner.
+        boolean wasPrimary = isPrimary(handle);
+        if (wasPrimary) {
+            primaryHost.removeAll();
+            primaryHost.setVisible(false);
+            primaryHost.setPreferredSize(new Dimension(0, 0));
+            workspace.remove(primaryHost);
+            primaryHost.revalidate();
+            primaryHost.repaint();
+            workspace.revalidate();
+            workspace.repaint();
+        }
+
         JPanel host = new JPanel(new GridBagLayout());
         host.setBackground(Color.WHITE);
         host.setOpaque(true);
@@ -936,10 +951,11 @@ public final class SwingScrcpyApp {
         // it must promote the embedded tile into the enlarged left-side host,
         // rather than returning it to the container it originally came from.
         boolean primary = isPrimary(handle);
-        Container target = primary ? primaryHost : handle.embeddedParent;
-        if (target == null || (target != primaryHost && target != secondaryGrid)) {
-            target = secondaryGrid;
-        }
+        // Only a device that is still the logical primary may return to the
+        // left primary host. If it was popped out from that host and its
+        // primary role was cleared while floating, restore it into the normal
+        // secondary grid instead of an invisible, detached primaryHost.
+        Container target = primary ? primaryHost : secondaryGrid;
         if (target == primaryHost) {
             primaryHost.removeAll();
             primaryHost.add(handle.tile, BorderLayout.CENTER);
