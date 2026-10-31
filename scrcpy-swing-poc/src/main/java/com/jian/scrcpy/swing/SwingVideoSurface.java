@@ -184,9 +184,10 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         int cw = getWidth();
         int ch = getHeight();
         if (fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0) return new Rectangle();
-        // Use the same decoded-frame geometry as the tile layout. Never
-        // crop the phone image or stretch it to the component bounds.
-        return VideoFrameGeometry.fitBounds(fw, fh, cw, ch);
+        // The tile layout deliberately gives same-orientation devices an
+        // identical viewport. Fill it completely to avoid letterbox bars.
+        // Input coordinates use the same full-surface transform.
+        return new Rectangle(0, 0, cw, ch);
     }
 
     public DeviceController.ScreenPosition position(double x, double y) {
