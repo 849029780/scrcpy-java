@@ -187,7 +187,10 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         double scale = Math.min(cw / (double) fw, ch / (double) fh);
         int width = Math.max(1, (int) Math.round(fw * scale));
         int height = Math.max(1, (int) Math.round(fh * scale));
-        return new Rectangle((cw - width) / 2, (ch - height) / 2, width, height);
+        // Keep the decoded image anchored to the viewport's top-left.
+        // resizeTile sizes the viewport to the frame aspect ratio, so this
+        // avoids the visible top/side gutters caused by centering a fitted frame.
+        return new Rectangle(0, 0, width, height);
     }
 
     public DeviceController.ScreenPosition position(double x, double y) {
