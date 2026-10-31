@@ -1493,7 +1493,6 @@ public final class SwingScrcpyApp {
             maxW = handle.landscape ? TILE_HEIGHT : TILE_WIDTH;
             maxH = handle.landscape ? TILE_WIDTH : TILE_HEIGHT;
         }
-        int fw = handle.view.frameWidth(), fh = handle.view.frameHeight();
         // Keep every tile of the same orientation exactly the same size.
         // The decoded frame is fitted inside this fixed viewport by the
         // renderer; it must not determine the outer tile dimensions.
