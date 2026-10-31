@@ -209,17 +209,29 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
     public int frameHeight() { return frameHeight; }
 
     /**
-     * Aspect-fit transform: scale the complete device frame as large as
-     * possible inside the viewport without cropping or distorting it.
+     * Cover transform: fill the viewport while preserving the source aspect
+     * ratio. The source rectangle is center-cropped; the destination is never
+     * stretched independently in X/Y.
      */
     private Rectangle renderedBounds(int fw, int fh) {
         int cw = getWidth();
         int ch = getHeight();
         if (fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0) return new Rectangle();
-        // The tile layout deliberately gives same-orientation devices an
-        // identical viewport. Fill it completely to avoid letterbox bars.
-        // Input coordinates use the same full-surface transform.
         return new Rectangle(0, 0, cw, ch);
+    }
+
+    private Rectangle sourceBounds(int fw, int fh) {
+        int cw = getWidth();
+        int ch = getHeight();
+        if (fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0) return new Rectangle();
+        double sourceAspect = fw / (double) fh;
+        double viewportAspect = cw / (double) ch;
+        if (sourceAspect > viewportAspect) {
+            int visibleWidth = Math.max(1, Math.min(fw, (int) Math.round(fh * viewportAspect)));
+            return new Rectangle((fw - visibleWidth) / 2, 0, visibleWidth, fh);
+        }
+        int visibleHeight = Math.max(1, Math.min(fh, (int) Math.round(fw / viewportAspect)));
+        return new Rectangle(0, (fh - visibleHeight) / 2, fw, visibleHeight);
     }
 
     public DeviceController.ScreenPosition position(double x, double y) {
@@ -230,10 +242,12 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         // maps to Android coordinates.
         if (bounds.isEmpty() || x < bounds.x || y < bounds.y
                 || x >= bounds.x + bounds.width || y >= bounds.y + bounds.height) return null;
-        int px = Math.min(fw - 1, Math.max(0,
-                (int) ((x - bounds.x) * fw / bounds.width)));
-        int py = Math.min(fh - 1, Math.max(0,
-                (int) ((y - bounds.y) * fh / bounds.height)));
+        Rectangle source = sourceBounds(fw, fh);
+        if (source.isEmpty()) return null;
+        int px = source.x + Math.min(source.width - 1, Math.max(0,
+                (int) ((x - bounds.x) * source.width / bounds.width)));
+        int py = source.y + Math.min(source.height - 1, Math.max(0,
+                (int) ((y - bounds.y) * source.height / bounds.height)));
         return new DeviceController.ScreenPosition(px, py, fw, fh);
     }
 
@@ -268,7 +282,13 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
             g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
             Rectangle bounds = renderedBounds(current.getWidth(), current.getHeight());
             if (!bounds.isEmpty()) {
-                g.drawImage(current, bounds.x, bounds.y, bounds.width, bounds.height, null);
+                Rectangle source = sourceBounds(current.getWidth(), current.getHeight());
+                if (!source.isEmpty()) {
+                    g.drawImage(current,
+                            bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height,
+                            source.x, source.y, source.x + source.width, source.y + source.height,
+                            null);
+                }
             }
         } finally {
             g.dispose();
