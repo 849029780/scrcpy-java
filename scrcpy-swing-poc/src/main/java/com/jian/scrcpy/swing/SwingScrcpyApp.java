@@ -963,19 +963,15 @@ public final class SwingScrcpyApp {
     }
 
     /**
-     * ROTATE_DEVICE advances Android display rotation by 90 degrees.
-     * The Swing toggle represents portrait/landscape rather than all four
-     * Android rotations, so returning from landscape to portrait advances
-     * three quarter-turns to get back to the original portrait orientation.
+     * scrcpy ROTATE_DEVICE toggles the Android display between portrait and
+     * landscape (the server chooses the opposite orientation from the current
+     * one), so exactly one control message is required for each button click.
      */
     private void sidebarOrientation(DeviceSession source) {
         boolean landscape = !source.landscape;
         for (DeviceSession target : inputTargets(source)) {
             if (target.landscape == landscape) continue;
-            int quarterTurns = landscape ? 1 : 3;
-            for (int i = 0; i < quarterTurns; i++) {
-                target.controller.rotateDevice();
-            }
+            target.controller.rotateDevice();
             target.landscape = landscape;
             updateOrientationButton(target);
         }
