@@ -1503,15 +1503,10 @@ public final class SwingScrcpyApp {
         // container without adding horizontal or vertical letterboxing.
         int vw;
         int vh;
-        if (handle.landscape) {
-            // Landscape tiles use the full swapped portrait footprint. Fitting
-            // the decoded frame here makes the viewport inherit the source
-            // aspect ratio, so the native renderer has no area to crop and
-            // black side gutters remain visible. A fixed landscape viewport
-            // lets both renderers crop the source to its bounds instead.
-            vw = maxW;
-            vh = maxH;
-        } else if (fw > 0 && fh > 0) {
+        if (fw > 0 && fh > 0) {
+            // Preserve the complete decoded frame. The viewport itself must
+            // adopt the frame aspect ratio in landscape as well; forcing the
+            // full 680x360 footprint requires cropping the source.
             double scale = Math.min(maxW / (double) fw, maxH / (double) fh);
             vw = Math.max(1, (int) Math.round(fw * scale));
             vh = Math.max(1, (int) Math.round(fh * scale));
