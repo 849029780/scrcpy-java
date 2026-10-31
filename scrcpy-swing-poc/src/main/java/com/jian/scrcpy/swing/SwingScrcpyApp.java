@@ -824,6 +824,9 @@ public final class SwingScrcpyApp {
         // Keep the sidebar close to the actual 34px controls. The narrow
         // scrollbar still remains available when landscape height requires it.
         navigationScroll.getVerticalScrollBar().setPreferredSize(new Dimension(8, 0));
+        // Reserve the scrollbar width even when controls fit vertically so the
+        // button column has identical usable width in portrait and landscape.
+        navigationScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
         navigationScroll.setPreferredSize(new Dimension(NAV_WIDTH, TILE_HEIGHT));
         navigationScroll.setMinimumSize(new Dimension(NAV_WIDTH, 1));
         navigationScroll.setMaximumSize(new Dimension(NAV_WIDTH, Integer.MAX_VALUE));
@@ -863,7 +866,9 @@ public final class SwingScrcpyApp {
         JPanel bar = new JPanel();
         bar.setLayout(new BoxLayout(bar, BoxLayout.Y_AXIS));
         bar.setBackground(new Color(24, 24, 24));
-        bar.setBorder(new EmptyBorder(2, 2, 2, 2));
+        // The scroll pane already provides the outer scrollbar gutter. Keep
+        // this column free of extra insets so the controls have symmetric gaps.
+        bar.setBorder(BorderFactory.createEmptyBorder());
         JButton close = controlButton("disconnect.png", "断开设备", () -> disconnect(device.serial()));
         JToggleButton primary = toggleButton("set-primary.png", "设为主屏幕");
         handle.primaryButton = primary;
@@ -905,7 +910,7 @@ public final class SwingScrcpyApp {
         setIcon(button, icon);
         button.setToolTipText(tooltip);
         button.setFocusable(false);
-        button.setMargin(new Insets(2, 2, 2, 2));
+        button.setMargin(new Insets(0, 0, 0, 0));
         button.setPreferredSize(new Dimension(34, 34));
         button.setMinimumSize(new Dimension(34, 34));
         button.setMaximumSize(new Dimension(34, 34));
