@@ -592,12 +592,14 @@ struct Renderer {
         const double sourceAspect = frameWidth / static_cast<double>(frameHeight);
         RECT sourceRect{0, 0, static_cast<LONG>(frameWidth), static_cast<LONG>(frameHeight)};
         if (sourceAspect < targetAspect) {
-            const LONG cropHeight = static_cast<LONG>(frameWidth / targetAspect + 0.5);
-            sourceRect.top = (static_cast<LONG>(frameHeight) - cropHeight) / 2;
+            const LONG cropHeight = std::max<LONG>(2,
+                    static_cast<LONG>(frameWidth / targetAspect + 0.5) & ~1L);
+            sourceRect.top = ((static_cast<LONG>(frameHeight) - cropHeight) / 2) & ~1L;
             sourceRect.bottom = sourceRect.top + cropHeight;
         } else if (sourceAspect > targetAspect) {
-            const LONG cropWidth = static_cast<LONG>(frameHeight * targetAspect + 0.5);
-            sourceRect.left = (static_cast<LONG>(frameWidth) - cropWidth) / 2;
+            const LONG cropWidth = std::max<LONG>(2,
+                    static_cast<LONG>(frameHeight * targetAspect + 0.5) & ~1L);
+            sourceRect.left = ((static_cast<LONG>(frameWidth) - cropWidth) / 2) & ~1L;
             sourceRect.right = sourceRect.left + cropWidth;
         }
         const RECT destRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
