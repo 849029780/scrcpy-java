@@ -1503,11 +1503,20 @@ public final class SwingScrcpyApp {
             maxW = handle.landscape ? TILE_HEIGHT : TILE_WIDTH;
             maxH = handle.landscape ? TILE_WIDTH : TILE_HEIGHT;
         }
-        // All secondary devices with the same orientation use one identical
-        // viewport size. Rendering fills this viewport so small source aspect
-        // ratio differences do not create black bars or different tile sizes.
+        // Size the video viewport to the actual decoded frame aspect ratio.
+        // SwingVideoSurface uses this same frame size for its image-edge
+        // detection. Matching the viewport to that rectangle makes the native
+        // D3D11 destination cover the complete viewport instead of introducing
+        // letterbox/pillarbox margins on all four sides.
+        int frameWidth = handle.view.frameWidth();
+        int frameHeight = handle.view.frameHeight();
         int vw = maxW;
         int vh = maxH;
+        if (frameWidth > 0 && frameHeight > 0) {
+            double scale = Math.min(maxW / (double) frameWidth, maxH / (double) frameHeight);
+            vw = Math.max(1, Math.min(maxW, (int) Math.round(frameWidth * scale)));
+            vh = Math.max(1, Math.min(maxH, (int) Math.round(frameHeight * scale)));
+        }
         if (!handle.landscape) {
             handle.portraitViewportWidth = vw;
             handle.portraitViewportHeight = vh;
