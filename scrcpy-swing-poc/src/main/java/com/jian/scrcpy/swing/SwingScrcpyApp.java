@@ -1523,8 +1523,9 @@ public final class SwingScrcpyApp {
         if (primary && !handle.landscape) {
             // Keep the primary device enlarged in portrait mode.
             boolean hasSecondary = secondaryGrid.getComponentCount() > 0;
+            int sidebarWidth = navigationBarsVisible ? NAV_WIDTH : 0;
             maxW = Math.max(1,
-                    (int) (availableWidth * (hasSecondary ? 0.58 : 1.0)) - NAV_WIDTH);
+                    (int) (availableWidth * (hasSecondary ? 0.58 : 1.0)) - sidebarWidth);
             maxH = Math.max(1,
                     workspace.getHeight() > 30 ? workspace.getHeight() - 30 : 940);
         } else if (handle.landscape) {
@@ -1571,15 +1572,15 @@ public final class SwingScrcpyApp {
         if (videoAndNavigation instanceof Container container
                 && container.getLayout() instanceof BorderLayout contentLayout) {
             Component navigation = contentLayout.getLayoutComponent(BorderLayout.EAST);
-            if (navigation != null) {
+            if (navigation != null && navigation.isVisible()) {
                 navigationWidth = navigation.getPreferredSize().width;
-                // The toolbar contains more controls than a landscape video
-                // viewport can vertically accommodate. Keep its own viewport
-                // at exactly the video height and let the scrollbar expose the
-                // remaining controls instead of allowing BorderLayout to grow
-                // the native video surface to the toolbar's full preferred height.
-                navigation.setPreferredSize(new Dimension(navigationWidth, vh));
-                navigation.setMinimumSize(new Dimension(navigationWidth, vh));
+                // The toolbar and video viewport are independent: hiding the
+                // toolbar removes only its own column and must not transfer its
+                // reserved width to the video surface.
+                // Keep the toolbar viewport at the video height so scrolling
+                // never changes the native video surface dimensions.
+                navigation.setPreferredSize(new Dimension(NAV_WIDTH, vh));
+                navigation.setMinimumSize(new Dimension(NAV_WIDTH, vh));
             }
         }
 
