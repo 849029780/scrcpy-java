@@ -928,11 +928,16 @@ public final class SwingScrcpyApp {
         detachTile(handle.tile);
         handle.floatingFrame = null;
         handle.floatingHost = null;
-        Container target = isPrimary(handle) ? primaryHost : secondaryGrid;
-        int index = isPrimary(handle) ? -1 : indexClamp(handle.secondaryIndex, secondaryGrid.getComponentCount());
-        if (isPrimary(handle)) {
+        Container target = handle.embeddedParent;
+        if (target == null || (target != primaryHost && target != secondaryGrid)) {
+            target = isPrimary(handle) ? primaryHost : secondaryGrid;
+        }
+        if (target == primaryHost) {
             primaryHost.add(handle.tile, BorderLayout.CENTER);
         } else {
+            int index = handle.embeddedIndex >= 0
+                    ? indexClamp(handle.embeddedIndex, secondaryGrid.getComponentCount())
+                    : indexClamp(handle.secondaryIndex, secondaryGrid.getComponentCount());
             secondaryGrid.add(handle.tile, index);
         }
         floating.getContentPane().removeAll();
@@ -984,7 +989,8 @@ public final class SwingScrcpyApp {
         JButton back = controlButton("back.png", "返回", () -> sidebarKey(handle, AndroidKeycodes.BACK));
         JButton home = controlButton("home.png", "Home", () -> sidebarKey(handle, AndroidKeycodes.HOME));
         JButton recent = controlButton("multitask.png", "多任务", () -> sidebarKey(handle, 187));
-        JButton popOut = controlButton("recent-apps.png", "弹出独立窗口", () -> popOutTile(handle));
+        JButton popOut = controlButton("recent-apps.png", "弹出独立窗口",
+                () -> { if (handle.floatingFrame != null) restoreTile(handle); else popOutTile(handle); });
         handle.popOutButton = popOut;
         JButton taskbar = controlButton("notification-panel.png", "打开通知栏", () -> sidebarTaskbar(handle));
         JButton volumeUp = controlButton("volume-up.png", "音量加", () -> sidebarKey(handle, AndroidKeycodes.VOLUME_UP));
