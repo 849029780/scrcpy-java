@@ -1088,7 +1088,7 @@ public final class ScrcpyApp extends Application {
         HBox videoAndNavigation = new HBox(0, viewport, navigationBar);
         videoAndNavigation.setAlignment(Pos.TOP_LEFT);
 
-        handle.view().setPreserveRatio(true);
+        handle.view().setPreserveRatio(false);
         handle.view().setSmooth(true);
 
         installControls(handle);
