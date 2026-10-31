@@ -1459,16 +1459,21 @@ public final class SwingScrcpyApp {
         int maxW;
         int maxH;
         if (primary) {
-            // Give the primary device the largest proportional area available.
-            // Keep room for secondary devices on the right when they exist;
-            // with a single device, let the primary use the whole workspace.
+            // Calculate the portrait-sized display bounds first. In landscape,
+            // swap those bounds instead of fitting a wide frame into the narrow
+            // portrait width (which would make the landscape preview tiny).
             boolean hasSecondary = secondaryGrid.getComponentCount() > 0;
-            maxW = Math.max(1, (int) (availableWidth * (hasSecondary ? 0.58 : 1.0)) - NAV_WIDTH);
-            int availableHeight = workspace.getHeight() - 30;
-            maxH = Math.max(1, availableHeight > 0 ? availableHeight : 940);
+            int portraitWidth = Math.max(1,
+                    (int) (availableWidth * (hasSecondary ? 0.58 : 1.0)) - NAV_WIDTH);
+            int portraitHeight = Math.max(1,
+                    workspace.getHeight() > 30 ? workspace.getHeight() - 30 : 940);
+            maxW = handle.landscape ? portraitHeight : portraitWidth;
+            maxH = handle.landscape ? portraitWidth : portraitHeight;
         } else {
-            maxW = TILE_WIDTH;
-            maxH = TILE_HEIGHT;
+            // Secondary tiles use the same portrait footprint in both
+            // orientations; landscape simply swaps width and height.
+            maxW = handle.landscape ? TILE_HEIGHT : TILE_WIDTH;
+            maxH = handle.landscape ? TILE_WIDTH : TILE_HEIGHT;
         }
         int fw = handle.view.frameWidth(), fh = handle.view.frameHeight();
         double aspect = fw > 0 && fh > 0 ? fw / (double) fh : 9.0 / 19.5;
