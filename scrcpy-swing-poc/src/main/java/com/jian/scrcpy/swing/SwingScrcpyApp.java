@@ -984,10 +984,6 @@ public final class SwingScrcpyApp {
         JToggleButton primary = toggleButton("set-primary.png", "设为主屏幕");
         handle.primaryButton = primary;
         primary.addActionListener(e -> togglePrimary(handle));
-        JToggleButton adapt = toggleButton(null, "开启主设备点击坐标适配");
-        handle.adaptButton = adapt;
-        updateAdaptButton(adapt);
-        adapt.addActionListener(e -> setAdaptScreenClick(adapt.isSelected()));
         JToggleButton mouse = toggleButton("touch-mode.png", "触控（点击切换为 UHID 鼠标）");
         handle.mouseModeButton = mouse;
         mouse.addActionListener(e -> setMouseModeFromSidebar(handle, mouse.isSelected()));
@@ -1011,7 +1007,7 @@ public final class SwingScrcpyApp {
         JToggleButton orientation = toggleButton("portrait.png", "切换为横屏");
         handle.orientationButton = orientation;
         orientation.addActionListener(e -> sidebarOrientation(handle));
-        for (JComponent c : List.of(close, primary, back, home, recent, popOut, taskbar, volumeUp, volumeDown, power, display, awake, orientation, mouse, adapt)) {
+        for (JComponent c : List.of(close, primary, back, home, recent, popOut, taskbar, volumeUp, volumeDown, power, display, awake, orientation, mouse)) {
             c.setAlignmentX(Component.CENTER_ALIGNMENT);
             bar.add(c);
             bar.add(Box.createVerticalStrut(4));
@@ -1060,21 +1056,6 @@ public final class SwingScrcpyApp {
         } catch (Exception e) {
             button.setText("?");
         }
-    }
-
-    private void updateAdaptButton(JToggleButton button) {
-        button.setSelected(adaptScreenClick);
-        setIcon(button, adaptScreenClick ? "adapt-click-off.png" : "adapt-click-on.png");
-        button.setToolTipText(adaptScreenClick ? "关闭主设备点击坐标适配" : "开启主设备点击坐标适配");
-    }
-
-    private void refreshAdaptButtons() {
-        sessions.values().forEach(s -> { if (s.adaptButton != null) updateAdaptButton(s.adaptButton); });
-    }
-
-    private void setAdaptScreenClick(boolean enabled) {
-        adaptScreenClick = enabled;
-        refreshAdaptButtons();
     }
 
     private void setMouseModeFromSidebar(DeviceSession source, boolean uhid) {
@@ -1537,6 +1518,10 @@ public final class SwingScrcpyApp {
         // broadcast to the other devices), but it must remain in its own
         // window. Only embedded tiles participate in the enlarged left layout.
         boolean floating = handle.floatingFrame != null;
+        // Coordinate adaptation is mandatory whenever a primary device is
+        // selected; the setting is global and therefore applies to every
+        // connected target device.
+        adaptScreenClick = true;
         releaseAllTransientInput();
         DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
         if (old != null) {
@@ -1745,7 +1730,6 @@ public final class SwingScrcpyApp {
                 s.primaryButton.setToolTipText(selected ? "取消主屏幕" : "设为主屏幕");
             }
         }
-        refreshAdaptButtons();
     }
 
     private void disconnectSelected() {
@@ -1840,7 +1824,7 @@ public final class SwingScrcpyApp {
         JPanel floatingHost;
         Container embeddedParent;
         int embeddedIndex = -1;
-        JToggleButton primaryButton, adaptButton, mouseModeButton, displayButton, awakeButton, orientationButton;
+        JToggleButton primaryButton, mouseModeButton, displayButton, awakeButton, orientationButton;
         JButton popOutButton;
         boolean primary, stayAwake, displayPower = true, landscape, orientationPending;
         boolean relativePointerValid, recentering, relativeCaptured;
