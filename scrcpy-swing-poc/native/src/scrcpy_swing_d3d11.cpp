@@ -583,15 +583,24 @@ struct Renderer {
         if (!ensureInputView(texture, textureAddress, static_cast<UINT>(arrayIndex),
                              textureDesc.Format, &inputView)) return -1;
 
-        const RECT sourceRect{0, 0, static_cast<LONG>(frameWidth), static_cast<LONG>(frameHeight)};
-        const double scale = std::min(
-            width / static_cast<double>(frameWidth),
-            height / static_cast<double>(frameHeight));
-        const LONG destWidth = static_cast<LONG>(frameWidth * scale + 0.5);
-        const LONG destHeight = static_cast<LONG>(frameHeight * scale + 0.5);
-        const LONG left = (static_cast<LONG>(width) - destWidth) / 2;
-        const LONG top = (static_cast<LONG>(height) - destHeight) / 2;
-        const RECT destRect{left, top, left + destWidth, top + destHeight};
+        // Fill the complete native surface. The previous aspect-fit path
+        // centered a smaller destination rectangle and exposed black bars
+        // whenever the Android frame and Swing viewport had slightly
+        // different aspect ratios. Crop the source centrally instead, keeping
+        // the original aspect ratio without distorting the device image.
+        const double targetAspect = width / static_cast<double>(height);
+        const double sourceAspect = frameWidth / static_cast<double>(frameHeight);
+        RECT sourceRect{0, 0, static_cast<LONG>(frameWidth), static_cast<LONG>(frameHeight)};
+        if (sourceAspect < targetAspect) {
+            const LONG cropHeight = static_cast<LONG>(frameWidth / targetAspect + 0.5);
+            sourceRect.top = (static_cast<LONG>(frameHeight) - cropHeight) / 2;
+            sourceRect.bottom = sourceRect.top + cropHeight;
+        } else if (sourceAspect > targetAspect) {
+            const LONG cropWidth = static_cast<LONG>(frameHeight * targetAspect + 0.5);
+            sourceRect.left = (static_cast<LONG>(frameWidth) - cropWidth) / 2;
+            sourceRect.right = sourceRect.left + cropWidth;
+        }
+        const RECT destRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
 
         D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColor{};
         inputColor.YCbCr_Matrix = (colorSpace == 1 || colorSpace == 9 || colorSpace == 10) ? 1 : 0;
