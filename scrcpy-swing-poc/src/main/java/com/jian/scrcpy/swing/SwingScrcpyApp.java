@@ -49,7 +49,7 @@ import java.util.stream.Collectors;
 public final class SwingScrcpyApp {
     private static final int TILE_WIDTH = 360;
     private static final int TILE_HEIGHT = 680;
-    private static final int NAV_WIDTH = 46; // 38px button column + 8px scrollbar gutter
+    private static final int NAV_WIDTH = 40; // 38px button column + 2px scrollbar
     private static final long RECONNECT_INTERVAL_MILLIS = 3_000;
     private static final int MAX_RECONNECT_ATTEMPTS = 20;
 
@@ -829,10 +829,9 @@ public final class SwingScrcpyApp {
         navigationScroll.getViewport().setBackground(new Color(24, 24, 24));
         // Show the scrollbar only when the controls exceed the available
         // viewport height. Keep it narrow so it minimally affects the video area.
-        navigationScroll.getVerticalScrollBar().setPreferredSize(new Dimension(8, 0));
-        // Reserve the 8px scrollbar gutter consistently: the visible button
-        // column is therefore 38px wide, leaving 2px on each side of 34px buttons.
-        navigationScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+        navigationScroll.getVerticalScrollBar().setPreferredSize(new Dimension(2, 0));
+        // Show the 2px scrollbar only when the controls exceed the viewport height.
+        navigationScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
         navigationScroll.setVisible(navigationBarsVisible);
         navigationScroll.setPreferredSize(new Dimension(NAV_WIDTH, TILE_HEIGHT));
         navigationScroll.setMinimumSize(new Dimension(NAV_WIDTH, 1));
@@ -893,7 +892,7 @@ public final class SwingScrcpyApp {
         // The scroll pane already provides the outer scrollbar gutter. Keep
         // this column free of extra insets so the controls have symmetric gaps.
         bar.setBorder(BorderFactory.createEmptyBorder());
-        bar.setPreferredSize(new Dimension(NAV_WIDTH - 8, bar.getPreferredSize().height));
+        bar.setPreferredSize(new Dimension(NAV_WIDTH - 2, bar.getPreferredSize().height));
         JButton close = controlButton("disconnect.png", "断开设备", () -> disconnect(device.serial()));
         JToggleButton primary = toggleButton("set-primary.png", "设为主屏幕");
         handle.primaryButton = primary;
