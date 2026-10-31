@@ -184,10 +184,10 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         int cw = getWidth();
         int ch = getHeight();
         if (fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0) return new Rectangle();
-        // Cover the viewport instead of fitting inside it. This keeps the
-        // complete surface filled when the Android frame aspect ratio differs
-        // slightly from the tile, without stretching the image.
-        double scale = Math.max(cw / (double) fw, ch / (double) fh);
+        // Fit the complete decoded frame inside the viewport. The tile is
+        // sized to the same aspect ratio by resizeTile, so this normally fills
+        // the surface exactly while never cropping screen content.
+        double scale = Math.min(cw / (double) fw, ch / (double) fh);
         int width = Math.max(1, (int) Math.round(fw * scale));
         int height = Math.max(1, (int) Math.round(fh * scale));
         return new Rectangle((cw - width) / 2, (ch - height) / 2, width, height);
