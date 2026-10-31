@@ -591,30 +591,29 @@ struct Renderer {
         if (!ensureInputView(texture, textureAddress, static_cast<UINT>(arrayIndex),
                              textureDesc.Format, &inputView)) return -1;
 
-        // Cover the viewport without distorting the device image. Crop the
-        // source rectangle centrally to the viewport aspect ratio; the GPU
-        // scales this cropped rectangle uniformly to the full destination.
-        LONG sourceLeft = 0;
-        LONG sourceTop = 0;
-        LONG sourceRight = static_cast<LONG>(frameWidth);
-        LONG sourceBottom = static_cast<LONG>(frameHeight);
+        // Fit the complete source frame into the viewport. Keep the source
+        // rectangle unchanged and center the destination rectangle so the
+        // image is never cropped or stretched when device orientation changes.
+        const LONG sourceLeft = 0;
+        const LONG sourceTop = 0;
+        const LONG sourceRight = static_cast<LONG>(frameWidth);
+        const LONG sourceBottom = static_cast<LONG>(frameHeight);
+        const RECT sourceRect{sourceLeft, sourceTop, sourceRight, sourceBottom};
+
         const double sourceAspect = static_cast<double>(frameWidth) / frameHeight;
         const double viewportAspect = static_cast<double>(width) / height;
+        LONG destWidth = static_cast<LONG>(width);
+        LONG destHeight = static_cast<LONG>(height);
         if (sourceAspect > viewportAspect) {
-            const LONG visibleWidth = std::max<LONG>(1, std::min<LONG>(
-                    static_cast<LONG>(frameWidth),
-                    static_cast<LONG>(std::llround(frameHeight * viewportAspect))));
-            sourceLeft = (static_cast<LONG>(frameWidth) - visibleWidth) / 2;
-            sourceRight = sourceLeft + visibleWidth;
-        } else if (sourceAspect < viewportAspect) {
-            const LONG visibleHeight = std::max<LONG>(1, std::min<LONG>(
-                    static_cast<LONG>(frameHeight),
-                    static_cast<LONG>(std::llround(frameWidth / viewportAspect))));
-            sourceTop = (static_cast<LONG>(frameHeight) - visibleHeight) / 2;
-            sourceBottom = sourceTop + visibleHeight;
+            destHeight = std::max<LONG>(1, static_cast<LONG>(
+                    std::llround(width / sourceAspect)));
+        } else {
+            destWidth = std::max<LONG>(1, static_cast<LONG>(
+                    std::llround(height * sourceAspect)));
         }
-        const RECT sourceRect{sourceLeft, sourceTop, sourceRight, sourceBottom};
-        const RECT destRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+        const LONG destLeft = (static_cast<LONG>(width) - destWidth) / 2;
+        const LONG destTop = (static_cast<LONG>(height) - destHeight) / 2;
+        const RECT destRect{destLeft, destTop, destLeft + destWidth, destTop + destHeight};
 
         D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColor{};
         inputColor.YCbCr_Matrix = (colorSpace == 1 || colorSpace == 9 || colorSpace == 10) ? 1 : 0;
@@ -642,9 +641,9 @@ struct Renderer {
         videoContext->VideoProcessorSetStreamColorSpace(processor, 0, &inputColor);
         videoContext->VideoProcessorSetOutputColorSpace(processor, &outputColor);
 
-        const float black[4] = {0.f, 0.f, 0.f, 1.f};
+        const float background[4] = {1.f, 1.f, 1.f, 1.f};
         context->OMSetRenderTargets(1, &slot.renderTarget, nullptr);
-        context->ClearRenderTargetView(slot.renderTarget, black);
+        context->ClearRenderTargetView(slot.renderTarget, background);
         context->OMSetRenderTargets(0, nullptr, nullptr);
 
         D3D11_VIDEO_PROCESSOR_STREAM stream{};
