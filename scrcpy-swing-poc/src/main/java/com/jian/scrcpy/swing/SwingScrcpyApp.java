@@ -852,7 +852,10 @@ public final class SwingScrcpyApp {
         JToggleButton awake = toggleButton("stay-awake-on.png", "开启屏幕常亮");
         handle.awakeButton = awake;
         awake.addActionListener(e -> sidebarStayAwake(handle, awake.isSelected()));
-        for (JComponent c : List.of(close, primary, back, home, recent, taskbar, volumeUp, volumeDown, power, display, awake, mouse, adapt)) {
+        JToggleButton orientation = toggleButton("竖屏.png", "切换为横屏");
+        handle.orientationButton = orientation;
+        orientation.addActionListener(e -> sidebarOrientation(handle));
+        for (JComponent c : List.of(close, primary, back, home, recent, taskbar, volumeUp, volumeDown, power, display, awake, orientation, mouse, adapt)) {
             c.setAlignmentX(Component.CENTER_ALIGNMENT);
             bar.add(c);
             bar.add(Box.createVerticalStrut(4));
@@ -957,6 +960,32 @@ public final class SwingScrcpyApp {
                 target.displayButton.setToolTipText(on ? "熄屏" : "亮屏");
             }
         }
+    }
+
+    /**
+     * ROTATE_DEVICE advances Android display rotation by 90 degrees.
+     * The Swing toggle represents portrait/landscape rather than all four
+     * Android rotations, so returning from landscape to portrait advances
+     * three quarter-turns to get back to the original portrait orientation.
+     */
+    private void sidebarOrientation(DeviceSession source) {
+        boolean landscape = !source.landscape;
+        for (DeviceSession target : inputTargets(source)) {
+            if (target.landscape == landscape) continue;
+            int quarterTurns = landscape ? 1 : 3;
+            for (int i = 0; i < quarterTurns; i++) {
+                target.controller.rotateDevice();
+            }
+            target.landscape = landscape;
+            updateOrientationButton(target);
+        }
+    }
+
+    private void updateOrientationButton(DeviceSession handle) {
+        if (handle.orientationButton == null) return;
+        setIcon(handle.orientationButton, handle.landscape ? "横屏.png" : "竖屏.png");
+        handle.orientationButton.setSelected(handle.landscape);
+        handle.orientationButton.setToolTipText(handle.landscape ? "切换为竖屏" : "切换为横屏");
     }
 
     private void sidebarStayAwake(DeviceSession source, boolean enabled) {
@@ -1507,8 +1536,8 @@ public final class SwingScrcpyApp {
         AdbDevice device;
         JPanel tile;
         JPanel viewport;
-        JToggleButton primaryButton, adaptButton, mouseModeButton, displayButton, awakeButton;
-        boolean primary, stayAwake, displayPower = true;
+        JToggleButton primaryButton, adaptButton, mouseModeButton, displayButton, awakeButton, orientationButton;
+        boolean primary, stayAwake, displayPower = true, landscape;
         boolean relativePointerValid, recentering, relativeCaptured;
         int secondaryIndex = -1;
         MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
