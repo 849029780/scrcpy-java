@@ -997,15 +997,15 @@ public final class SwingScrcpyApp {
 
                 final boolean succeeded = changed;
                 final String error = failure;
+                final String targetName = target.device == null ? "设备" : target.device.displayName();
                 SwingUtilities.invokeLater(() -> {
                     if (succeeded) {
                         target.landscape = landscape;
                         updateOrientationButton(target);
-                        status.setText(target.device.displayName() + " 已切换为" + (landscape ? "横屏" : "竖屏"));
+                        status.setText(targetName + " 已切换为" + (landscape ? "横屏" : "竖屏"));
                     } else {
                         updateOrientationButton(target);
-                        status.setText("方向切换失败：" + (target.device == null ? "设备已断开" : target.device.displayName())
-                                + " - " + error);
+                        status.setText("方向切换失败：" + targetName + " - " + error);
                     }
                     target.orientationPending = false;
                     if (target.orientationButton != null) target.orientationButton.setEnabled(true);
