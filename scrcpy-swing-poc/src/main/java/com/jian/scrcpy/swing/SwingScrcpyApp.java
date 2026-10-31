@@ -1377,7 +1377,30 @@ public final class SwingScrcpyApp {
             vw = Math.max(1, Math.min(maxW, (int) Math.round(maxH * aspect)));
             vh = Math.max(1, (int) Math.round(vw / aspect));
         }
-        Dimension preferred = new Dimension(vw + NAV_WIDTH, vh + 30);
+        // The tile's video viewport must have exactly the calculated video
+        // dimensions. A fixed "+30" header allowance is not reliable: the
+        // title's actual preferred height changes with font metrics and DPI.
+        // Any extra height is then given to the BorderLayout.CENTER viewport,
+        // making the native D3D11 swap chain taller than the phone frame and
+        // producing black letterbox strips at the top and bottom.
+        BorderLayout tileLayout = (BorderLayout) handle.tile.getLayout();
+        Component title = tileLayout.getLayoutComponent(BorderLayout.NORTH);
+        int titleHeight = title == null ? 0 : title.getPreferredSize().height;
+        Insets tileInsets = handle.tile.getInsets();
+
+        Component videoAndNavigation = tileLayout.getLayoutComponent(BorderLayout.CENTER);
+        int navigationWidth = NAV_WIDTH;
+        if (videoAndNavigation instanceof Container container
+                && container.getLayout() instanceof BorderLayout contentLayout) {
+            Component navigation = contentLayout.getLayoutComponent(BorderLayout.EAST);
+            if (navigation != null) {
+                navigationWidth = navigation.getPreferredSize().width;
+            }
+        }
+
+        Dimension preferred = new Dimension(
+                vw + navigationWidth + tileInsets.left + tileInsets.right,
+                vh + titleHeight + tileInsets.top + tileInsets.bottom);
         handle.tile.setPreferredSize(preferred);
         handle.tile.setMinimumSize(preferred);
         handle.viewport.setPreferredSize(new Dimension(vw, vh));
