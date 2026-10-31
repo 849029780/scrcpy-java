@@ -49,7 +49,7 @@ import java.util.stream.Collectors;
 public final class SwingScrcpyApp {
     private static final int TILE_WIDTH = 360;
     private static final int TILE_HEIGHT = 680;
-    private static final int NAV_WIDTH = 40;
+    private static final int NAV_WIDTH = 56;
     private static final long RECONNECT_INTERVAL_MILLIS = 3_000;
     private static final int MAX_RECONNECT_ATTEMPTS = 20;
 
