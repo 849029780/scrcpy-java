@@ -591,29 +591,16 @@ struct Renderer {
         if (!ensureInputView(texture, textureAddress, static_cast<UINT>(arrayIndex),
                              textureDesc.Format, &inputView)) return -1;
 
-        // Fit the complete source frame into the viewport. Keep the source
-        // rectangle unchanged and center the destination rectangle so the
-        // image is never cropped or stretched when device orientation changes.
+        // The Swing layout sizes this viewport from the decoded frame aspect
+        // ratio. Use the complete output rectangle here: re-fitting with
+        // integer rounding can leave a one-pixel strip on the right/bottom
+        // even when the Java viewport already matches the source dimensions.
         const LONG sourceLeft = 0;
         const LONG sourceTop = 0;
         const LONG sourceRight = static_cast<LONG>(frameWidth);
         const LONG sourceBottom = static_cast<LONG>(frameHeight);
         const RECT sourceRect{sourceLeft, sourceTop, sourceRight, sourceBottom};
-
-        const double sourceAspect = static_cast<double>(frameWidth) / frameHeight;
-        const double viewportAspect = static_cast<double>(width) / height;
-        LONG destWidth = static_cast<LONG>(width);
-        LONG destHeight = static_cast<LONG>(height);
-        if (sourceAspect > viewportAspect) {
-            destHeight = std::max<LONG>(1, static_cast<LONG>(
-                    std::llround(width / sourceAspect)));
-        } else {
-            destWidth = std::max<LONG>(1, static_cast<LONG>(
-                    std::llround(height * sourceAspect)));
-        }
-        const LONG destLeft = (static_cast<LONG>(width) - destWidth) / 2;
-        const LONG destTop = (static_cast<LONG>(height) - destHeight) / 2;
-        const RECT destRect{destLeft, destTop, destLeft + destWidth, destTop + destHeight};
+        const RECT destRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
 
         D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColor{};
         inputColor.YCbCr_Matrix = (colorSpace == 1 || colorSpace == 9 || colorSpace == 10) ? 1 : 0;
