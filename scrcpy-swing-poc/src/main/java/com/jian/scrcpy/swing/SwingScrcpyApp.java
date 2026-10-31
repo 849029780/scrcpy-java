@@ -1494,19 +1494,11 @@ public final class SwingScrcpyApp {
             maxH = handle.landscape ? TILE_WIDTH : TILE_HEIGHT;
         }
         int fw = handle.view.frameWidth(), fh = handle.view.frameHeight();
-        double aspect = fw > 0 && fh > 0 ? fw / (double) fh : 9.0 / 19.5;
-        // Size the viewport from the current decoded frame in either
-        // orientation. Reusing the portrait dimensions after swapping them can
-        // leave unused strips when Android reports a slightly different
-        // landscape aspect ratio (for example, system bars/insets changed).
-        // Matching the viewport to this frame keeps the image flush to its
-        // container without adding horizontal or vertical letterboxing.
-        // The decoded frame dimensions are authoritative for both
-        // portrait and landscape. The shared geometry helper is also used by
-        // the Java2D renderer, preventing independent aspect calculations.
-        Dimension fitted = VideoFrameGeometry.fit(fw, fh, maxW, maxH);
-        int vw = fitted.width;
-        int vh = fitted.height;
+        // Keep every tile of the same orientation exactly the same size.
+        // The decoded frame is fitted inside this fixed viewport by the
+        // renderer; it must not determine the outer tile dimensions.
+        int vw = maxW;
+        int vh = maxH;
         if (!handle.landscape) {
             handle.portraitViewportWidth = vw;
             handle.portraitViewportHeight = vh;
