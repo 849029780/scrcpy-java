@@ -54,7 +54,7 @@ public final class JavaSoundPlayer implements AutoCloseable {
         line = AudioSystem.getSourceDataLine(f);
         line.open(f, Math.max(4096, r * c / 10));
         line.start();
-        if (metrics != null) metrics.recordPlayerReopen();
+        if (metrics != null) metrics.recordPlayerOpen();
     }
 
     public synchronized void close() {

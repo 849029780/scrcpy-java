@@ -126,6 +126,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         try {
             while (!closed.get() || !decodeQueue.isEmpty()) {
                 MediaMessage m = decodeQueue.take();
+                if (metrics != null) metrics.updateAudioQueueDepth(decodeQueue.size());
                 try {
                     decodeMessage(m);
                 } catch (Throwable packetFailure) {
@@ -144,6 +145,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         } finally {
             MediaMessage m;
             while ((m = decodeQueue.poll()) != null) releaseMessage(m);
+            if (metrics != null) metrics.updateAudioQueueDepth(decodeQueue.size());
             // Native FFmpeg state is owned and freed by the decode worker.
             // This prevents close() from freeing it while decodeMessage() is
             // still executing on this thread.
@@ -215,7 +217,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             if (ret >= 0) {
                 AudioFrame pcm = toPcm(frame, pts);
                 if (pcm != null) {
-                    if (metrics != null) metrics.recordPcm(pcm.pcm().length, pcm.pcm().length * 2);
+                    if (metrics != null) metrics.recordPcm(pcm.pcm().length / pcm.channels(), pcm.pcm().length * 2);
                     try {
                         sink.accept(pcm);
                     } catch (Throwable outputFailure) {

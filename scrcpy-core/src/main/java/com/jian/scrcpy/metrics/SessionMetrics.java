@@ -51,7 +51,7 @@ public final class SessionMetrics implements AutoCloseable {
     private final LongAdder audioOutputErrors = new LongAdder();
     private final LongAdder playerWriteBytes = new LongAdder();
     private final LongAdder playerWriteErrors = new LongAdder();
-    private final LongAdder playerReopens = new LongAdder();
+    private final LongAdder playerOpens = new LongAdder();
     private final LongAdder transportErrors = new LongAdder();
 
     public SessionMetrics(String serial) {
@@ -80,8 +80,13 @@ public final class SessionMetrics implements AutoCloseable {
         if (accepted) audioQueueAccepted.increment();
         if (evicted) audioQueueEvicted.increment();
         if (!accepted) audioQueueDropped.increment();
-        audioQueueDepth.set(depth);
-        audioQueueMaxDepth.accumulateAndGet(depth, Math::max);
+        updateAudioQueueDepth(depth);
+    }
+
+    public void updateAudioQueueDepth(int depth) {
+        int value = Math.max(0, depth);
+        audioQueueDepth.set(value);
+        audioQueueMaxDepth.accumulateAndGet(value, Math::max);
     }
 
     public void recordAudioDecodePacket() { audioDecodePackets.increment(); }
@@ -102,7 +107,7 @@ public final class SessionMetrics implements AutoCloseable {
         }
     }
     public void recordPlayerWriteError() { playerWriteErrors.increment(); }
-    public void recordPlayerReopen() { playerReopens.increment(); }
+    public void recordPlayerOpen() { playerOpens.increment(); }
 
     private static long interval(LongAdder counter) { return counter.sumThenReset(); }
     private static long ageMillis(AtomicLong timestamp) {
@@ -134,7 +139,7 @@ public final class SessionMetrics implements AutoCloseable {
         long outputErrors = interval(audioOutputErrors);
         long writeBytes = interval(playerWriteBytes);
         long writeErrors = interval(playerWriteErrors);
-        long reopens = interval(playerReopens);
+        long opens = interval(playerOpens);
         long transportErrorCount = interval(transportErrors);
         int depth = audioQueueDepth.get();
         int maxDepth = audioQueueMaxDepth.getAndSet(depth);
@@ -148,13 +153,13 @@ public final class SessionMetrics implements AutoCloseable {
                         + "audio{tcpBytes=%d,tcpReads=%d,lastTcpAgoMs=%d,packets=%d,configPackets=%d,packetBytes=%d,"
                         + "queueAccepted=%d,queueEvicted=%d,queueDropped=%d,queue=%d/%d,"
                         + "decodePackets=%d,decodeErrors=%d,pcmFrames=%d,pcmSamples=%d,pcmBytes=%d,lastPcmAgoMs=%d,"
-                        + "outputErrors=%d,playerWriteBytes=%d,playerWriteErrors=%d,playerReopens=%d,lastWriteAgoMs=%d}%n",
+                        + "outputErrors=%d,playerWriteBytes=%d,playerWriteErrors=%d,playerOpens=%d,lastWriteAgoMs=%d}%n",
                 serial, finalReport ? "final device" : "device",
                 connected.get(), displayState, transportState, transportErrorCount,
                 tcpBytes, tcpReads, ageMillis(lastAudioTcpNanos), packets, configPackets, packetBytes,
                 queueAccepted, queueEvicted, queueDropped, depth, maxDepth,
                 decodePackets, decodeErrors, frames, samples, pcmByteCount, ageMillis(lastPcmNanos),
-                outputErrors, writeBytes, writeErrors, reopens, ageMillis(lastPlayerWriteNanos));
+                outputErrors, writeBytes, writeErrors, opens, ageMillis(lastPlayerWriteNanos));
     }
 
     @Override public void close() {
