@@ -1621,7 +1621,9 @@ public final class SwingScrcpyApp {
                 ? Math.max(1, handle.floatingHost.getWidth() - NAV_WIDTH - 16)
                 : Math.max(1, workspace.getWidth() - 24);
         int availableHeight = floating
-                ? Math.max(1, handle.floatingHost.getHeight() - 48)
+                // The detached tile has no header; reserve only its 1px border
+                // on the top and bottom so the video reaches the window edges.
+                ? Math.max(1, handle.floatingHost.getHeight() - 2)
                 : Math.max(1, workspace.getHeight() - 30);
         int frameWidth = handle.view.frameWidth();
         int frameHeight = handle.view.frameHeight();
