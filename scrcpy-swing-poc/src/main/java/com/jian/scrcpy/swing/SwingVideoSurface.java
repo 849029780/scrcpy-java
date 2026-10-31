@@ -91,6 +91,38 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         });
 
         add(canvas, BorderLayout.CENTER);
+        addComponentListener(new java.awt.event.ComponentAdapter() {
+            private String lastGeometry;
+            @Override public void componentResized(java.awt.event.ComponentEvent event) {
+                SwingUtilities.invokeLater(() -> {
+                    StringBuilder geometry = new StringBuilder();
+                    geometry.append("surface=").append(getX()).append(',').append(getY())
+                            .append(' ').append(getWidth()).append('x').append(getHeight());
+                    Component child = nativeCanvas;
+                    if (child != null) {
+                        geometry.append(" canvas=").append(child.getX()).append(',').append(child.getY())
+                                .append(' ').append(child.getWidth()).append('x').append(child.getHeight())
+                                .append(" displayable=").append(child.isDisplayable());
+                    }
+                    Container parent = getParent();
+                    int depth = 0;
+                    while (parent != null && depth < 5) {
+                        geometry.append(" parent").append(depth).append('=')
+                                .append(parent.getClass().getSimpleName()).append(':')
+                                .append(parent.getX()).append(',').append(parent.getY()).append(' ')
+                                .append(parent.getWidth()).append('x').append(parent.getHeight());
+                        parent = parent.getParent();
+                        depth++;
+                    }
+                    String current = geometry.toString();
+                    if (!current.equals(lastGeometry)) {
+                        lastGeometry = current;
+                        System.out.printf("[scrcpy-swing][geometry] frame=%dx%d %s%n",
+                                frameWidth, frameHeight, current);
+                    }
+                });
+            }
+        });
         revalidate();
     }
 
