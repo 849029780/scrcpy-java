@@ -1577,15 +1577,20 @@ public final class SwingScrcpyApp {
         releaseAllTransientInput();
         desiredPrimarySerial = null;
         DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
-        if (old != null && old.floatingFrame != null) restoreTile(old);
+        boolean floating = old != null && old.floatingFrame != null;
         primarySerial = null;
         if (old != null && old.tile != null) {
-            detachTile(old.tile);
-            int index = old.secondaryIndex;
-            secondaryGrid.add(old.tile, Math.max(0, Math.min(index < 0 ? secondaryGrid.getComponentCount() : index, secondaryGrid.getComponentCount())));
-            old.secondaryIndex = -1;
             old.primary = false;
-            resizeTile(old, false);
+            if (!floating) {
+                detachTile(old.tile);
+                int index = old.secondaryIndex;
+                secondaryGrid.add(old.tile, Math.max(0, Math.min(index < 0 ? secondaryGrid.getComponentCount() : index, secondaryGrid.getComponentCount())));
+                old.secondaryIndex = -1;
+                resizeTile(old, false);
+            }
+            // A popped-out tile remains in its independent frame when its
+            // primary role is cleared; only its logical synchronization role
+            // is removed.
         }
         primaryHost.removeAll();
         primaryHost.setVisible(false);
