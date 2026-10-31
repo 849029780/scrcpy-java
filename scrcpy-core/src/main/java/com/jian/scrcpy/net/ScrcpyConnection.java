@@ -1,6 +1,8 @@
 package com.jian.scrcpy.net;
 
 import com.jian.scrcpy.protocol.*;
+import com.jian.scrcpy.metrics.SessionMetrics;
+import io.netty.buffer.ByteBuf;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
@@ -77,13 +79,17 @@ public final class ScrcpyConnection implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean failureReported = new AtomicBoolean();
     private final String sessionLabel;
+    private final SessionMetrics metrics;
     private volatile Consumer<Throwable> transportFailureSink = cause -> {};
 
-    public ScrcpyConnection(int p) { this(p, null); }
+    public ScrcpyConnection(int p) { this(p, null, null); }
 
-    public ScrcpyConnection(int p, String sessionLabel) {
+    public ScrcpyConnection(int p, String sessionLabel) { this(p, sessionLabel, null); }
+
+    public ScrcpyConnection(int p, String sessionLabel, SessionMetrics metrics) {
         port = p;
         this.sessionLabel = sessionLabel == null || sessionLabel.isBlank() ? "unknown" : sessionLabel;
+        this.metrics = metrics;
     }
 
     public void onTransportFailure(Consumer<Throwable> sink) {
@@ -92,6 +98,7 @@ public final class ScrcpyConnection implements AutoCloseable {
 
     private void reportTransportFailure(String stream, Throwable cause) {
         if (closed.get()) return;
+        if (metrics != null) metrics.recordTransportFailure();
         System.err.printf("[scrcpy-java][%s] %s transport failed: %s%n", sessionLabel, stream, cause);
         if (failureReported.compareAndSet(false, true)) {
             try { transportFailureSink.accept(cause); }
@@ -113,7 +120,15 @@ public final class ScrcpyConnection implements AutoCloseable {
             pipeline.addLast("configMerger", new ConfigPacketMerger());
             if (videoHandler != null) pipeline.addLast("videoHandler", videoHandler);
         } else if ("audio".equals(name)) {
-            pipeline.addLast("audioMedia", new ScrcpyAudioDecoder(sessionLabel));
+            if (metrics != null) {
+                pipeline.addLast("audioTcpMetrics", new ChannelInboundHandlerAdapter() {
+                    @Override public void channelRead(ChannelHandlerContext ctx, Object message) throws Exception {
+                        if (message instanceof ByteBuf buffer) metrics.recordAudioTcp(buffer.readableBytes());
+                        ctx.fireChannelRead(message);
+                    }
+                });
+            }
+            pipeline.addLast("audioMedia", new ScrcpyAudioDecoder(sessionLabel, metrics));
             if (audioHandler != null) pipeline.addLast("audioHandler", audioHandler);
         } else {
             pipeline.addLast("deviceMessage", new DeviceMessageDecoder());

@@ -987,12 +987,11 @@ public final class ScrcpyApp extends Application {
                                 sdlRenderer)
                         : null;
                 videoDecoderRef.set(videoDecoder);
-                audioPlayer = new JavaSoundPlayer();
-                JavaSoundPlayer player = audioPlayer;
-
                 session = new ScrcpySession(
                         new Adb(System.getProperty("scrcpy.adb", "adb"), device.serial()),
                         options);
+                audioPlayer = new JavaSoundPlayer(session.metrics());
+                JavaSoundPlayer player = audioPlayer;
 
 
                 ScrcpySession runningSession = session;
@@ -1248,6 +1247,7 @@ public final class ScrcpyApp extends Application {
     private void rightSidebarDisplayPower(DeviceSession source, boolean on) {
         for (DeviceSession target : inputTargets(source)) {
             target.controller.setDisplayPower(on);
+            target.session.metrics().setDisplayOn(on);
             target.displayPower = on;
             if (target.displayPowerButton != null) {
                 updateDisplayPowerToggle(target.displayPowerButton, on);

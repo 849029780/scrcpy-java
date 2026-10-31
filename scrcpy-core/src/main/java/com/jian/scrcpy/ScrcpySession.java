@@ -3,6 +3,7 @@ package com.jian.scrcpy;
 import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.media.AudioFrame;
 import com.jian.scrcpy.media.FfmpegAudioDecoder;
+import com.jian.scrcpy.metrics.SessionMetrics;
 import com.jian.scrcpy.net.ScrcpyConnection;
 import com.jian.scrcpy.protocol.ControlMessages;
 import com.jian.scrcpy.protocol.ClipboardAckTracker;
@@ -28,6 +29,7 @@ public final class ScrcpySession implements AutoCloseable {
     private ServerLauncher server;
     private ScrcpyConnection connection;
     private FfmpegAudioDecoder audioDecoder;
+    private final SessionMetrics metrics;
     private volatile Consumer<DeviceMessage> deviceMessageSink = message -> {};
     private final CopyOnWriteArrayList<Consumer<DeviceMessage>> deviceMessageListeners = new CopyOnWriteArrayList<>();
     private final ClipboardAckTracker clipboardAcks = new ClipboardAckTracker();
@@ -37,6 +39,7 @@ public final class ScrcpySession implements AutoCloseable {
     public ScrcpySession(Adb adb, ScrcpyOptions options) {
         this.adb = adb;
         this.options = options;
+        this.metrics = new SessionMetrics(options.serial());
     }
 
     public synchronized void start(Path serverJar,
@@ -47,12 +50,12 @@ public final class ScrcpySession implements AutoCloseable {
         if (state != State.NEW) throw new IllegalStateException("Session cannot be started from state " + state);
         state = State.CONNECTING;
         server = new ServerLauncher(adb, options);
-        connection = new ScrcpyConnection(options.localPort(), options.serial());
+        connection = new ScrcpyConnection(options.localPort(), options.serial(), metrics);
         connection.onTransportFailure(cause -> transportFailureSink.accept(cause));
 
         try {
             if (options.audio()) {
-                audioDecoder = new FfmpegAudioDecoder(audioSink == null ? f -> {} : audioSink, options.serial());
+                audioDecoder = new FfmpegAudioDecoder(audioSink == null ? f -> {} : audioSink, options.serial(), metrics);
             }
 
             connection.listen(
@@ -91,6 +94,8 @@ public final class ScrcpySession implements AutoCloseable {
             }
 
             state = State.RUNNING;
+            metrics.setConnected(true);
+            metrics.setDisplayOn(!options.turnScreenOff());
         } catch (Exception e) {
             close();
             throw e;
@@ -106,6 +111,8 @@ public final class ScrcpySession implements AutoCloseable {
             Thread.sleep(10);
         }
     }
+
+    public SessionMetrics metrics() { return metrics; }
 
     public String deviceName() {
         return connection == null ? null : connection.deviceName();
@@ -189,6 +196,7 @@ public final class ScrcpySession implements AutoCloseable {
                 server = null;
             }
             clipboardAcks.clear();
+            metrics.close();
             deviceMessageListeners.clear();
         } finally {
             state = State.STOPPED;

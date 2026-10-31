@@ -3,6 +3,7 @@ package com.jian.scrcpy.media;
 import com.jian.scrcpy.protocol.*;
 import io.netty.channel.*;
 import io.netty.util.ReferenceCountUtil;
+import com.jian.scrcpy.metrics.SessionMetrics;
 import org.bytedeco.ffmpeg.avcodec.*;
 import org.bytedeco.ffmpeg.avutil.*;
 import org.bytedeco.javacpp.*;
@@ -35,15 +36,21 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
     private final String sessionLabel;
+    private final SessionMetrics metrics;
 
     public FfmpegAudioDecoder(Consumer<AudioFrame> s) {
-        this(s, null);
+        this(s, null, null);
     }
 
     public FfmpegAudioDecoder(Consumer<AudioFrame> s, String sessionLabel) {
+        this(s, sessionLabel, null);
+    }
+
+    public FfmpegAudioDecoder(Consumer<AudioFrame> s, String sessionLabel, SessionMetrics metrics) {
         super(false);
         sink = s;
         this.sessionLabel = sessionLabel == null || sessionLabel.isBlank() ? "unknown" : sessionLabel;
+        this.metrics = metrics;
         decodeThread = Thread.ofVirtual().name("scrcpy-audio-decoder-" + this.sessionLabel).start(this::decodeLoop);
     }
 
@@ -109,7 +116,11 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
         // MediaMessage is a plain record, not a ReferenceCounted wrapper.
         // The Packet's ByteBuf ownership transfers to the queue and is released
         // by the worker or by the bounded-queue eviction/drop path.
-        decodeQueue.offer(m);
+        AudioMediaMessageQueue.OfferResult result = decodeQueue.offer(m);
+        if (metrics != null) {
+            metrics.recordAudioQueue(result != AudioMediaMessageQueue.OfferResult.INCOMING_DROPPED,
+                    result == AudioMediaMessageQueue.OfferResult.ENQUEUED_AFTER_EVICTION, decodeQueue.size());
+        }
     }
     private void decodeLoop() {
         try {
@@ -118,6 +129,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
                 try {
                     decodeMessage(m);
                 } catch (Throwable packetFailure) {
+                    if (metrics != null) metrics.recordAudioDecodeError();
                     // A malformed packet or transient native/output failure must
                     // not permanently kill this session's audio worker.
                     System.err.println("[scrcpy-java][" + sessionLabel
@@ -160,6 +172,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             return;
         }
         int payloadSize = p.data().readableBytes();
+        if (metrics != null) metrics.recordAudioDecodePacket();
         byte[] bytes = ensureEncodedCapacity(payloadSize);
         p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
         av_packet_unref(packet);
@@ -202,9 +215,11 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             if (ret >= 0) {
                 AudioFrame pcm = toPcm(frame, pts);
                 if (pcm != null) {
+                    if (metrics != null) metrics.recordPcm(pcm.pcm().length, pcm.pcm().length * 2);
                     try {
                         sink.accept(pcm);
                     } catch (Throwable outputFailure) {
+                        if (metrics != null) metrics.recordAudioOutputError();
                         // Playback device failures are isolated from decoding.
                         // JavaSoundPlayer closes a broken line so the next PCM
                         // frame can attempt to reopen the output device.
@@ -222,6 +237,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private void logDecodeError(String operation, int error, long size, long pts) {
+        if (metrics != null) metrics.recordAudioDecodeError();
         try (BytePointer errorText = new BytePointer(256)) {
             av_strerror(error, errorText, 256);
             System.err.printf("[scrcpy-java][%s] audio %s failed: codec=%s size=%d pts=%d error=%d (%s)%n",
