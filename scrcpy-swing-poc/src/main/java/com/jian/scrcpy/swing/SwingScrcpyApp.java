@@ -877,6 +877,77 @@ public final class SwingScrcpyApp {
         secondaryGrid.revalidate(); secondaryGrid.repaint();
     }
 
+    /**
+     * Move the existing device tile (video surface and controls together) into
+     * its own resizable frame. The same tile/session is reused; no second
+     * decoder, renderer, or Android connection is created.
+     */
+    private void popOutTile(DeviceSession handle) {
+        if (handle == null || handle.tile == null || handle.floatingFrame != null) return;
+        releaseAllTransientInput();
+        Container oldParent = handle.tile.getParent();
+        if (oldParent == null) return;
+        handle.embeddedParent = oldParent;
+        handle.embeddedIndex = indexOfComponent(oldParent, handle.tile);
+
+        JPanel host = new JPanel(new GridBagLayout());
+        host.setBackground(Color.WHITE);
+        host.setOpaque(true);
+        JFrame floating = new JFrame(handle.device == null ? "scrcpy-java" : handle.device.displayName());
+        floating.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        floating.setMinimumSize(new Dimension(360, 320));
+        floating.setSize(handle.landscape ? new Dimension(1100, 620) : new Dimension(620, 900));
+        floating.setLocationRelativeTo(frame);
+        floating.addWindowListener(new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { restoreTile(handle); }
+            @Override public void windowLostFocus(WindowEvent e) {
+                if (activeMouseInput == handle) releaseAllTransientInput();
+            }
+        });
+        detachTile(handle.tile);
+        host.add(handle.tile);
+        floating.setContentPane(host);
+        handle.floatingHost = host;
+        handle.floatingFrame = floating;
+        host.addComponentListener(new ComponentAdapter() {
+            @Override public void componentResized(ComponentEvent e) {
+                resizeTile(handle, isPrimary(handle));
+            }
+        });
+        if (handle.popOutButton != null) handle.popOutButton.setToolTipText("还原到主窗口");
+        floating.setVisible(true);
+        resizeTile(handle, isPrimary(handle));
+        host.revalidate();
+        host.repaint();
+        handle.view.requestFocusInWindow();
+    }
+
+    private void restoreTile(DeviceSession handle) {
+        if (handle == null || handle.floatingFrame == null || handle.tile == null) return;
+        JFrame floating = handle.floatingFrame;
+        JPanel host = handle.floatingHost;
+        detachTile(handle.tile);
+        handle.floatingFrame = null;
+        handle.floatingHost = null;
+        Container target = isPrimary(handle) ? primaryHost : secondaryGrid;
+        int index = isPrimary(handle) ? -1 : indexClamp(handle.secondaryIndex, secondaryGrid.getComponentCount());
+        if (isPrimary(handle)) {
+            primaryHost.add(handle.tile, BorderLayout.CENTER);
+        } else {
+            secondaryGrid.add(handle.tile, index);
+        }
+        floating.getContentPane().removeAll();
+        floating.dispose();
+        handle.embeddedParent = null;
+        handle.embeddedIndex = -1;
+        if (handle.popOutButton != null) handle.popOutButton.setToolTipText("弹出独立窗口");
+        resizeTile(handle, isPrimary(handle));
+        target.revalidate();
+        target.repaint();
+        workspace.revalidate();
+        workspace.repaint();
+    }
+
     private void setNavigationBarsVisible(boolean visible) {
         navigationBarsVisible = visible;
         if (toggleNavigationBarsButton != null) {
@@ -913,7 +984,9 @@ public final class SwingScrcpyApp {
         mouse.addActionListener(e -> setMouseModeFromSidebar(handle, mouse.isSelected()));
         JButton back = controlButton("back.png", "返回", () -> sidebarKey(handle, AndroidKeycodes.BACK));
         JButton home = controlButton("home.png", "Home", () -> sidebarKey(handle, AndroidKeycodes.HOME));
-        JButton recent = controlButton("recent-apps.png", "多任务", () -> sidebarKey(handle, 187));
+        JButton recent = controlButton("multitask.png", "多任务", () -> sidebarKey(handle, 187));
+        JButton popOut = controlButton("recent-apps.png", "弹出独立窗口", () -> popOutTile(handle));
+        handle.popOutButton = popOut;
         JButton taskbar = controlButton("notification-panel.png", "打开通知栏", () -> sidebarTaskbar(handle));
         JButton volumeUp = controlButton("volume-up.png", "音量加", () -> sidebarKey(handle, AndroidKeycodes.VOLUME_UP));
         JButton volumeDown = controlButton("volume-down.png", "音量减", () -> sidebarKey(handle, AndroidKeycodes.VOLUME_DOWN));
@@ -928,7 +1001,7 @@ public final class SwingScrcpyApp {
         JToggleButton orientation = toggleButton("portrait.png", "切换为横屏");
         handle.orientationButton = orientation;
         orientation.addActionListener(e -> sidebarOrientation(handle));
-        for (JComponent c : List.of(close, primary, back, home, recent, taskbar, volumeUp, volumeDown, power, display, awake, orientation, mouse, adapt)) {
+        for (JComponent c : List.of(close, primary, back, home, recent, popOut, taskbar, volumeUp, volumeDown, power, display, awake, orientation, mouse, adapt)) {
             c.setAlignmentX(Component.CENTER_ALIGNMENT);
             bar.add(c);
             bar.add(Box.createVerticalStrut(4));
@@ -1528,12 +1601,23 @@ public final class SwingScrcpyApp {
 
     private void resizeTile(DeviceSession handle, boolean primary) {
         if (handle.tile == null) return;
-        int availableWidth = Math.max(1, workspace.getWidth() - 24);
+        boolean floating = handle.floatingHost != null && handle.floatingFrame != null;
+        int availableWidth = floating
+                ? Math.max(1, handle.floatingHost.getWidth() - NAV_WIDTH - 16)
+                : Math.max(1, workspace.getWidth() - 24);
+        int availableHeight = floating
+                ? Math.max(1, handle.floatingHost.getHeight() - 48)
+                : Math.max(1, workspace.getHeight() - 30);
         int frameWidth = handle.view.frameWidth();
         int frameHeight = handle.view.frameHeight();
         int maxW;
         int maxH;
-        if (primary && !handle.landscape) {
+        if (floating) {
+            // Fit the complete video plus its fixed-width control strip inside
+            // the user-resized window. The viewport itself stays at source AR.
+            maxW = availableWidth;
+            maxH = availableHeight;
+        } else if (primary && !handle.landscape) {
             // Keep the primary device enlarged in portrait mode.
             boolean hasSecondary = secondaryGrid.getComponentCount() > 0;
             int sidebarWidth = navigationBarsVisible ? NAV_WIDTH : 0;
@@ -1604,7 +1688,11 @@ public final class SwingScrcpyApp {
                 videoAndNavigationSize.width + tileInsets.left + tileInsets.right,
                 vh + titleHeight + tileInsets.top + tileInsets.bottom);
         handle.tile.setPreferredSize(preferred);
-        handle.tile.setMinimumSize(preferred);
+        handle.tile.setMinimumSize(floating ? new Dimension(1, 1) : preferred);
+        if (floating && handle.floatingHost != null) {
+            handle.floatingHost.revalidate();
+            handle.floatingHost.repaint();
+        }
         handle.viewport.setPreferredSize(new Dimension(vw, vh));
         handle.viewport.setMinimumSize(new Dimension(vw, vh));
         handle.view.setPreferredSize(new Dimension(vw, vh));
@@ -1654,6 +1742,12 @@ public final class SwingScrcpyApp {
         DeviceSession handle = sessions.remove(serial);
         if (handle == null) return;
         if (handle.tile != null) {
+            if (handle.floatingFrame != null) {
+                JFrame floating = handle.floatingFrame;
+                handle.floatingFrame = null;
+                handle.floatingHost = null;
+                floating.dispose();
+            }
             primaryHost.remove(handle.tile);
             secondaryGrid.remove(handle.tile);
         }
@@ -1712,7 +1806,12 @@ public final class SwingScrcpyApp {
         JPanel tile;
         JPanel viewport;
         JScrollPane navigationScroll;
+        JFrame floatingFrame;
+        JPanel floatingHost;
+        Container embeddedParent;
+        int embeddedIndex = -1;
         JToggleButton primaryButton, adaptButton, mouseModeButton, displayButton, awakeButton, orientationButton;
+        JButton popOutButton;
         boolean primary, stayAwake, displayPower = true, landscape, orientationPending;
         boolean relativePointerValid, recentering, relativeCaptured;
         int secondaryIndex = -1;
