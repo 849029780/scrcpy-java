@@ -808,6 +808,7 @@ public final class SwingScrcpyApp {
         title.setOpaque(true); title.setBackground(Color.WHITE); title.setForeground(Color.BLACK);
         title.setFont(title.getFont().deriveFont(Font.BOLD));
         title.setBorder(new EmptyBorder(4, 6, 4, 6));
+        handle.tileTitle = title;
         JPanel videoAndNavigation = new JPanel(new BorderLayout(0, 0));
         videoAndNavigation.setOpaque(true);
         videoAndNavigation.setBackground(Color.WHITE);
@@ -904,6 +905,9 @@ public final class SwingScrcpyApp {
                 if (activeMouseInput == handle) releaseAllTransientInput();
             }
         });
+        // The device name is already shown in the native window title bar.
+        // Hide the in-tile header while detached to maximize the video area.
+        if (handle.tileTitle != null) handle.tileTitle.setVisible(false);
         detachTile(handle.tile);
         host.add(handle.tile);
         floating.setContentPane(host);
@@ -942,6 +946,7 @@ public final class SwingScrcpyApp {
         }
         floating.getContentPane().removeAll();
         floating.dispose();
+        if (handle.tileTitle != null) handle.tileTitle.setVisible(true);
         handle.embeddedParent = null;
         handle.embeddedIndex = -1;
         if (handle.popOutButton != null) handle.popOutButton.setToolTipText("弹出独立窗口");
@@ -1671,7 +1676,7 @@ public final class SwingScrcpyApp {
         // producing black letterbox strips at the top and bottom.
         BorderLayout tileLayout = (BorderLayout) handle.tile.getLayout();
         Component title = tileLayout.getLayoutComponent(BorderLayout.NORTH);
-        int titleHeight = title == null ? 0 : title.getPreferredSize().height;
+        int titleHeight = title == null || !title.isVisible() ? 0 : title.getPreferredSize().height;
         Insets tileInsets = handle.tile.getInsets();
 
         Component videoAndNavigation = tileLayout.getLayoutComponent(BorderLayout.CENTER);
@@ -1814,6 +1819,7 @@ public final class SwingScrcpyApp {
         final ClipboardController clipboard;
         AdbDevice device;
         JPanel tile;
+        JLabel tileTitle;
         JPanel viewport;
         JScrollPane navigationScroll;
         JFrame floatingFrame;
