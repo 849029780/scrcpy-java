@@ -920,7 +920,7 @@ public final class SwingScrcpyApp {
         handle.orientationButton = orientation;
         orientation.addActionListener(e -> sidebarOrientation(handle));
         for (JComponent c : List.of(close, primary, back, home, recent, taskbar, volumeUp, volumeDown, power, display, awake, orientation, mouse, adapt)) {
-            c.setAlignmentX(Component.CENTER_ALIGNMENT);
+            c.setAlignmentX(Component.LEFT_ALIGNMENT);
             bar.add(c);
             bar.add(Box.createVerticalStrut(4));
         }
@@ -933,9 +933,10 @@ public final class SwingScrcpyApp {
         button.setToolTipText(tooltip);
         button.setFocusable(false);
         button.setMargin(new Insets(0, 0, 0, 0));
-        button.setPreferredSize(new Dimension(34, 34));
-        button.setMinimumSize(new Dimension(34, 34));
-        button.setMaximumSize(new Dimension(34, 34));
+        int buttonWidth = NAV_WIDTH - 8; // Fill the viewport; the remaining 8px belong to the scrollbar.
+        button.setPreferredSize(new Dimension(buttonWidth, 34));
+        button.setMinimumSize(new Dimension(buttonWidth, 34));
+        button.setMaximumSize(new Dimension(buttonWidth, 34));
         button.addActionListener(e -> action.run());
         return button;
     }
@@ -945,10 +946,11 @@ public final class SwingScrcpyApp {
         setIcon(button, icon);
         button.setToolTipText(tooltip);
         button.setFocusable(false);
-        button.setMargin(new Insets(2, 2, 2, 2));
-        button.setPreferredSize(new Dimension(34, 34));
-        button.setMinimumSize(new Dimension(34, 34));
-        button.setMaximumSize(new Dimension(34, 34));
+        button.setMargin(new Insets(2, 0, 2, 0));
+        int buttonWidth = NAV_WIDTH - 8; // Match the scroll pane viewport width.
+        button.setPreferredSize(new Dimension(buttonWidth, 34));
+        button.setMinimumSize(new Dimension(buttonWidth, 34));
+        button.setMaximumSize(new Dimension(buttonWidth, 34));
         return button;
     }
 
