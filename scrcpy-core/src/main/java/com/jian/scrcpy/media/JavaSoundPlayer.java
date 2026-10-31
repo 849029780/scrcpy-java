@@ -30,8 +30,8 @@ public final class JavaSoundPlayer implements AutoCloseable {
                 outputBuffer[p + 1] = (byte) (s >>> 8);
             }
             try {
-                line.write(outputBuffer, 0, bytes);
-                if (metrics != null) metrics.recordPlayerWrite(bytes);
+                int written = line.write(outputBuffer, 0, bytes);
+                if (metrics != null) metrics.recordPlayerWrite(written);
             } catch (RuntimeException outputFailure) {
                 if (metrics != null) metrics.recordPlayerWriteError();
                 // A disconnected/reconfigured Windows audio endpoint can leave

@@ -10,6 +10,7 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.util.AttributeKey;
 
 import java.net.InetSocketAddress;
+import java.nio.channels.ClosedChannelException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -98,9 +99,9 @@ public final class ScrcpyConnection implements AutoCloseable {
 
     private void reportTransportFailure(String stream, Throwable cause) {
         if (closed.get()) return;
-        if (metrics != null) metrics.recordTransportFailure();
         System.err.printf("[scrcpy-java][%s] %s transport failed: %s%n", sessionLabel, stream, cause);
         if (failureReported.compareAndSet(false, true)) {
+            if (metrics != null) metrics.recordTransportFailure();
             try { transportFailureSink.accept(cause); }
             catch (Throwable callbackError) {
                 System.err.printf("[scrcpy-java][%s] transport failure callback failed: %s%n",
@@ -160,6 +161,13 @@ public final class ScrcpyConnection implements AutoCloseable {
                 reportTransportFailure(name, cause);
                 cause.printStackTrace(System.err);
                 ctx.close();
+            }
+
+            @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+                if (!closed.get()) {
+                    reportTransportFailure(name, new ClosedChannelException());
+                }
+                ctx.fireChannelInactive();
             }
         });
     }
