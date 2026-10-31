@@ -892,7 +892,6 @@ public final class SwingScrcpyApp {
         // The scroll pane already provides the outer scrollbar gutter. Keep
         // this column free of extra insets so the controls have symmetric gaps.
         bar.setBorder(BorderFactory.createEmptyBorder());
-        bar.setPreferredSize(new Dimension(NAV_WIDTH - 2, bar.getPreferredSize().height));
         JButton close = controlButton("disconnect.png", "断开设备", () -> disconnect(device.serial()));
         JToggleButton primary = toggleButton("set-primary.png", "设为主屏幕");
         handle.primaryButton = primary;
@@ -926,6 +925,10 @@ public final class SwingScrcpyApp {
             bar.add(c);
             bar.add(Box.createVerticalStrut(4));
         }
+        // Fix the width after all controls have been added, while preserving
+        // the real content height so JScrollPane can detect vertical overflow.
+        Dimension contentSize = bar.getPreferredSize();
+        bar.setPreferredSize(new Dimension(NAV_WIDTH - 2, contentSize.height));
         return bar;
     }
 
