@@ -812,8 +812,18 @@ public final class SwingScrcpyApp {
         viewport.setDoubleBuffered(false);
         viewport.add(handle.view, BorderLayout.CENTER);
         JPanel navigation = createNavigationBar(handle, device);
+        JScrollPane navigationScroll = new JScrollPane(
+                navigation,
+                ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        navigationScroll.setBorder(null);
+        navigationScroll.setOpaque(true);
+        navigationScroll.setBackground(new Color(24, 24, 24));
+        navigationScroll.getViewport().setOpaque(true);
+        navigationScroll.getViewport().setBackground(new Color(24, 24, 24));
+        navigationScroll.setPreferredSize(new Dimension(NAV_WIDTH, TILE_HEIGHT));
         videoAndNavigation.add(viewport, BorderLayout.CENTER);
-        videoAndNavigation.add(navigation, BorderLayout.EAST);
+        videoAndNavigation.add(navigationScroll, BorderLayout.EAST);
         tile.add(title, BorderLayout.NORTH);
         tile.add(videoAndNavigation, BorderLayout.CENTER);
         handle.tile = tile;
@@ -1520,16 +1530,28 @@ public final class SwingScrcpyApp {
             Component navigation = contentLayout.getLayoutComponent(BorderLayout.EAST);
             if (navigation != null) {
                 navigationWidth = navigation.getPreferredSize().width;
+                // The toolbar contains more controls than a landscape video
+                // viewport can vertically accommodate. Keep its own viewport
+                // at exactly the video height and let the scrollbar expose the
+                // remaining controls instead of allowing BorderLayout to grow
+                // the native video surface to the toolbar's full preferred height.
+                navigation.setPreferredSize(new Dimension(navigationWidth, vh));
+                navigation.setMinimumSize(new Dimension(navigationWidth, vh));
             }
         }
 
+        Dimension videoAndNavigationSize = new Dimension(vw + navigationWidth, vh);
+        videoAndNavigation.setPreferredSize(videoAndNavigationSize);
+        videoAndNavigation.setMinimumSize(videoAndNavigationSize);
         Dimension preferred = new Dimension(
-                vw + navigationWidth + tileInsets.left + tileInsets.right,
+                videoAndNavigationSize.width + tileInsets.left + tileInsets.right,
                 vh + titleHeight + tileInsets.top + tileInsets.bottom);
         handle.tile.setPreferredSize(preferred);
         handle.tile.setMinimumSize(preferred);
         handle.viewport.setPreferredSize(new Dimension(vw, vh));
+        handle.viewport.setMinimumSize(new Dimension(vw, vh));
         handle.view.setPreferredSize(new Dimension(vw, vh));
+        handle.view.setMinimumSize(new Dimension(vw, vh));
         handle.tile.revalidate();
         if (primary && Objects.equals(primarySerial, handle.device == null ? null : handle.device.serial())) {
             primaryHost.setPreferredSize(new Dimension(preferred.width, 0));
