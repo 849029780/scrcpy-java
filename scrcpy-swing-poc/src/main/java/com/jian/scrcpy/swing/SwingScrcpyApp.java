@@ -830,6 +830,8 @@ public final class SwingScrcpyApp {
         // Show the scrollbar only when the controls exceed the available
         // viewport height. Keep it narrow so it minimally affects the video area.
         navigationScroll.getVerticalScrollBar().setPreferredSize(new Dimension(2, 0));
+        navigationScroll.getVerticalScrollBar().setUnitIncrement(24);
+        navigationScroll.getVerticalScrollBar().setBlockIncrement(72);
         // Show the 2px scrollbar only when the controls exceed the viewport height.
         navigationScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
         navigationScroll.setVisible(navigationBarsVisible);
@@ -857,6 +859,12 @@ public final class SwingScrcpyApp {
                     handle.landscape = actualLandscape;
                     updateOrientationButton(handle);
                 }
+                // Landscape tiles are wider and the toolbar can contain more
+                // controls below the fold. Increase wheel travel so one notch
+                // moves a useful portion of the toolbar instead of a few pixels.
+                JScrollBar navigationBar = navigationScroll.getVerticalScrollBar();
+                navigationBar.setUnitIncrement(handle.landscape ? 64 : 24);
+                navigationBar.setBlockIncrement(handle.landscape ? 192 : 72);
             }
             resizeTile(handle, isPrimary(handle));
         };
