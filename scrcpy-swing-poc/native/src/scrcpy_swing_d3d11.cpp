@@ -591,11 +591,29 @@ struct Renderer {
         if (!ensureInputView(texture, textureAddress, static_cast<UINT>(arrayIndex),
                              textureDesc.Format, &inputView)) return -1;
 
-        // Fill the complete Swing viewport. All landscape (or portrait)
-        // tiles share the same target dimensions; stretching the decoded
-        // frame avoids renderer-generated letterbox bars between devices
-        // whose encoded aspect ratios differ slightly.
-        const RECT sourceRect{0, 0, static_cast<LONG>(frameWidth), static_cast<LONG>(frameHeight)};
+        // Cover the viewport without distorting the device image. Crop the
+        // source rectangle centrally to the viewport aspect ratio; the GPU
+        // scales this cropped rectangle uniformly to the full destination.
+        LONG sourceLeft = 0;
+        LONG sourceTop = 0;
+        LONG sourceRight = static_cast<LONG>(frameWidth);
+        LONG sourceBottom = static_cast<LONG>(frameHeight);
+        const double sourceAspect = static_cast<double>(frameWidth) / frameHeight;
+        const double viewportAspect = static_cast<double>(width) / height;
+        if (sourceAspect > viewportAspect) {
+            const LONG visibleWidth = std::max<LONG>(1, std::min<LONG>(
+                    static_cast<LONG>(frameWidth),
+                    static_cast<LONG>(std::llround(frameHeight * viewportAspect))));
+            sourceLeft = (static_cast<LONG>(frameWidth) - visibleWidth) / 2;
+            sourceRight = sourceLeft + visibleWidth;
+        } else if (sourceAspect < viewportAspect) {
+            const LONG visibleHeight = std::max<LONG>(1, std::min<LONG>(
+                    static_cast<LONG>(frameHeight),
+                    static_cast<LONG>(std::llround(frameWidth / viewportAspect))));
+            sourceTop = (static_cast<LONG>(frameHeight) - visibleHeight) / 2;
+            sourceBottom = sourceTop + visibleHeight;
+        }
+        const RECT sourceRect{sourceLeft, sourceTop, sourceRight, sourceBottom};
         const RECT destRect{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
 
         D3D11_VIDEO_PROCESSOR_COLOR_SPACE inputColor{};
