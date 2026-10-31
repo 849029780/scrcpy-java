@@ -819,9 +819,27 @@ public final class SwingScrcpyApp {
         handle.tile = tile;
         handle.viewport = viewport;
         handle.device = device;
-        handle.view.setFrameSizeListener(() -> resizeTile(handle, isPrimary(handle)));
+        Runnable updateFrameGeometry = () -> {
+            int frameWidth = handle.view.frameWidth();
+            int frameHeight = handle.view.frameHeight();
+            if (frameWidth > 0 && frameHeight > 0) {
+                // A device may already be in landscape when it connects. Do not
+                // assume portrait until the first decoded frame tells us its
+                // actual orientation; otherwise the secondary tile is capped
+                // at TILE_WIDTH (360px) and appears half-sized.
+                boolean actualLandscape = frameWidth > frameHeight;
+                if (handle.landscape != actualLandscape) {
+                    handle.landscape = actualLandscape;
+                    updateOrientationButton(handle);
+                }
+            }
+            resizeTile(handle, isPrimary(handle));
+        };
+        handle.view.setFrameSizeListener(updateFrameGeometry);
         installControls(handle);
-        resizeTile(handle, false);
+        // The first frame can arrive before the listener is installed.
+        // Synchronize once now as well as on every subsequent size change.
+        updateFrameGeometry.run();
         secondaryGrid.add(tile);
         secondaryGrid.revalidate(); secondaryGrid.repaint();
     }
