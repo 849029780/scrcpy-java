@@ -3,6 +3,7 @@ package com.jian.scrcpy.swing;
 import java.awt.Canvas;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Heavyweight AWT surface hosted by Swing. JAWT supplies its HWND to the
@@ -18,6 +19,7 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
     private volatile boolean surfaceAttached;
     private volatile boolean closed;
     private final CompletableFuture<Void> deviceReady = new CompletableFuture<>();
+    private final AtomicReference<String> lastAspectMismatch = new AtomicReference<>();
 
     public NativeD3D11Canvas() {
         setBackground(java.awt.Color.WHITE);
@@ -97,7 +99,35 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
         // AWT peer reparenting temporarily detaches the HWND. Keep the frame
         // queued and retry after addNotify() reattaches the swap chain.
         if (!surfaceAttached || !isDisplayable()) return 0;
+
+        // The first hardware frame can arrive before Swing has processed the
+        // frame-size callback and relaid out this heavyweight Canvas. Sending
+        // it to a swap chain with the previous orientation stretches the image
+        // and can leave apparent black margins around the projection. Treat
+        // this as backpressure: the decoder retries after the EDT resizes the
+        // Canvas to the new frame aspect ratio.
+        int canvasWidth = getWidth();
+        int canvasHeight = getHeight();
+        if (!matchesFrameAspect(canvasWidth, canvasHeight, width, height)) {
+            String geometry = width + "x" + height + " -> " + canvasWidth + "x" + canvasHeight;
+            if (!geometry.equals(lastAspectMismatch.getAndSet(geometry))) {
+                System.out.printf("[scrcpy-swing][native-geometry] waiting-for-layout frame=%dx%d canvas=%dx%d%n",
+                        width, height, canvasWidth, canvasHeight);
+            }
+            return 0;
+        }
+        lastAspectMismatch.set(null);
         return submitHardware0(handle, texture, arrayIndex, width, height, colorSpace, colorRange);
+    }
+
+    private static boolean matchesFrameAspect(int canvasWidth, int canvasHeight,
+                                              int frameWidth, int frameHeight) {
+        if (canvasWidth <= 0 || canvasHeight <= 0 || frameWidth <= 0 || frameHeight <= 0) {
+            return false;
+        }
+        double canvasAspect = canvasWidth / (double) canvasHeight;
+        double frameAspect = frameWidth / (double) frameHeight;
+        return Math.abs(canvasAspect - frameAspect) / frameAspect <= 0.005;
     }
 
     /** Returns a completed token; negative tokens indicate presentation failure. */
