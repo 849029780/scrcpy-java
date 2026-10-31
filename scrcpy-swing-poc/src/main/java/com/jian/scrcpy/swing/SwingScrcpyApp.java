@@ -78,6 +78,8 @@ public final class SwingScrcpyApp {
     private volatile String desiredPrimarySerial;
     private volatile DeviceSession activeMouseInput;
     private volatile boolean adaptScreenClick;
+    private volatile boolean navigationBarsVisible;
+    private JButton toggleNavigationBarsButton;
     private volatile String lastDesktopClipboard = "";
     private volatile boolean closing;
     private JDialog deviceDialog;
@@ -118,14 +120,18 @@ public final class SwingScrcpyApp {
         JButton install = new JButton("批量安装应用");
         JButton toggleAllOrientation = new JButton("全部切换横竖屏");
         toggleAllOrientation.setToolTipText("将所有正在投屏的设备统一切换为横屏或竖屏");
+        toggleNavigationBarsButton = new JButton("显示设备按钮栏");
+        toggleNavigationBarsButton.setToolTipText("一键显示或隐藏所有设备右侧的操作按钮栏");
         devices.addActionListener(e -> showDeviceManager());
         files.addActionListener(e -> showBatchDialog(false));
         install.addActionListener(e -> showBatchDialog(true));
         toggleAllOrientation.addActionListener(e -> toggleAllOrientations());
+        toggleNavigationBarsButton.addActionListener(e -> setNavigationBarsVisible(!navigationBarsVisible));
         toolbar.add(devices);
         toolbar.add(files);
         toolbar.add(install);
         toolbar.add(toggleAllOrientation);
+        toolbar.add(toggleNavigationBarsButton);
         toolbar.add(primaryStatus);
         toolbar.add(status);
         toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(215, 215, 215)));
@@ -825,6 +831,7 @@ public final class SwingScrcpyApp {
         // viewport height. Keep it narrow so it minimally affects the video area.
         navigationScroll.getVerticalScrollBar().setPreferredSize(new Dimension(8, 0));
         navigationScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+        navigationScroll.setVisible(navigationBarsVisible);
         navigationScroll.setPreferredSize(new Dimension(NAV_WIDTH, TILE_HEIGHT));
         navigationScroll.setMinimumSize(new Dimension(NAV_WIDTH, 1));
         navigationScroll.setMaximumSize(new Dimension(NAV_WIDTH, Integer.MAX_VALUE));
@@ -834,6 +841,7 @@ public final class SwingScrcpyApp {
         tile.add(videoAndNavigation, BorderLayout.CENTER);
         handle.tile = tile;
         handle.viewport = viewport;
+        handle.navigationScroll = navigationScroll;
         handle.device = device;
         Runnable updateFrameGeometry = () -> {
             int frameWidth = handle.view.frameWidth();
@@ -858,6 +866,22 @@ public final class SwingScrcpyApp {
         updateFrameGeometry.run();
         secondaryGrid.add(tile);
         secondaryGrid.revalidate(); secondaryGrid.repaint();
+    }
+
+    private void setNavigationBarsVisible(boolean visible) {
+        navigationBarsVisible = visible;
+        if (toggleNavigationBarsButton != null) {
+            toggleNavigationBarsButton.setText(visible ? "隐藏设备按钮栏" : "显示设备按钮栏");
+        }
+        for (DeviceSession session : sessions.values()) {
+            if (session.navigationScroll == null || session.tile == null) continue;
+            session.navigationScroll.setVisible(visible);
+            resizeTile(session, isPrimary(session));
+            session.tile.revalidate();
+            session.tile.repaint();
+        }
+        workspace.revalidate();
+        workspace.repaint();
     }
 
     private JPanel createNavigationBar(DeviceSession handle, AdbDevice device) {
@@ -1543,7 +1567,7 @@ public final class SwingScrcpyApp {
         Insets tileInsets = handle.tile.getInsets();
 
         Component videoAndNavigation = tileLayout.getLayoutComponent(BorderLayout.CENTER);
-        int navigationWidth = NAV_WIDTH;
+        int navigationWidth = handle.navigationScroll != null && handle.navigationScroll.isVisible() ? NAV_WIDTH : 0;
         if (videoAndNavigation instanceof Container container
                 && container.getLayout() instanceof BorderLayout contentLayout) {
             Component navigation = contentLayout.getLayoutComponent(BorderLayout.EAST);
@@ -1673,6 +1697,7 @@ public final class SwingScrcpyApp {
         AdbDevice device;
         JPanel tile;
         JPanel viewport;
+        JScrollPane navigationScroll;
         JToggleButton primaryButton, adaptButton, mouseModeButton, displayButton, awakeButton, orientationButton;
         boolean primary, stayAwake, displayPower = true, landscape, orientationPending;
         boolean relativePointerValid, recentering, relativeCaptured;
