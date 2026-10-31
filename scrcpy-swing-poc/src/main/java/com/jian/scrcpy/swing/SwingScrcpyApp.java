@@ -245,10 +245,11 @@ public final class SwingScrcpyApp {
                 row.setOpaque(true);
                 row.setBackground(UIManager.getColor("List.background"));
                 row.setBorder(new EmptyBorder(2, 6, 2, 6));
-                row.setAlignmentX(Component.LEFT_ALIGNMENT);
-                row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
                 row.add(check, BorderLayout.CENTER);
                 row.add(state, BorderLayout.EAST);
+                row.setAlignmentX(Component.LEFT_ALIGNMENT);
+                Dimension preferred = row.getPreferredSize();
+                row.setMaximumSize(new Dimension(Integer.MAX_VALUE, preferred.height));
                 list.add(row);
                 deviceChecks.put(d.serial(), check);
                 deviceStates.put(d.serial(), state);
