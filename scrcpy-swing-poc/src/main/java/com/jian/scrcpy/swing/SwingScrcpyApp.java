@@ -852,7 +852,7 @@ public final class SwingScrcpyApp {
         JToggleButton awake = toggleButton("stay-awake-on.png", "开启屏幕常亮");
         handle.awakeButton = awake;
         awake.addActionListener(e -> sidebarStayAwake(handle, awake.isSelected()));
-        JToggleButton orientation = toggleButton("竖屏.png", "切换为横屏");
+        JToggleButton orientation = toggleButton("portrait.png", "切换为横屏");
         handle.orientationButton = orientation;
         orientation.addActionListener(e -> sidebarOrientation(handle));
         for (JComponent c : List.of(close, primary, back, home, recent, taskbar, volumeUp, volumeDown, power, display, awake, orientation, mouse, adapt)) {
@@ -963,23 +963,71 @@ public final class SwingScrcpyApp {
     }
 
     /**
-     * scrcpy ROTATE_DEVICE toggles the Android display between portrait and
-     * landscape (the server chooses the opposite orientation from the current
-     * one), so exactly one control message is required for each button click.
+     * Set an explicit Android display rotation instead of sending scrcpy's
+     * ROTATE_DEVICE toggle. The latter can be reverted immediately when
+     * accelerometer rotation is enabled, making the UI appear to do nothing.
+     *
+     * Confirm the result from the incoming video frame dimensions before
+     * changing the button state, so a rejected rotation is never shown as
+     * successful.
      */
     private void sidebarOrientation(DeviceSession source) {
         boolean landscape = !source.landscape;
         for (DeviceSession target : inputTargets(source)) {
-            if (target.landscape == landscape) continue;
-            target.controller.rotateDevice();
-            target.landscape = landscape;
-            updateOrientationButton(target);
+            if (target.orientationPending) continue;
+            target.orientationPending = true;
+            if (target.orientationButton != null) target.orientationButton.setEnabled(false);
+
+            Thread.startVirtualThread(() -> {
+                boolean changed = false;
+                String failure = null;
+                try {
+                    if (target.device == null) {
+                        throw new IllegalStateException("设备已断开");
+                    }
+                    Adb targetAdb = new Adb(System.getProperty("scrcpy.adb"), target.device.serial());
+                    targetAdb.run("shell", "wm", "user-rotation", "lock", landscape ? "1" : "0");
+                    changed = awaitFrameOrientation(target, landscape);
+                    if (!changed) {
+                        failure = "系统已接收方向设置，但视频画面未切换；当前应用可能锁定了屏幕方向";
+                    }
+                } catch (Exception e) {
+                    failure = e.getMessage() == null ? e.toString() : e.getMessage();
+                }
+
+                final boolean succeeded = changed;
+                final String error = failure;
+                SwingUtilities.invokeLater(() -> {
+                    if (succeeded) {
+                        target.landscape = landscape;
+                        updateOrientationButton(target);
+                        status.setText(target.device.displayName() + " 已切换为" + (landscape ? "横屏" : "竖屏"));
+                    } else {
+                        updateOrientationButton(target);
+                        status.setText("方向切换失败：" + (target.device == null ? "设备已断开" : target.device.displayName())
+                                + " - " + error);
+                    }
+                    target.orientationPending = false;
+                    if (target.orientationButton != null) target.orientationButton.setEnabled(true);
+                });
+            });
         }
+    }
+
+    private boolean awaitFrameOrientation(DeviceSession target, boolean landscape) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        do {
+            int width = target.view.frameWidth();
+            int height = target.view.frameHeight();
+            if (width > 0 && height > 0 && (width > height) == landscape) return true;
+            Thread.sleep(100);
+        } while (System.nanoTime() < deadline);
+        return false;
     }
 
     private void updateOrientationButton(DeviceSession handle) {
         if (handle.orientationButton == null) return;
-        setIcon(handle.orientationButton, handle.landscape ? "横屏.png" : "竖屏.png");
+        setIcon(handle.orientationButton, handle.landscape ? "landscape.png" : "portrait.png");
         handle.orientationButton.setSelected(handle.landscape);
         handle.orientationButton.setToolTipText(handle.landscape ? "切换为竖屏" : "切换为横屏");
     }
@@ -1533,7 +1581,7 @@ public final class SwingScrcpyApp {
         JPanel tile;
         JPanel viewport;
         JToggleButton primaryButton, adaptButton, mouseModeButton, displayButton, awakeButton, orientationButton;
-        boolean primary, stayAwake, displayPower = true, landscape;
+        boolean primary, stayAwake, displayPower = true, landscape, orientationPending;
         boolean relativePointerValid, recentering, relativeCaptured;
         int secondaryIndex = -1;
         MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
