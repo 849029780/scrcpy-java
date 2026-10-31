@@ -1533,45 +1533,57 @@ public final class SwingScrcpyApp {
 
     private void setPrimary(DeviceSession handle) {
         if (handle.device == null || isPrimary(handle)) return;
-        // Primary/secondary layout transitions are performed by the main
-        // workspace. Reattach a popped-out tile first to avoid orphaning its
-        // independent frame when its tile is moved between hosts.
-        if (handle.floatingFrame != null) restoreTile(handle);
+        // A popped-out device can be the logical primary (its input is
+        // broadcast to the other devices), but it must remain in its own
+        // window. Only embedded tiles participate in the enlarged left layout.
+        boolean floating = handle.floatingFrame != null;
         releaseAllTransientInput();
         DeviceSession old = primarySerial == null ? null : sessions.get(primarySerial);
         if (old != null) {
             old.primary = false;
-            detachTile(old.tile);
-            int index = old.secondaryIndex;
-            secondaryGrid.add(old.tile, Math.max(0, Math.min(index < 0 ? secondaryGrid.getComponentCount() : index, secondaryGrid.getComponentCount())));
-            old.secondaryIndex = -1;
-            resizeTile(old, false);
+            // A floating previous primary stays in its independent window.
+            // An embedded previous primary returns to the secondary grid.
+            if (old.floatingFrame == null && old.tile != null) {
+                detachTile(old.tile);
+                int index = old.secondaryIndex;
+                secondaryGrid.add(old.tile, Math.max(0, Math.min(index < 0 ? secondaryGrid.getComponentCount() : index, secondaryGrid.getComponentCount())));
+                old.secondaryIndex = -1;
+                resizeTile(old, false);
+            }
         }
         primarySerial = handle.device.serial();
         desiredPrimarySerial = primarySerial;
         handle.primary = true;
-        if (handle.tile != null) {
-            handle.secondaryIndex = indexOfComponent(secondaryGrid, handle.tile);
-            // Remove from its actual parent, not just the expected container.
-            // AWT reparenting can otherwise leave stale layout state during a
-            // rapid sequence of primary-device switches.
-            detachTile(handle.tile);
+
+        if (floating) {
+            // Do not reparent or resize the detached tile as an enlarged
+            // primary; keep its current window geometry and enable primary
+            // input synchronization through primarySerial.
+            resizeTile(handle, false);
+        } else {
+            if (handle.tile != null) {
+                handle.secondaryIndex = indexOfComponent(secondaryGrid, handle.tile);
+                // Remove from its actual parent, not just the expected container.
+                // AWT reparenting can otherwise leave stale layout state during a
+                // rapid sequence of primary-device switches.
+                detachTile(handle.tile);
+            }
+            // Clear the old host completely before installing the new device tile.
+            // Each DeviceSession owns its own SwingVideoSurface and frame buffer.
+            primaryHost.removeAll();
+            primaryHost.revalidate();
+            primaryHost.repaint();
+            primaryHost.add(handle.tile, BorderLayout.CENTER);
+            primaryHost.setOpaque(true);
+            primaryHost.setBackground(Color.WHITE);
+            primaryHost.setVisible(true);
+            resizeTile(handle, true);
+            primaryHost.setPreferredSize(new Dimension(handle.tile.getPreferredSize().width, 0));
+            if (primaryHost.getParent() != workspace) workspace.add(primaryHost, BorderLayout.WEST);
+            workspace.setComponentZOrder(primaryHost, 0);
+            primaryHost.revalidate();
+            primaryHost.repaint();
         }
-        // Clear the old host completely before installing the new device tile.
-        // Each DeviceSession owns its own SwingVideoSurface and frame buffer.
-        primaryHost.removeAll();
-        primaryHost.revalidate();
-        primaryHost.repaint();
-        primaryHost.add(handle.tile, BorderLayout.CENTER);
-        primaryHost.setOpaque(true);
-        primaryHost.setBackground(Color.WHITE);
-        primaryHost.setVisible(true);
-        resizeTile(handle, true);
-        primaryHost.setPreferredSize(new Dimension(handle.tile.getPreferredSize().width, 0));
-        if (primaryHost.getParent() != workspace) workspace.add(primaryHost, BorderLayout.WEST);
-        workspace.setComponentZOrder(primaryHost, 0);
-        primaryHost.revalidate();
-        primaryHost.repaint();
         refreshPrimaryUi();
         workspace.revalidate(); workspace.repaint();
     }
