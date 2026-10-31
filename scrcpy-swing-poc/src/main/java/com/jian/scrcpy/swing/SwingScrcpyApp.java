@@ -116,12 +116,16 @@ public final class SwingScrcpyApp {
         JButton devices = new JButton("设备");
         JButton files = new JButton("传送文件");
         JButton install = new JButton("批量安装应用");
+        JButton toggleAllOrientation = new JButton("全部切换横竖屏");
+        toggleAllOrientation.setToolTipText("将所有正在投屏的设备统一切换为横屏或竖屏");
         devices.addActionListener(e -> showDeviceManager());
         files.addActionListener(e -> showBatchDialog(false));
         install.addActionListener(e -> showBatchDialog(true));
+        toggleAllOrientation.addActionListener(e -> toggleAllOrientations());
         toolbar.add(devices);
         toolbar.add(files);
         toolbar.add(install);
+        toolbar.add(toggleAllOrientation);
         toolbar.add(primaryStatus);
         toolbar.add(status);
         toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(215, 215, 215)));
@@ -972,8 +976,33 @@ public final class SwingScrcpyApp {
      * successful.
      */
     private void sidebarOrientation(DeviceSession source) {
-        boolean landscape = !source.landscape;
-        for (DeviceSession target : inputTargets(source)) {
+        applyOrientation(inputTargets(source), !source.landscape);
+    }
+
+    /**
+     * One-click global orientation switch. When devices are currently mixed,
+     * use the primary device (or the first connected device) as the reference
+     * and bring every connected projection to the opposite orientation.
+     */
+    private void toggleAllOrientations() {
+        List<DeviceSession> targets = sessions.values().stream()
+                .filter(s -> s.device != null)
+                .sorted(Comparator.comparing(s -> s.device.serial()))
+                .toList();
+        if (targets.isEmpty()) {
+            status.setText("当前没有正在投屏的设备");
+            return;
+        }
+        DeviceSession reference = primarySerial == null ? null : sessions.get(primarySerial);
+        if (reference == null || !targets.contains(reference)) reference = targets.get(0);
+        int width = reference.view.frameWidth();
+        int height = reference.view.frameHeight();
+        boolean currentLandscape = width > 0 && height > 0 ? width > height : reference.landscape;
+        applyOrientation(targets, !currentLandscape);
+    }
+
+    private void applyOrientation(List<DeviceSession> targets, boolean landscape) {
+        for (DeviceSession target : targets) {
             if (target.orientationPending) continue;
             target.orientationPending = true;
             if (target.orientationButton != null) target.orientationButton.setEnabled(false);
@@ -985,7 +1014,7 @@ public final class SwingScrcpyApp {
                     if (target.device == null) {
                         throw new IllegalStateException("设备已断开");
                     }
-                    Adb targetAdb = new Adb(System.getProperty("scrcpy.adb"), target.device.serial());
+                    Adb targetAdb = new Adb(System.getProperty("scrcpy.adb", "adb"), target.device.serial());
                     targetAdb.run("shell", "wm", "user-rotation", "lock", landscape ? "1" : "0");
                     changed = awaitFrameOrientation(target, landscape);
                     if (!changed) {
@@ -1002,6 +1031,7 @@ public final class SwingScrcpyApp {
                     if (succeeded) {
                         target.landscape = landscape;
                         updateOrientationButton(target);
+                        resizeTile(target, isPrimary(target));
                         status.setText(targetName + " 已切换为" + (landscape ? "横屏" : "竖屏"));
                     } else {
                         updateOrientationButton(target);
@@ -1009,6 +1039,10 @@ public final class SwingScrcpyApp {
                     }
                     target.orientationPending = false;
                     if (target.orientationButton != null) target.orientationButton.setEnabled(true);
+                    secondaryGrid.revalidate();
+                    secondaryGrid.repaint();
+                    workspace.revalidate();
+                    workspace.repaint();
                 });
             });
         }
