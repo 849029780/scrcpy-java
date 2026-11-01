@@ -1,0 +1,84 @@
+name: Build platform packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x86_64
+            runner: windows-latest
+            archive: zip
+          - platform: linux-x86_64
+            runner: ubuntu-latest
+            archive: tar.gz
+          - platform: macos-x86_64
+            runner: macos-13
+            archive: zip
+          - platform: macos-arm64
+            runner: macos-latest
+            archive: zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build Swing client
+        run: mvn -B -pl scrcpy-swing-poc -am install -DskipTests
+
+      - name: Prepare application input
+        shell: bash
+        run: |
+          mkdir -p scrcpy-swing-poc/target/package-input/lib
+          cp scrcpy-swing-poc/target/scrcpy-swing-poc-*.jar scrcpy-swing-poc/target/package-input/
+          mvn -B -pl scrcpy-swing-poc dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory=target/package-input/lib
+        working-directory: .
+
+      - name: Create native application image
+        shell: bash
+        run: |
+          jpackage \
+            --type app-image \
+            --name scrcpy-java \
+            --input scrcpy-swing-poc/target/package-input \
+            --dest scrcpy-swing-poc/target/dist \
+            --main-jar "$(basename scrcpy-swing-poc/target/package-input/scrcpy-swing-poc-*.jar)" \
+            --main-class com.jian.scrcpy.swing.SwingScrcpyApp \
+            --app-version 0.2.0 \
+            --vendor "scrcpy-java" \
+            --java-options "--enable-native-access=ALL-UNNAMED"
+
+      - name: Archive Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path scrcpy-swing-poc/target/dist/scrcpy-java -DestinationPath scrcpy-java-${{ matrix.platform }}.zip
+
+      - name: Archive macOS package
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent scrcpy-swing-poc/target/dist/scrcpy-java.app scrcpy-java-${{ matrix.platform }}.zip
+
+      - name: Archive Linux package
+        if: runner.os == 'Linux'
+        run: tar -C scrcpy-swing-poc/target/dist -czf scrcpy-java-${{ matrix.platform }}.tar.gz scrcpy-java
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrcpy-java-${{ matrix.platform }}
+          path: scrcpy-java-${{ matrix.platform }}.${{ matrix.archive }}
+          if-no-files-found: error
