@@ -62,7 +62,6 @@ jobs:
             add_platform linux ubuntu-latest libscrcpy_swing_vaapi.so scrcpy-swing-poc/native/build/libscrcpy_swing_vaapi.so linux-x86_64
           fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" || "$MACOS_CHANGED" == "true" ]]; then
-            add_platform macos-intel macos-15-intel libscrcpy_swing_metal.dylib scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib macos-x86_64
             add_platform macos-arm64 macos-latest libscrcpy_swing_metal.dylib scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib macos-aarch64
           fi
           matrix="$(jq -cn --argjson include "$include" '{include:$include}')"
