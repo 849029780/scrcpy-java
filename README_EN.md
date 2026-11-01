@@ -27,7 +27,7 @@ Typical use cases include:
 - Operating multiple app accounts
 - Workflows that require monitoring and controlling several devices at once
 
-> **The project is under active development.** The Swing desktop client (\`scrcpy-swing-poc\`) is the current development focus. Feature availability may vary by operating system and runtime environment.
+> **The project is under active development.** The Swing desktop client (`scrcpy-swing-poc`) is the current development focus. Feature availability may vary by operating system and runtime environment.
 
 ## Features
 
@@ -121,10 +121,10 @@ Authorize ADB debugging on the computer and make sure the device is visible to A
 
 ### 1. Clone the repository
 
-\`\`\`bash
+```bash
 git clone https://github.com/849029780/scrcpy-java.git
 cd scrcpy-java
-\`\`\`
+```
 
 ### 2. Connect an Android device
 
@@ -132,35 +132,35 @@ Enable **Developer options → USB debugging** on the Android device.
 
 Connect the device over USB and run:
 
-\`\`\`bash
+```bash
 adb devices
-\`\`\`
+```
 
-Make sure the device state is \`device\`. For a network ADB connection, run:
+Make sure the device state is `device`. For a network ADB connection, run:
 
-\`\`\`bash
+```bash
 adb connect <device-ip>:<port>
-\`\`\`
+```
 
 ### 3. Build and launch the Swing client
 
 From the project root, build the client:
 
-\`\`\`bash
+```bash
 mvn -pl scrcpy-swing-poc -am package
-\`\`\`
+```
 
 Launch it with:
 
-\`\`\`bash
+```bash
 mvn -pl scrcpy-swing-poc -am exec:java
-\`\`\`
+```
 
 Swing application entry point:
 
-\`\`\`text
+```text
 com.jian.scrcpy.swing.SwingScrcpyApp
-\`\`\`
+```
 
 > The native D3D11 rendering path on Windows requires the corresponding native library to be deployed correctly. Hardware rendering may be unavailable if the native library is missing or cannot be loaded.
 
@@ -181,9 +181,9 @@ com.jian.scrcpy.swing.SwingScrcpyApp
 
 | Module | Description |
 | --- | --- |
-| \`scrcpy-core\` | Core scrcpy protocol, ADB integration, Netty transport, media processing, and device sessions |
-| \`scrcpy-swing-poc\` | Swing desktop client, multi-device workspace, and group-control interactions |
-| \`scrcpy-app\` | Legacy JavaFX desktop client. This implementation is deprecated because its hardware-decoding implementation is comparatively complex. |
+| `scrcpy-core` | Core scrcpy protocol, ADB integration, Netty transport, media processing, and device sessions |
+| `scrcpy-swing-poc` | Swing desktop client, multi-device workspace, and group-control interactions |
+| `scrcpy-app` | Legacy JavaFX desktop client. This implementation is deprecated because its hardware-decoding implementation is comparatively complex. |
 
 ## Project status and notes
 
