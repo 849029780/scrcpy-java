@@ -240,16 +240,19 @@ public final class ScrcpyApp extends Application {
         dialog.initModality(Modality.APPLICATION_MODAL);
 
         Button refreshButton = new Button("刷新");
+        Button selectUnprojectedButton = new Button("全选未投屏");
         Button connectButton = new Button("连接选中");
         Button connectAllButton = new Button("全部连接");
         Button disconnectButton = new Button("断开选中");
 
         refreshButton.setOnAction(e -> scanDevices());
+        selectUnprojectedButton.setOnAction(e -> selectAllUnprojectedDevices());
         connectButton.setOnAction(e -> connectSelected());
         connectAllButton.setOnAction(e -> connectAll());
         disconnectButton.setOnAction(e -> disconnectSelected());
 
-        HBox actions = new HBox(8, refreshButton, connectButton, connectAllButton, disconnectButton);
+        HBox actions = new HBox(8, refreshButton, selectUnprojectedButton,
+                connectButton, connectAllButton, disconnectButton);
         actions.setAlignment(Pos.CENTER_LEFT);
 
         VBox box = new VBox(10, devices, actions);
@@ -259,6 +262,24 @@ public final class ScrcpyApp extends Application {
         dialog.getDialogPane().setContent(box);
         dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
         dialog.show();
+    }
+
+    /**
+     * Select every ADB-ready device that does not currently have an active
+     * projection session. Replace the previous checkbox selection.
+     */
+    private void selectAllUnprojectedDevices() {
+        checkedDevices.clear();
+        List<AdbDevice> unprojected = devices.getItems().stream()
+                .filter(AdbDevice::ready)
+                .filter(device -> !sessions.containsKey(device.serial()))
+                .toList();
+        unprojected.forEach(device -> checkedDevices.add(device.serial()));
+        devices.refresh();
+        updateButtons();
+        status.setText(unprojected.isEmpty()
+                ? "没有可选择的未投屏设备"
+                : "已全选 " + unprojected.size() + " 台未投屏设备");
     }
 
     private void showFileTransferDialog(Stage owner) {
