@@ -19,18 +19,22 @@ jobs:
           - platform: windows-x86_64
             runner: windows-latest
             adb_platform: windows
+            adb_source: windows-x86_64
             archive: zip
           - platform: linux-x86_64
             runner: ubuntu-latest
             adb_platform: linux
+            adb_source: linux-x86_64
             archive: tar.gz
           - platform: macos-x86_64
             runner: macos-15-intel
             adb_platform: macos
+            adb_source: macos-x86_64
             archive: zip
           - platform: macos-arm64
             runner: macos-latest
             adb_platform: macos
+            adb_source: macos-aarch64
             archive: zip
     runs-on: ${{ matrix.runner }}
     steps:
@@ -76,7 +80,7 @@ jobs:
             -DincludeScope=runtime \
             -DoutputDirectory="${{ github.workspace }}/$input"
 
-          cp -R "platform-tools/${{ matrix.adb_platform }}/." "$input/platform-tools/${{ matrix.adb_platform }}/"
+          cp -R "platform-tools/${{ matrix.adb_source }}/." "$input/platform-tools/${{ matrix.adb_platform }}/"
           cp lib/scrcpy-server-v5.0.1.jar "$input/lib/"
 
           if [ "${{ matrix.adb_platform }}" != "windows" ]; then
