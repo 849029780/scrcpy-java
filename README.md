@@ -172,6 +172,19 @@ com.jian.scrcpy.swing.SwingScrcpyApp
 
 > Windows D3D11 原生渲染依赖对应的本地动态库。若本地库未正确部署，相关硬件渲染能力可能不可用。
 
+### 各平台独立运行包
+
+GitHub Actions 会分别在对应平台构建 Swing 客户端的独立运行包，并内置 Java 运行时。每个包只包含目标平台和 CPU 架构对应的 JavaCPP/FFmpeg 原生库，不会混入 Windows、Linux、macOS 等其他平台的原生二进制文件。
+
+当前自动构建目标：
+
+- Windows x86-64：ZIP，解压后运行 `scrcpy-java.exe`
+- Linux x86-64：`tar.gz`，解压后运行 `scrcpy-java/bin/scrcpy-java`
+- macOS Intel：ZIP，解压后运行 `scrcpy-java.app`
+- macOS Apple Silicon：ZIP，解压后运行 `scrcpy-java.app`
+
+在 GitHub Actions 的 **Build platform packages** 工作流中手动触发构建，或推送 `v*` 标签自动构建。每个平台的产物会作为独立 Artifact 上传。
+
 ## 技术架构
 
 | 模块/技术 | 用途 |
