@@ -1,5 +1,7 @@
 package com.jian.scrcpy.app;
 
+import com.jian.scrcpy.logging.LoggingBootstrap;
+
 import com.jian.scrcpy.ScrcpySession;
 import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.adb.AdbDevice;
@@ -48,6 +50,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class ScrcpyApp extends Application {
+    static {
+        LoggingBootstrap.install();
+    }
+
     private static final double TILE_WIDTH = 360;
     private static final double TILE_HEIGHT = 680;
     private static final double RELATIVE_MOUSE_EDGE_MARGIN = 2.0;
