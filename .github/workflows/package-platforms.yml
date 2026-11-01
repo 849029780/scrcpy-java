@@ -19,22 +19,18 @@ jobs:
           - platform: windows-x86_64
             runner: windows-latest
             adb_platform: windows
-            adb_archive: platform-tools-latest-windows.zip
             archive: zip
           - platform: linux-x86_64
             runner: ubuntu-latest
             adb_platform: linux
-            adb_archive: platform-tools-latest-linux.zip
             archive: tar.gz
           - platform: macos-x86_64
             runner: macos-15-intel
             adb_platform: macos
-            adb_archive: platform-tools-latest-darwin.zip
             archive: zip
           - platform: macos-arm64
             runner: macos-latest
             adb_platform: macos
-            adb_archive: platform-tools-latest-darwin.zip
             archive: zip
     runs-on: ${{ matrix.runner }}
     steps:
@@ -69,23 +65,19 @@ jobs:
 
       # jpackage copies the input directory into app/; keep platform-tools next
       # to the application JAR so Adb.resolveExecutable() finds it from CodeSource.
-      - name: Prepare application input and download Android platform-tools
+      - name: Prepare application input with bundled ADB and scrcpy server
         shell: bash
         run: |
           set -euo pipefail
           input="scrcpy-swing-poc/target/package-input"
-          mkdir -p "$input/platform-tools/${{ matrix.adb_platform }}"
+          mkdir -p "$input/platform-tools/${{ matrix.adb_platform }}" "$input/lib"
           cp scrcpy-swing-poc/target/scrcpy-swing-poc-*.jar "$input/"
           mvn -B -pl scrcpy-swing-poc dependency:copy-dependencies \
             -DincludeScope=runtime \
             -DoutputDirectory="${{ github.workspace }}/$input"
 
-          curl --fail --location --retry 3 \
-            "https://dl.google.com/android/repository/${{ matrix.adb_archive }}" \
-            --output platform-tools.zip
-          mkdir -p adb-download
-          unzip -q platform-tools.zip -d adb-download
-          cp -R adb-download/platform-tools/. "$input/platform-tools/${{ matrix.adb_platform }}/"
+          cp -R "platform-tools/${{ matrix.adb_platform }}/." "$input/platform-tools/${{ matrix.adb_platform }}/"
+          cp lib/scrcpy-server-v5.0.1.jar "$input/lib/"
 
           if [ "${{ matrix.adb_platform }}" != "windows" ]; then
             chmod +x "$input/platform-tools/${{ matrix.adb_platform }}/adb"
@@ -156,7 +148,9 @@ jobs:
           else
             test -x "$adb_dir/adb"
           fi
+          test -f "$image/lib/scrcpy-server-v5.0.1.jar"
           echo "Bundled ADB verified at: $adb_dir"
+          echo "Bundled scrcpy server verified at: $image/lib/scrcpy-server-v5.0.1.jar"
 
       - name: Archive Windows package
         if: runner.os == 'Windows'
