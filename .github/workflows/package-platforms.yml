@@ -73,27 +73,62 @@ jobs:
             -DincludeScope=runtime \
             -DoutputDirectory="${{ github.workspace }}/scrcpy-swing-poc/target/package-input"
 
+      # ffmpeg-platform and javacpp-platform include native JARs for every
+      # supported OS/CPU. Keep only the classifier matching this target.
+      - name: Remove foreign-platform native dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          input="scrcpy-swing-poc/target/package-input"
+          case "${{ matrix.platform }}" in
+            windows-x86_64) native_classifier="windows-x86_64" ;;
+            linux-x86_64) native_classifier="linux-x86_64" ;;
+            macos-x86_64) native_classifier="macosx-x86_64" ;;
+            macos-arm64) native_classifier="macosx-arm64" ;;
+            *) echo "Unknown platform: ${{ matrix.platform }}"; exit 1 ;;
+          esac
+
+          for jar in "$input"/*.jar; do
+            [ -f "$jar" ] || continue
+            name="$(basename "$jar")"
+            case "$name" in
+              ffmpeg-*-android-*|ffmpeg-*-ios-*|ffmpeg-*-linux-*|ffmpeg-*-macosx-*|ffmpeg-*-windows-*|javacpp-*-android-*|javacpp-*-ios-*|javacpp-*-linux-*|javacpp-*-macosx-*|javacpp-*-windows-*)
+                case "$name" in
+                  *-"$native_classifier".jar) ;;
+                  *) echo "Removing foreign native dependency: $name"; rm -f "$jar" ;;
+                esac
+                ;;
+            esac
+          done
+
       - name: Verify platform-native dependency isolation
         shell: bash
         run: |
           set -euo pipefail
           input="scrcpy-swing-poc/target/package-input"
-          files="$(find "$input" -maxdepth 1 -type f -name '*.jar' -exec basename {} \;)"
-          echo "Packaged JARs:"
-          printf '%s\n' "$files"
           case "${{ matrix.platform }}" in
-            windows-x86_64) forbidden='linux-|macosx-' ;;
-            linux-x86_64) forbidden='windows-|macosx-' ;;
-            macos-x86_64) forbidden='windows-|linux-' ;;
-            macos-arm64) forbidden='windows-|linux-|macosx-x86_64' ;;
+            windows-x86_64) native_classifier="windows-x86_64" ;;
+            linux-x86_64) native_classifier="linux-x86_64" ;;
+            macos-x86_64) native_classifier="macosx-x86_64" ;;
+            macos-arm64) native_classifier="macosx-arm64" ;;
             *) echo "Unknown platform: ${{ matrix.platform }}"; exit 1 ;;
           esac
-          if printf '%s\n' "$files" | grep -E "$forbidden"; then
-            echo "Foreign-platform native dependency found in package input."
-            exit 1
-          fi
-          if ! printf '%s\n' "$files" | grep -E '^(ffmpeg|javacpp)-.*-(windows-x86_64|linux-x86_64|macosx-x86_64|macosx-arm64)\.jar$' >/dev/null; then
-            echo "Expected platform-native JavaCPP/FFmpeg JARs were not found."
+
+          echo "Packaged JARs:"
+          find "$input" -maxdepth 1 -type f -name '*.jar' -printf '%f\\n' | sort
+
+          for library in ffmpeg javacpp; do
+            if ! find "$input" -maxdepth 1 -type f -name "$library-*.jar" -printf '%f\\n' |
+              grep -F -- "-$native_classifier.jar" >/dev/null; then
+              echo "Missing $library native JAR for $native_classifier."
+              exit 1
+            fi
+          done
+
+          if find "$input" -maxdepth 1 -type f -name '*.jar' -printf '%f\\n' |
+            grep -E '^(ffmpeg|javacpp)-.*-(android|ios|linux|macosx|windows)-' |
+            grep -v -- "-$native_classifier.jar"; then
+            echo "Foreign-platform native dependency remains in package input."
             exit 1
           fi
 
