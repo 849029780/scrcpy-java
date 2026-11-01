@@ -9,7 +9,6 @@
     <modules>
         <module>scrcpy-core</module>
         <module>scrcpy-app</module>
-        <module>scrcpy-sdl</module>
         <module>scrcpy-swing-poc</module>
     </modules>
     <properties>
