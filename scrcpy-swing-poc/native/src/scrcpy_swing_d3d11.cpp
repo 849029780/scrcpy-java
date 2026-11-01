@@ -8,6 +8,8 @@
 #include <jawt.h>
 #include <jawt_md.h>
 
+#include "scrcpy_native_log.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
