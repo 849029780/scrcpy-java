@@ -1,5 +1,8 @@
 #pragma once
 #include <cstdarg>
+#include <cstdint>
+#include <functional>
+#include <system_error>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
