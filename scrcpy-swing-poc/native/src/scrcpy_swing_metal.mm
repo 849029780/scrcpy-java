@@ -24,6 +24,17 @@ struct Renderer {
 std::mutex gMutex;
 std::unordered_map<jlong,std::shared_ptr<Renderer>> renderers;
 std::atomic<jlong> nextHandle{1};
+
+// Metal devices are process-wide objects. Reuse one device across all
+// mirrored windows; command queues and presentation layers remain per-window.
+std::mutex gMetalDeviceMutex;
+id<MTLDevice> gSharedMetalDevice = nil;
+
+id<MTLDevice> acquireMetalDevice() {
+    std::lock_guard<std::mutex> guard(gMetalDeviceMutex);
+    if (!gSharedMetalDevice) gSharedMetalDevice = MTLCreateSystemDefaultDevice();
+    return gSharedMetalDevice;
+}
 void fail(JNIEnv* env,const char* msg){ jclass c=env->FindClass("java/lang/IllegalStateException"); if(c) env->ThrowNew(c,msg); }
 std::shared_ptr<Renderer> find(jlong h){ std::lock_guard<std::mutex> g(gMutex); auto i=renderers.find(h); return i==renderers.end()?nullptr:i->second; }
 
@@ -51,7 +62,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_jian_scrcpy_swing_NativeMetalCanvas_
     @autoreleasepool {
         id<JAWT_SurfaceLayers> layers=getSurfaceLayers(env,canvas);
         if(!layers){ fail(env,"JAWT Cocoa surface layers unavailable"); return 0; }
-        auto r=std::make_shared<Renderer>(); r->surfaceLayers=layers; r->device=MTLCreateSystemDefaultDevice();
+        auto r=std::make_shared<Renderer>(); r->surfaceLayers=layers; r->device=acquireMetalDevice();
         if(!r->device){ fail(env,"Metal device unavailable"); return 0; }
         r->queue=[r->device newCommandQueue];
         r->ciContext=[CIContext contextWithMTLDevice:r->device];
