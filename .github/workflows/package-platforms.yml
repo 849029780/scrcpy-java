@@ -39,6 +39,22 @@ jobs:
           java-version: "25"
           cache: maven
 
+      - name: Keep only this platform's bundled native resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.platform }}" in
+            windows-x86_64) keep="windows-x86_64" ;;
+            linux-x86_64) keep="linux-x86_64" ;;
+            macos-x86_64) keep="macos-x86_64" ;;
+            macos-arm64) keep="macos-aarch64" ;;
+            *) echo "Unknown platform: ${{ matrix.platform }}"; exit 1 ;;
+          esac
+          for dir in scrcpy-swing-poc/src/main/resources/native/*; do
+            [ -d "$dir" ] || continue
+            [ "$(basename "$dir")" = "$keep" ] || rm -rf "$dir"
+          done
+
       - name: Build Swing client
         run: mvn -B -pl scrcpy-swing-poc -am install -DskipTests
 
@@ -54,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          files="$(find scrcpy-swing-poc/target/package-input -maxdepth 1 -type f -name '*.jar' -printf '%f\\n' 2>/dev/null || true)"
+          files="$(find scrcpy-swing-poc/target/package-input -maxdepth 1 -type f -name '*.jar' -exec basename {} \\; 2>/dev/null || true)"
           echo "Packaged JARs:"
           printf '%s\\n' "$files"
           case "${{ matrix.platform }}" in
