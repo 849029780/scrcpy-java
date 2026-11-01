@@ -23,12 +23,8 @@ inline const char* levelName(Level v) {
     switch (v) { case Level::DEBUG: return "DEBUG"; case Level::INFO: return "INFO"; case Level::WARN: return "WARN"; default: return "ERROR"; }
 }
 inline std::filesystem::path path() {
-#if defined(_WIN32)
-    const char* home = std::getenv("USERPROFILE");
-#else
-    const char* home = std::getenv("HOME");
-#endif
-    return std::filesystem::path(home && *home ? home : ".") / ".scrcpy-java" / "logs" / "native" / "native.log";
+    // std::filesystem::current_path() matches Java's user.dir: the process working directory.
+    return std::filesystem::current_path() / "logs" / "native" / "native.log";
 }
 inline std::mutex& lock() { static std::mutex m; return m; }
 inline uint32_t crc32(const uint8_t* data, size_t size) {
@@ -121,13 +117,13 @@ inline void write(Level level, const char* component, const char* fmt, ...) {
 #if defined(_WIN32)
         localtime_s(&tm, &tt);
 #else
-        localtime_r(&tt, &tm);
+        localtime_r(&tm, &tt);
 #endif
         char stamp[32]{};
         std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
         char lineBuffer[4608]{};
         const int lineLength = std::snprintf(lineBuffer, sizeof(lineBuffer),
-                "%s [%s] [tid=%zu] [%s] %s\\n", stamp, levelName(level),
+                "%s [%s] [tid=%zu] [%s] %s\n", stamp, levelName(level),
                 std::hash<std::thread::id>{}(std::this_thread::get_id()),
                 component ? component : "native", msg);
         if (lineLength > 0) {
