@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <property name="LOG_DIR" value="${scrcpy.log.dir:-${user.home}/.scrcpy-java/logs}"/>
+    <!-- Keep Java and native logs under the process working directory. -->
+    <property name="LOG_DIR" value="${scrcpy.log.dir:-${user.dir}/logs}"/>
     <property name="LOG_FILE" value="${LOG_DIR}/scrcpy-java.log"/>
 
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
