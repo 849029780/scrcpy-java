@@ -128,7 +128,6 @@
 - **Maven：** 3.9 或更高版本
 - **ADB：** Android Debug Bridge
 - **Android 设备：** 开启开发者选项和 USB 调试，或已通过 ADB TCP/IP 连接
-- **scrcpy Server：** 官方 scrcpy 5.0.1 对应的 Server 文件
 
 请先在电脑上授权 ADB 调试，并确认设备可以被 ADB 正常识别。
 
@@ -139,27 +138,19 @@ git clone https://github.com/849029780/scrcpy-java.git
 cd scrcpy-java
 ```
 
-### 2. 准备 scrcpy Server
+### 2. scrcpy Server（已内置）
 
-下载官方 scrcpy 5.0.1 Server 文件：
+scrcpy Server 5.0.1 已随 Swing 客户端内置在：
 
-[下载 scrcpy-server-v5.0.1](https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-server-v5.0.1)
+`scrcpy-swing-poc/src/main/resources/scrcpy-server-v5.0.1.jar`
 
-将下载的文件放在项目根目录，并重命名为：
+启动时，程序会从运行时 classpath 自动读取该资源，提取到系统临时目录，并校验 SHA-256 后通过 ADB 推送到 Android 设备。无需单独下载、手动放置或配置 Server 文件。
 
-```text
-scrcpy-server-v5.0.1.jar
-```
-
-程序启动时会校验 Server 文件的 SHA-256，确保使用的文件与目标版本匹配。
-
-SHA-256：
+内置文件 SHA-256：
 
 ```text
 764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536
 ```
-
-也可以通过 JVM 系统属性 `scrcpy.server.jar` 或环境变量 `SCRCPY_SERVER_JAR` 指定 Server 文件路径。
 
 ### 3. 连接 Android 设备
 
@@ -220,11 +211,10 @@ com.jian.scrcpy.swing.SwingScrcpyApp
 | --- | --- |
 | `scrcpy-core` | scrcpy 协议、ADB 集成、Netty 数据传输、音视频处理及设备会话等核心能力 |
 | `scrcpy-swing-poc` | Swing 桌面客户端、多设备工作区及群控交互 |
-| `scrcpy-app` | 早期 JavaFX 客户端，暂时保留在仓库中 |
 
 ## 项目状态与说明
 
-- 当前目标协议版本为 **scrcpy Server 5.0.1**，请使用对应版本的 Server 文件。
+- 当前目标协议版本为 **scrcpy Server 5.0.1**，Server 文件已内置于 Swing 客户端，无需额外准备。
 - 项目是独立的 Java 客户端实现，并非 Genymobile 官方 scrcpy 项目。
 - 部分功能依赖操作系统、设备能力、ADB 状态、显卡驱动及原生组件。
 - 项目仍在迭代中，欢迎通过 GitHub Issues 反馈问题或提出功能建议。
@@ -262,12 +252,11 @@ Its key focus is **multi-device screen mirroring and synchronized group control*
 
 ### Build and run
 
-Requirements: JDK 25, Maven 3.9+, ADB, and the official scrcpy Server 5.0.1 artifact.
+Requirements: JDK 25, Maven 3.9+, and ADB. The scrcpy Server 5.0.1 artifact is bundled in the Swing client resources.
 
 1. Clone the repository.
-2. Download [scrcpy-server-v5.0.1](https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-server-v5.0.1), place it in the repository root, and rename it to `scrcpy-server-v5.0.1.jar`.
-3. Enable USB debugging and verify the device with `adb devices`.
-4. Build and launch:
+2. Enable USB debugging and verify the device with `adb devices`.
+3. Build and launch:
 
 ```bash
 mvn -pl scrcpy-swing-poc -am package
