@@ -5,8 +5,6 @@ import com.jian.scrcpy.metrics.SessionMetrics;
 import io.netty.buffer.ByteBuf;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
-import io.netty.channel.nio.NioIoHandler;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.util.AttributeKey;
 
 import java.net.InetSocketAddress;
@@ -31,12 +29,14 @@ public final class ScrcpyConnection implements AutoCloseable {
         private static EventLoopGroup ioGroup;
         private static EventLoopGroup acceptGroup;
         private static int references;
+        private static NettyTransport.Selection transport;
 
         static synchronized Groups acquire() {
             if (ioGroup == null || ioGroup.isShuttingDown() || ioGroup.isShutdown()) {
                 int threads = Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors()));
-                ioGroup = new MultiThreadIoEventLoopGroup(threads, NioIoHandler.newFactory());
-                acceptGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+                transport = NettyTransport.select();
+                ioGroup = new MultiThreadIoEventLoopGroup(threads, transport.ioHandlerFactory());
+                acceptGroup = new MultiThreadIoEventLoopGroup(1, transport.ioHandlerFactory());
             }
             references++;
             return new Groups(acceptGroup, ioGroup);
@@ -63,6 +63,13 @@ public final class ScrcpyConnection implements AutoCloseable {
             if (ioToClose != null) {
                 ioToClose.shutdownGracefully(0, 2, TimeUnit.SECONDS);
             }
+        }
+
+        static synchronized Class<? extends io.netty.channel.ServerChannel> serverChannelClass() {
+            if (transport == null) {
+                throw new IllegalStateException("Netty transport has not been initialized");
+            }
+            return transport.serverChannelClass();
         }
 
         private record Groups(EventLoopGroup accept, EventLoopGroup io) {
@@ -185,7 +192,7 @@ public final class ScrcpyConnection implements AutoCloseable {
         java.util.concurrent.atomic.AtomicInteger accepted = new java.util.concurrent.atomic.AtomicInteger();
         listener = new ServerBootstrap()
                 .group(acceptGroup, group)
-                .channel(NioServerSocketChannel.class)
+                .channel(SharedEventLoops.serverChannelClass())
                 // The parent acceptor runs on one event loop and observes TCP accepts
                 // in order. Assign the protocol socket index here, not in the child
                 // ChannelInitializer: child registration runs on the shared multi-
