@@ -143,11 +143,17 @@ jobs:
           fi
           test -d "$app_dir"
           adb_dir="$app_dir/platform-tools/${{ matrix.adb_platform }}"
+          echo "Application image contents:"
+          find "$app_dir" -maxdepth 4 -type f \( -name adb -o -name adb.exe -o -name 'AdbWin*.dll' -o -name 'scrcpy-server-v5.0.1.jar' \) -print
           if [[ "${{ matrix.adb_platform }}" == windows ]]; then
             test -f "$adb_dir/adb.exe"
             test -f "$adb_dir/AdbWinApi.dll"
             test -f "$adb_dir/AdbWinUsbApi.dll"
           else
+            test -f "$adb_dir/adb"
+            # jpackage may not preserve executable bits consistently on Linux.
+            # Restore the bit in the final image before archiving it.
+            chmod 755 "$adb_dir/adb"
             test -x "$adb_dir/adb"
           fi
           test -f "$app_dir/lib/scrcpy-server-v5.0.1.jar"
