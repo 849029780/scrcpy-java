@@ -55,6 +55,8 @@
             <dependencies>
                 <dependency><groupId>org.bytedeco</groupId><artifactId>javacpp</artifactId><version>${javacpp.version}</version><classifier>linux-x86_64</classifier></dependency>
                 <dependency><groupId>org.bytedeco</groupId><artifactId>ffmpeg</artifactId><version>${ffmpeg.version}</version><classifier>linux-x86_64</classifier></dependency>
+                <dependency><groupId>io.netty</groupId><artifactId>netty-transport-native-epoll</artifactId><version>${netty.version}</version><classifier>linux-x86_64</classifier></dependency>
+                <dependency><groupId>io.netty</groupId><artifactId>netty-transport-native-io_uring</artifactId><version>${netty.version}</version><classifier>linux-x86_64</classifier></dependency>
             </dependencies>
         </profile>
         <profile>
@@ -63,6 +65,7 @@
             <dependencies>
                 <dependency><groupId>org.bytedeco</groupId><artifactId>javacpp</artifactId><version>${javacpp.version}</version><classifier>macosx-x86_64</classifier></dependency>
                 <dependency><groupId>org.bytedeco</groupId><artifactId>ffmpeg</artifactId><version>${ffmpeg.version}</version><classifier>macosx-x86_64</classifier></dependency>
+                <dependency><groupId>io.netty</groupId><artifactId>netty-transport-native-kqueue</artifactId><version>${netty.version}</version><classifier>osx-x86_64</classifier></dependency>
             </dependencies>
         </profile>
         <profile>
@@ -71,6 +74,7 @@
             <dependencies>
                 <dependency><groupId>org.bytedeco</groupId><artifactId>javacpp</artifactId><version>${javacpp.version}</version><classifier>macosx-arm64</classifier></dependency>
                 <dependency><groupId>org.bytedeco</groupId><artifactId>ffmpeg</artifactId><version>${ffmpeg.version}</version><classifier>macosx-arm64</classifier></dependency>
+                <dependency><groupId>io.netty</groupId><artifactId>netty-transport-native-kqueue</artifactId><version>${netty.version}</version><classifier>osx-aarch_64</classifier></dependency>
             </dependencies>
         </profile>
     </profiles>
