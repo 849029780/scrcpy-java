@@ -61,8 +61,8 @@ jobs:
       - name: Build Swing client
         run: mvn -B -pl scrcpy-swing-poc -am install -DskipTests
 
-      # jpackage copies the input directory into app/; keep platform-tools next
-      # to the application JAR so Adb.resolveExecutable() finds it from CodeSource.
+      # Keep ADB and the server in a staging directory; copy them into the
+      # completed jpackage image explicitly so their directory layout is stable.
       - name: Prepare application input with bundled ADB and scrcpy server
         shell: bash
         run: |
@@ -78,12 +78,13 @@ jobs:
           cp lib/scrcpy-server-v5.0.1.jar "$input/lib/"
 
           if [ "${{ matrix.adb_platform }}" != "windows" ]; then
-            chmod +x "$input/platform-tools/${{ matrix.adb_platform }}/adb"
+            chmod 755 "$input/platform-tools/${{ matrix.adb_platform }}/adb"
           fi
 
           adb_name="adb"
           if [ "${{ matrix.adb_platform }}" = "windows" ]; then adb_name="adb.exe"; fi
           test -f "$input/platform-tools/${{ matrix.adb_platform }}/$adb_name"
+          test -f "$input/lib/scrcpy-server-v5.0.1.jar"
 
       - name: Verify platform-native dependency isolation
         shell: bash
@@ -124,14 +125,25 @@ jobs:
             --type app-image \
             --name scrcpy-java \
             --input scrcpy-swing-poc/target/package-input \
-            --app-content scrcpy-swing-poc/target/package-input/platform-tools \
-            --app-content scrcpy-swing-poc/target/package-input/lib \
             --dest scrcpy-swing-poc/target/dist \
             --main-jar "$(basename scrcpy-swing-poc/target/package-input/scrcpy-swing-poc-*.jar)" \
             --main-class com.jian.scrcpy.swing.SwingScrcpyApp \
             --app-version "$VERSION" \
             --vendor "scrcpy-java" \
             --java-options "--enable-native-access=ALL-UNNAMED"
+
+          image="scrcpy-swing-poc/target/dist/scrcpy-java"
+          app_dir="$image/app"
+          if [[ "${{ matrix.platform }}" == macos-* ]]; then
+            image="scrcpy-swing-poc/target/dist/scrcpy-java.app"
+            app_dir="$image/Contents/app"
+          fi
+
+          # jpackage's --input is for the application JARs. Copy non-JAR
+          # runtime assets after image creation to preserve nested paths.
+          test -d "$app_dir"
+          cp -a scrcpy-swing-poc/target/package-input/platform-tools "$app_dir/"
+          cp -a scrcpy-swing-poc/target/package-input/lib "$app_dir/"
 
       - name: Smoke-check packaged ADB and application image
         shell: bash
@@ -146,17 +158,17 @@ jobs:
           test -d "$app_dir"
           adb_dir="$app_dir/platform-tools/${{ matrix.adb_platform }}"
           echo "Application image contents:"
-          find "$app_dir" -maxdepth 4 -type f \( -name adb -o -name adb.exe -o -name 'AdbWin*.dll' -o -name 'scrcpy-server-v5.0.1.jar' \) -print
+          find "$app_dir" -maxdepth 5 -type f \( -name adb -o -name adb.exe -o -name 'AdbWin*.dll' -o -name 'scrcpy-server-v5.0.1.jar' \) -print
           if [[ "${{ matrix.adb_platform }}" == windows ]]; then
             test -f "$adb_dir/adb.exe"
             test -f "$adb_dir/AdbWinApi.dll"
             test -f "$adb_dir/AdbWinUsbApi.dll"
           else
             test -f "$adb_dir/adb"
-            # jpackage may not preserve executable bits consistently on Linux.
-            # Restore the bit in the final image before archiving it.
-            chmod 755 "$adb_dir/adb"
             test -x "$adb_dir/adb"
+            if [[ "${{ matrix.adb_platform }}" == linux ]]; then
+              "$adb_dir/adb" version
+            fi
           fi
           test -f "$app_dir/lib/scrcpy-server-v5.0.1.jar"
           echo "Bundled ADB verified at: $adb_dir"
