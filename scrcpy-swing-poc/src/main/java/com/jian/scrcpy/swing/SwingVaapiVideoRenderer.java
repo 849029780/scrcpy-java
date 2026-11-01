@@ -5,11 +5,14 @@ import com.jian.scrcpy.media.VideoFrame;
 import org.bytedeco.ffmpeg.avutil.*;
 import org.bytedeco.javacpp.*;
 
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.bytedeco.ffmpeg.global.avutil.*;
 
-/** Linux VAAPI decode surface -> X11 drawable, without a CPU frame download. */
+/** Bounded asynchronous VAAPI decode-surface -> X11 presentation. */
 public final class SwingVaapiVideoRenderer implements SwingHardwareVideoRenderer {
     private static final class NativePointer extends Pointer {
         NativePointer(long address) { this.address = address; }
@@ -18,6 +21,12 @@ public final class SwingVaapiVideoRenderer implements SwingHardwareVideoRenderer
     private final SwingVideoSurface surface;
     private final NativeVaapiCanvas canvas;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final ThreadPoolExecutor presenter = new ThreadPoolExecutor(1, 1, 0L,
+            TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(2), task -> {
+                Thread thread = new Thread(task, "scrcpy-vaapi-present");
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.AbortPolicy());
 
     public SwingVaapiVideoRenderer(SwingVideoSurface surface) {
         this.surface = surface;
@@ -59,12 +68,21 @@ public final class SwingVaapiVideoRenderer implements SwingHardwareVideoRenderer
         BytePointer vaSurface = frame.data(3);
         if (vaSurface == null || vaSurface.isNull()) return false;
         try {
-            if (!canvas.render(vaSurface.address(), frame.width(), frame.height())) return false;
-            surface.showHardwareFrame(frame.width(), frame.height());
-            hardwareFrame.close();
+            presenter.execute(() -> {
+                try {
+                    if (canvas.render(vaSurface.address(), frame.width(), frame.height())) {
+                        surface.showHardwareFrame(frame.width(), frame.height());
+                    }
+                } catch (Throwable t) {
+                    System.err.println("[scrcpy-swing] VAAPI presentation failed; dropping hardware frame: " + t);
+                } finally {
+                    // vaSyncSurface in the native presenter completes before
+                    // this reference is released, so FFmpeg may safely recycle it.
+                    hardwareFrame.close();
+                }
+            });
             return true;
-        } catch (Throwable t) {
-            System.err.println("[scrcpy-swing] VAAPI presentation failed; using CPU fallback: " + t);
+        } catch (java.util.concurrent.RejectedExecutionException full) {
             return false;
         }
     }
@@ -72,6 +90,17 @@ public final class SwingVaapiVideoRenderer implements SwingHardwareVideoRenderer
     @Override public void renderSoftware(VideoFrame frame) { surface.accept(frame); }
 
     @Override public void close() {
-        if (closed.compareAndSet(false, true)) canvas.close();
+        if (!closed.compareAndSet(false, true)) return;
+        presenter.shutdown();
+        boolean interrupted = false;
+        for (;;) {
+            try {
+                if (presenter.awaitTermination(1, TimeUnit.SECONDS)) break;
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        canvas.close();
+        if (interrupted) Thread.currentThread().interrupt();
     }
 }
