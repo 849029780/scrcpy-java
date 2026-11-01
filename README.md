@@ -72,8 +72,6 @@
 
 ## 功能截图
 
-所有功能截图均存放在仓库的 [`assets/`](assets) 目录中。
-
 ### 1. 多设备同时投屏
 
 在同一个工作区同时查看多台设备，无需逐台切换投屏窗口。
@@ -99,8 +97,6 @@
 ![设备列表](assets/设备列表.png)
 
 ![多设备列表隐藏工具栏](assets/多设备列表隐藏工具栏.png)
-
-![多设备投屏列表隐藏工具栏](assets/多设备投屏列表-隐藏工具栏.png)
 
 ### 5. 批量文件传输
 
@@ -138,21 +134,7 @@ git clone https://github.com/849029780/scrcpy-java.git
 cd scrcpy-java
 ```
 
-### 2. scrcpy Server（已内置）
-
-scrcpy Server 5.0.1 已随 Swing 客户端内置在：
-
-`scrcpy-swing-poc/src/main/resources/scrcpy-server-v5.0.1.jar`
-
-启动时，程序会从运行时 classpath 自动读取该资源，提取到系统临时目录，并校验 SHA-256 后通过 ADB 推送到 Android 设备。无需单独下载、手动放置或配置 Server 文件。
-
-内置文件 SHA-256：
-
-```text
-764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536
-```
-
-### 3. 连接 Android 设备
+### 2. 连接 Android 设备
 
 在 Android 手机上开启：
 
@@ -170,7 +152,7 @@ adb devices
 adb connect <设备IP>:<端口>
 ```
 
-### 4. 编译并启动 Swing 客户端
+### 3. 编译并启动 Swing 客户端
 
 在项目根目录执行：
 
@@ -211,6 +193,7 @@ com.jian.scrcpy.swing.SwingScrcpyApp
 | --- | --- |
 | `scrcpy-core` | scrcpy 协议、ADB 集成、Netty 数据传输、音视频处理及设备会话等核心能力 |
 | `scrcpy-swing-poc` | Swing 桌面客户端、多设备工作区及群控交互 |
+| `scrcpy-app` | JavaFX 桌面客户端实现，因硬解码实现较为复杂现已废弃 |
 
 ## 项目状态与说明
 
