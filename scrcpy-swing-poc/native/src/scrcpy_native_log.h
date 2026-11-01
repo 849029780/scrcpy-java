@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdarg>
 #include <cstdint>
+#include <algorithm>
+#include <string>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
