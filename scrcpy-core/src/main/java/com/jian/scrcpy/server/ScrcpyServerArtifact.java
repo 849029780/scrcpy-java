@@ -6,40 +6,37 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 
+/**
+ * Resolves the scrcpy server bundled by the desktop client on its runtime classpath.
+ */
 public final class ScrcpyServerArtifact {
     public static final String VERSION = "5.0.1";
-    private static final String RESOURCE = "/scrcpy-server-v5.0.1.jar";
+    private static final String RESOURCE = "scrcpy-server-v5.0.1.jar";
     private static final String SHA256 =
             "764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536";
 
     private ScrcpyServerArtifact() {
     }
 
+    /**
+     * Extracts the server bundled in scrcpy-swing-poc/src/main/resources to a
+     * temporary file so ADB can push it to the Android device.
+     */
     public static Path resolve() throws Exception {
-        String configured = System.getProperty("scrcpy.server.jar");
-        if (configured == null || configured.isBlank()) {
-            configured = System.getenv("SCRCPY_SERVER_JAR");
-        }
-        if (configured != null && !configured.isBlank()) {
-            Path path = Path.of(configured).toAbsolutePath().normalize();
-            verify(path);
-            return path;
-        }
+        ClassLoader classLoader = ScrcpyServerArtifact.class.getClassLoader();
+        try (InputStream resource = classLoader.getResourceAsStream(RESOURCE)) {
+            if (resource == null) {
+                throw new IllegalStateException(
+                        "Classpath resource " + RESOURCE + " was not found. "
+                        + "Make sure it is included in scrcpy-swing-poc/src/main/resources.");
+            }
 
-        // Development checkout: keep the official server artifact in the project root.
-        Path projectJar = Path.of("scrcpy-server-v5.0.1.jar").toAbsolutePath().normalize();
-        if (Files.isRegularFile(projectJar)) {
-            verify(projectJar);
-            return projectJar;
-        }
-
-        // Packaged application: the same file is bundled as a classpath resource.
-        try (InputStream resource = ScrcpyServerArtifact.class.getResourceAsStream(RESOURCE)) {
-            if (resource != null) {
-                Path extracted = Path.of(System.getProperty("java.io.tmpdir"),
-                        "scrcpy-java", "scrcpy-server-v5.0.1.jar");
-                Files.createDirectories(extracted.getParent());
-                Path temporary = extracted.resolveSibling(extracted.getFileName() + ".tmp");
+            Path extracted = Path.of(System.getProperty("java.io.tmpdir"),
+                    "scrcpy-java", RESOURCE);
+            Files.createDirectories(extracted.getParent());
+            Path temporary = Files.createTempFile(extracted.getParent(),
+                    "scrcpy-server-", ".tmp");
+            try {
                 Files.copy(resource, temporary, StandardCopyOption.REPLACE_EXISTING);
                 verify(temporary);
                 try {
@@ -50,13 +47,10 @@ public final class ScrcpyServerArtifact {
                 }
                 verify(extracted);
                 return extracted;
+            } finally {
+                Files.deleteIfExists(temporary);
             }
         }
-
-        throw new IllegalStateException(
-                "找不到 scrcpy-server-v5.0.1.jar。请将官方 5.0.1 server 文件放在项目根目录，"
-                + "或放入 scrcpy-core/src/main/resources/。不再自动从网络下载。"
-                + " SHA-256: " + SHA256);
     }
 
     private static void verify(Path path) throws Exception {
