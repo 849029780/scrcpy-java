@@ -10,9 +10,10 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
-#include <unordered_map>
 
 namespace {
+void releaseVaDisplay(Display* xDisplay);
+
 struct Renderer {
     Display* display{};
     Drawable drawable{};
