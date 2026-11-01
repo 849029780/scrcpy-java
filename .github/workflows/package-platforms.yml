@@ -3,6 +3,8 @@ name: Build and release platform packages
 on:
   workflow_dispatch:
   push:
+    branches:
+      - "feature/swing-ui-port"
     tags:
       - "v*"
 
@@ -118,13 +120,13 @@ jobs:
           main_jar="$(find "$input" -maxdepth 1 -name 'scrcpy-swing-poc-*.jar' -print -quit)"
           test -n "$main_jar"
           echo "Analyzing application and runtime dependencies with jdeps..."
-          detected_modules="$(jdeps --multi-release 25 --ignore-missing-deps --print-module-deps --class-path "$input/*" "$main_jar")"
+          detected_modules="$(jdeps --multi-release 25 --ignore-missing-deps --print-module-deps --class-path "$input/*" "$input"/*.jar)"
           if [[ -z "$detected_modules" ]]; then
             echo "jdeps did not return a module list; refusing to create an incomplete runtime."
             exit 1
           fi
           echo "jdeps modules: $detected_modules"
-          required_modules="java.desktop java.logging java.management java.naming java.instrument jdk.unsupported jdk.crypto.ec jdk.charsets jdk.localedata"
+          required_modules="java.desktop java.logging java.management java.naming java.instrument java.xml jdk.unsupported jdk.crypto.ec jdk.charsets jdk.localedata"
           all_modules="$(printf '%s\n' "$detected_modules" | tr ',' '\n'; printf '%s\n' "$required_modules" | tr ' ' '\n')"
           modules="$(printf '%s\n' "$all_modules" | sed '/^$/d' | sort -u | paste -sd, -)"
           echo "Final runtime modules: $modules"
@@ -163,7 +165,7 @@ jobs:
           "$runtime_java" -cp "$input/*${classpath_separator}$smoke_dir" RuntimeSmoke
           echo "Runtime and application dependency sizes:"
           du -sh "$runtime" "$input"
-          for jar in "$input"/*.jar; do [ -f "$jar" ] || continue; printf '%s %s bytes\\n' "$(basename "$jar")" "$(wc -c < "$jar" | tr -d ' ')"; done | sort
+          for jar in "$input"/*.jar; do [ -f "$jar" ] || continue; echo "$(basename "$jar") $(wc -c < "$jar") bytes"; done | sort
 
       - name: Create native application image
         shell: bash
