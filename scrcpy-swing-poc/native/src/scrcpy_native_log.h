@@ -2,6 +2,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <algorithm>
+#include <atomic>
 #include <string>
 #include <cstdio>
 #include <cstdlib>
@@ -80,10 +81,12 @@ inline void cleanup(const std::filesystem::path& dir) {
         ec.clear();
     }
 }
-inline void rotate(const std::filesystem::path& file) {
+inline void rotate(const std::filesystem::path& file, std::size_t incomingBytes) {
     constexpr std::uintmax_t limit = 10u * 1024u * 1024u;
     std::error_code ec;
-    if (!std::filesystem::exists(file, ec) || std::filesystem::file_size(file, ec) < limit) return;
+    if (!std::filesystem::exists(file, ec)) return;
+    const auto currentSize = std::filesystem::file_size(file, ec);
+    if (ec || currentSize == 0 || currentSize + incomingBytes <= limit) return;
     const auto now = std::chrono::system_clock::now();
     const auto tt = std::chrono::system_clock::to_time_t(now);
     std::tm tm{};
@@ -92,10 +95,15 @@ inline void rotate(const std::filesystem::path& file) {
 #else
     localtime_r(&tt, &tm);
 #endif
-    char suffix[32]{};
+    const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count() % 1000;
+    static std::atomic<unsigned long long> sequence{0};
+    char suffix[64]{};
     std::strftime(suffix, sizeof(suffix), "%Y%m%d-%H%M%S", &tm);
-    auto raw = file.parent_path() / (std::string("native-") + suffix + ".log");
-    auto archive = file.parent_path() / (std::string("native-") + suffix + ".log.gz");
+    const std::string uniqueSuffix = std::string(suffix) + "-" +
+            std::to_string(millis) + "-" + std::to_string(sequence.fetch_add(1));
+    auto raw = file.parent_path() / (std::string("native-") + uniqueSuffix + ".log");
+    auto archive = file.parent_path() / (std::string("native-") + uniqueSuffix + ".log.gz");
     std::filesystem::rename(file, raw, ec);
     if (!ec && gzipStored(raw, archive)) std::filesystem::remove(raw, ec);
     cleanup(file.parent_path());
@@ -107,7 +115,6 @@ inline void write(Level level, const char* component, const char* fmt, ...) {
     try {
         const auto filePath = path();
         std::filesystem::create_directories(filePath.parent_path());
-        rotate(filePath);
         const auto now = std::chrono::system_clock::now();
         const auto tt = std::chrono::system_clock::to_time_t(now);
         std::tm tm{};
