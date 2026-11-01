@@ -31,6 +31,20 @@
             <groupId>io.netty</groupId>
             <artifactId>netty-handler</artifactId>
         </dependency>
+        <!-- Netty 4.2 transport implementations. Native binaries are selected
+             by OS/architecture profiles in the parent POM. -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-classes-epoll</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-classes-kqueue</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-classes-io_uring</artifactId>
+        </dependency>
         <!-- Java APIs are platform independent. Native binaries are selected below
              so each distribution contains only the current OS/CPU implementation. -->
         <dependency>
@@ -50,5 +64,4 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
-
 </project>
