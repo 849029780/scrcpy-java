@@ -78,27 +78,29 @@ Before connecting, configure parameters such as video resolution, frame rate, bi
 
 ### 3. Multi-device mirroring workspace
 
-View multiple Android devices in the same workspace without switching between individual mirroring windows. Both embedded mode and independent windows are supported.
+View multiple Android devices in the same workspace without switching between individual mirroring windows. Use the mirroring toolbar to perform common device operations and adjust the workspace display as needed.
 
 ![Multi-device mirroring](assets/多设备投屏列表.png)
 
+The toolbar can be hidden when needed.
+
+![Multi-device list with the toolbar hidden](assets/多设备列表隐藏工具栏.png)
+
+Group control with the primary device in embedded mode.
+
 ![Multi-device group control in embedded mode](assets/多设备群控嵌入模式.png)
 
-![Multi-device group control in independent windows](assets/多设备群控独立窗口.png)
+Group control with the primary device in a separate window.
 
-### 4. Mirroring toolbar
+![Multi-device group control in independent-window mode](assets/多设备群控独立窗口.png)
 
-Use the mirroring toolbar to perform common device operations and adjust the workspace display as needed.
-
-![Mirroring toolbar and workspace](assets/多设备列表隐藏工具栏.png)
-
-### 5. Batch APK installation
+### 4. Batch APK installation
 
 Install APK files on multiple selected Android devices.
 
 ![Batch APK installation](assets/批量安装应用.png)
 
-### 6. Batch file transfer
+### 5. Batch file transfer
 
 Select target devices, send files in batches, and view the transfer progress for each device.
 
