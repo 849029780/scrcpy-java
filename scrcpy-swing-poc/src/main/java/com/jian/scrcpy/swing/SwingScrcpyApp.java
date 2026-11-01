@@ -53,7 +53,7 @@ public final class SwingScrcpyApp {
     private static final long RECONNECT_INTERVAL_MILLIS = 3_000;
     private static final int MAX_RECONNECT_ATTEMPTS = 20;
 
-    private final JFrame frame = new JFrame("scrcpy-java - 多设备投屏（Swing）");
+    private final JFrame frame = new JFrame("多设备投屏");
     private final JLabel status = new JLabel("正在扫描 ADB 设备...");
     private final JLabel primaryStatus = new JLabel("主设备：无");
     private final JPanel primaryHost = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -115,10 +115,10 @@ public final class SwingScrcpyApp {
         frame.setLocationByPlatform(true);
 
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 7));
-        JButton devices = new JButton("设备");
-        JButton files = new JButton("传送文件");
+        JButton devices = new JButton("设备列表");
+        JButton files = new JButton("批量传送文件");
         JButton install = new JButton("批量安装应用");
-        JButton toggleAllOrientation = new JButton("全部切换横竖屏");
+        JButton toggleAllOrientation = new JButton("批量切换横竖屏");
         toggleAllOrientation.setToolTipText("将所有正在投屏的设备统一切换为横屏或竖屏");
         toggleNavigationBarsButton = new JButton("显示设备按钮栏");
         toggleNavigationBarsButton.setToolTipText("一键显示或隐藏所有设备右侧的操作按钮栏");
