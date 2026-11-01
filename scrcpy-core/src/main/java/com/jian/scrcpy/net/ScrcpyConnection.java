@@ -1,12 +1,16 @@
 package com.jian.scrcpy.net;
 
 import com.jian.scrcpy.protocol.*;
+import com.jian.scrcpy.metrics.SessionMetrics;
+import io.netty.buffer.ByteBuf;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.util.AttributeKey;
 
 import java.net.InetSocketAddress;
+import java.nio.channels.ClosedChannelException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -14,10 +18,60 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 public final class ScrcpyConnection implements AutoCloseable {
-    private final EventLoopGroup group =
-            new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
-    private final EventLoopGroup acceptGroup =
-            new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+    /** Assigned by the parent accept event loop, before child registration can run concurrently. */
+    private static final AttributeKey<Integer> ACCEPT_INDEX =
+            AttributeKey.valueOf(ScrcpyConnection.class, "acceptIndex");
+
+    /**
+     * All device sockets are non-blocking and can share a bounded process-wide
+     * event-loop pool. Creating two one-thread groups per device scales to
+     * 100 platform threads for 50 devices and wastes thread stacks/schedulers.
+     */
+    private static final class SharedEventLoops {
+        private static EventLoopGroup ioGroup;
+        private static EventLoopGroup acceptGroup;
+        private static int references;
+
+        static synchronized Groups acquire() {
+            if (ioGroup == null || ioGroup.isShuttingDown() || ioGroup.isShutdown()) {
+                int threads = Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors()));
+                ioGroup = new MultiThreadIoEventLoopGroup(threads, NioIoHandler.newFactory());
+                acceptGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+            }
+            references++;
+            return new Groups(acceptGroup, ioGroup);
+        }
+
+        static void release() {
+            EventLoopGroup ioToClose = null;
+            EventLoopGroup acceptToClose = null;
+            synchronized (SharedEventLoops.class) {
+                if (references <= 0) return;
+                references--;
+                if (references == 0) {
+                    ioToClose = ioGroup;
+                    acceptToClose = acceptGroup;
+                    ioGroup = null;
+                    acceptGroup = null;
+                }
+            }
+            // Initiate shutdown without blocking the Swing/connection close
+            // caller. Netty completes the graceful shutdown asynchronously.
+            if (acceptToClose != null) {
+                acceptToClose.shutdownGracefully(0, 2, TimeUnit.SECONDS);
+            }
+            if (ioToClose != null) {
+                ioToClose.shutdownGracefully(0, 2, TimeUnit.SECONDS);
+            }
+        }
+
+        private record Groups(EventLoopGroup accept, EventLoopGroup io) {
+        }
+    }
+
+    private final SharedEventLoops.Groups eventLoops = SharedEventLoops.acquire();
+    private final EventLoopGroup group = eventLoops.io();
+    private final EventLoopGroup acceptGroup = eventLoops.accept();
     private final int port;
     private Channel video, audio, control, listener;
     private volatile ControlMessageQueue controlQueue;
@@ -26,13 +80,17 @@ public final class ScrcpyConnection implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean failureReported = new AtomicBoolean();
     private final String sessionLabel;
+    private final SessionMetrics metrics;
     private volatile Consumer<Throwable> transportFailureSink = cause -> {};
 
-    public ScrcpyConnection(int p) { this(p, null); }
+    public ScrcpyConnection(int p) { this(p, null, null); }
 
-    public ScrcpyConnection(int p, String sessionLabel) {
+    public ScrcpyConnection(int p, String sessionLabel) { this(p, sessionLabel, null); }
+
+    public ScrcpyConnection(int p, String sessionLabel, SessionMetrics metrics) {
         port = p;
         this.sessionLabel = sessionLabel == null || sessionLabel.isBlank() ? "unknown" : sessionLabel;
+        this.metrics = metrics;
     }
 
     public void onTransportFailure(Consumer<Throwable> sink) {
@@ -43,6 +101,7 @@ public final class ScrcpyConnection implements AutoCloseable {
         if (closed.get()) return;
         System.err.printf("[scrcpy-java][%s] %s transport failed: %s%n", sessionLabel, stream, cause);
         if (failureReported.compareAndSet(false, true)) {
+            if (metrics != null) metrics.recordTransportFailure();
             try { transportFailureSink.accept(cause); }
             catch (Throwable callbackError) {
                 System.err.printf("[scrcpy-java][%s] transport failure callback failed: %s%n",
@@ -62,7 +121,15 @@ public final class ScrcpyConnection implements AutoCloseable {
             pipeline.addLast("configMerger", new ConfigPacketMerger());
             if (videoHandler != null) pipeline.addLast("videoHandler", videoHandler);
         } else if ("audio".equals(name)) {
-            pipeline.addLast("audioMedia", new ScrcpyAudioDecoder(sessionLabel));
+            if (metrics != null) {
+                pipeline.addLast("audioTcpMetrics", new ChannelInboundHandlerAdapter() {
+                    @Override public void channelRead(ChannelHandlerContext ctx, Object message) throws Exception {
+                        if (message instanceof ByteBuf buffer) metrics.recordAudioTcp(buffer.readableBytes());
+                        ctx.fireChannelRead(message);
+                    }
+                });
+            }
+            pipeline.addLast("audioMedia", new ScrcpyAudioDecoder(sessionLabel, metrics));
             if (audioHandler != null) pipeline.addLast("audioHandler", audioHandler);
         } else {
             pipeline.addLast("deviceMessage", new DeviceMessageDecoder());
@@ -95,6 +162,13 @@ public final class ScrcpyConnection implements AutoCloseable {
                 cause.printStackTrace(System.err);
                 ctx.close();
             }
+
+            @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+                if (!closed.get()) {
+                    reportTransportFailure(name, new ClosedChannelException());
+                }
+                ctx.fireChannelInactive();
+            }
         });
     }
 
@@ -112,14 +186,28 @@ public final class ScrcpyConnection implements AutoCloseable {
         listener = new ServerBootstrap()
                 .group(acceptGroup, group)
                 .channel(NioServerSocketChannel.class)
+                // The parent acceptor runs on one event loop and observes TCP accepts
+                // in order. Assign the protocol socket index here, not in the child
+                // ChannelInitializer: child registration runs on the shared multi-
+                // thread IO group and its initialization tasks may execute out of order.
+                .handler(new ChannelInboundHandlerAdapter() {
+                    @Override
+                    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+                        if (msg instanceof Channel child) {
+                            child.attr(ACCEPT_INDEX).set(accepted.getAndIncrement());
+                        }
+                        ctx.fireChannelRead(msg);
+                    }
+                })
                 .childOption(ChannelOption.TCP_NODELAY, true)
                 .childHandler(new ChannelInitializer<>() {
                     @Override protected void initChannel(Channel channel) {
-                        int i = accepted.getAndIncrement();
-                        if (i >= names.size()) {
+                        Integer acceptIndex = channel.attr(ACCEPT_INDEX).get();
+                        if (acceptIndex == null || acceptIndex >= names.size()) {
                             channel.close();
                             return;
                         }
+                        int i = acceptIndex;
                         String name = names.get(i);
                         configure(channel.pipeline(), i == 0, name,
                                 videoHandler, audioHandler, controlHandler);
@@ -129,8 +217,8 @@ public final class ScrcpyConnection implements AutoCloseable {
                             case "control" -> control = channel;
                             default -> throw new IllegalStateException("unknown socket type: " + name);
                         }
-                        System.out.printf("[scrcpy-java][%s] %s socket accepted: %s%n",
-                                sessionLabel, name, channel.remoteAddress());
+                        System.out.printf("[scrcpy-java][%s] %s socket accepted (acceptIndex=%d): %s%n",
+                                sessionLabel, name, i, channel.remoteAddress());
                     }
                 })
                 .bind(new InetSocketAddress("127.0.0.1", port))
@@ -171,7 +259,9 @@ public final class ScrcpyConnection implements AutoCloseable {
             try { channel.close().syncUninterruptibly(); }
             catch (Throwable t) { System.err.println("[scrcpy-java] channel close failed: " + t); }
         }
-        acceptGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
-        group.shutdownGracefully(0, 2, TimeUnit.SECONDS).syncUninterruptibly();
+        // Event loops are shared by all active device connections. Release
+        // this connection's lease; the shared groups shut down after the last
+        // device closes, keeping reconnect and partial-startup paths safe.
+        SharedEventLoops.release();
     }
 }

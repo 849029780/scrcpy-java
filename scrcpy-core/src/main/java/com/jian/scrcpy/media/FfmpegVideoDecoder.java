@@ -10,8 +10,6 @@ import org.bytedeco.javacpp.*;
 
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -80,20 +78,30 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             Boolean.getBoolean("scrcpy.video.debug.skip-decode");
     private static final boolean DEBUG_SKIP_SWS_SCALE =
             Boolean.getBoolean("scrcpy.video.debug.skip-sws-scale");
+    // Enabled by default so GPU zero-readback behavior is visible without
+    // requiring a JVM flag. Set -Dscrcpy.video.stats=false to silence it.
     private static final boolean VIDEO_STATS_ENABLED =
-            Boolean.getBoolean("scrcpy.video.stats");
-    // Experimental: independent AVCodecContext instances may decode in
-    // parallel. Keep initialization, fallback and destruction globally
-    // serialized until all hardware backends have been stress-tested.
+            Boolean.parseBoolean(System.getProperty("scrcpy.video.stats", "true"));
+    // Each FfmpegVideoDecoder owns its AVCodecContext, AVPacket, AVFrames and
+    // hardware device. Serialize packet send/receive per decoder, not process-wide,
+    // so independent devices can decode concurrently. Initialization, fallback
+    // and destruction remain globally serialized as a conservative FFmpeg boundary.
+    // Set -Dscrcpy.video.parallel-native=false to restore the legacy global mode.
     private static final boolean PARALLEL_NATIVE_DECODE =
-            Boolean.getBoolean("scrcpy.video.parallel-native");
+            Boolean.parseBoolean(System.getProperty("scrcpy.video.parallel-native", "true"));
     // Keep software decoding bounded for multi-device sessions. FFmpeg's
     // thread_count=0 auto mode may create a CPU-sized worker pool per decoder,
     // which scales poorly when several devices are connected at once.
     private static final int SOFTWARE_DECODER_THREADS = resolveSoftwareDecoderThreads();
     private static final int FFMPEG_THREAD_SLICE = 2;
     private final AtomicLong statsDecodedFrames = new AtomicLong();
+    // hardwareFrames counts frames accepted by the renderer's bounded Java
+    // queue; native GPU submission and successful Present are measured separately.
     private final AtomicLong statsHardwareFrames = new AtomicLong();
+    private final AtomicLong statsNativePresentationMisses = new AtomicLong();
+    private final AtomicLong statsHardwareTransferAttempts = new AtomicLong();
+    private final AtomicLong statsHardwareTransferSuccesses = new AtomicLong();
+    private final AtomicLong statsHardwareTransferFailures = new AtomicLong();
     private final AtomicLong statsSoftwareFrames = new AtomicLong();
     private final AtomicLong statsQueueDrops = new AtomicLong();
     private final AtomicLong statsPoolMisses = new AtomicLong();
@@ -114,9 +122,17 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
     // A decoder worker exclusively owns its AVCodecContext, AVPacket and
     // AVFrames. This lock is only a defensive per-instance boundary.
     private final ReentrantLock decoderNativeLock = new ReentrantLock();
-    // Keep the compressed backlog short. Retained Netty ByteBuf packets count
-    // toward process memory and a long queue only adds latency for live video.
-    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(16);
+    // Do not discard compressed H.264/H.265 access units during normal
+    // overload: a dropped reference frame can stall decoding until the next
+    // encoder IDR (which may be several seconds away). Instead apply TCP
+    // backpressure to the video socket while the bounded queue drains.
+    private static final int DECODE_QUEUE_CAPACITY = 64;
+    private static final int DECODE_QUEUE_HIGH_WATERMARK = 16;
+    private static final int DECODE_QUEUE_LOW_WATERMARK = 8;
+    private final BoundedMediaMessageQueue decodeQueue =
+            new BoundedMediaMessageQueue(DECODE_QUEUE_CAPACITY);
+    private volatile ChannelHandlerContext videoChannelContext;
+    private final AtomicBoolean videoReadsPaused = new AtomicBoolean();
     // Reused staging storage for the JavaCPP AVPacket copy. Directly wrapping a
     // Netty ByteBuf is not portable across the supported platforms/allocators.
     private byte[] encodedBuffer = new byte[0];
@@ -416,20 +432,52 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
     @Override
     protected void channelRead0(ChannelHandlerContext ch, MediaMessage m) {
+        videoChannelContext = ch;
         if (closed.get()) {
             releaseMessage(m);
             return;
         }
-        if (!decodeQueue.offer(m)) {
-            MediaMessage dropped = decodeQueue.poll();
-            if (dropped != null) {
-                releaseMessage(dropped);
-                if (VIDEO_STATS_ENABLED) statsQueueDrops.incrementAndGet();
-            }
-            if (!decodeQueue.offer(m)) {
-                releaseMessage(m);
-                if (VIDEO_STATS_ENABLED) statsQueueDrops.incrementAndGet();
-            }
+        // MediaMessage is a plain record, not a ReferenceCounted wrapper.
+        // Its Packet owns the retained ByteBuf until the queue consumer (or
+        // emergency overflow path) releases it. Do not retain it a second time.
+        BoundedMediaMessageQueue.OfferResult result = decodeQueue.offer(m);
+        if (result != BoundedMediaMessageQueue.OfferResult.ENQUEUED && VIDEO_STATS_ENABLED) {
+            statsQueueDrops.incrementAndGet();
+        }
+        if (decodeQueue.size() >= DECODE_QUEUE_HIGH_WATERMARK) {
+            pauseVideoReads(ch);
+        }
+    }
+
+    /** Stop reading the TCP stream before the compressed queue reaches capacity. */
+    private void pauseVideoReads(ChannelHandlerContext context) {
+        if (videoReadsPaused.compareAndSet(false, true)) {
+            context.channel().config().setAutoRead(false);
+        }
+    }
+
+    /**
+     * Resume socket reads only after the decoder has drained the backlog.
+     * All channel configuration changes are marshalled onto the channel event loop.
+     */
+    private void resumeVideoReadsIfNeeded() {
+        ChannelHandlerContext context = videoChannelContext;
+        if (context == null || !videoReadsPaused.get()
+                || decodeQueue.size() > DECODE_QUEUE_LOW_WATERMARK) {
+            return;
+        }
+        try {
+            context.executor().execute(() -> {
+                if (closed.get() || !context.channel().isActive()
+                        || decodeQueue.size() > DECODE_QUEUE_LOW_WATERMARK) {
+                    return;
+                }
+                if (videoReadsPaused.compareAndSet(true, false)) {
+                    context.channel().config().setAutoRead(true);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // The channel event loop is shutting down; the connection is closing.
         }
     }
 
@@ -437,6 +485,7 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         try {
             while (!closed.get() || !decodeQueue.isEmpty()) {
                 MediaMessage m = decodeQueue.take();
+                resumeVideoReadsIfNeeded();
                 try {
                     decodeMessage(m);
                     reportVideoStatsIfDue();
@@ -514,6 +563,9 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
             if (av_new_packet(packet, payloadSize) < 0) return -1;
             packet.data().put(encoded, 0, payloadSize);
             packet.pts(p.pts()).dts(p.pts());
+            // Preserve scrcpy's access-unit key-frame metadata for FFmpeg.
+            // This is especially important after queue overload recovery.
+            packet.flags(p.keyFrame() ? AV_PKT_FLAG_KEY : 0);
             return avcodec_send_packet(ctx, packet);
         });
 
@@ -558,11 +610,20 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
                     }
                 }
 
+                // A miss here means the renderer did not present the D3D11
+                // texture directly. Count the explicit GPU->system-memory
+                // transfer separately so zero-readback can be verified.
+                statsNativePresentationMisses.incrementAndGet();
+                statsHardwareTransferAttempts.incrementAndGet();
                 int transferResult = withDecoderLock(() -> {
                     av_frame_unref(softwareFrame);
                     return av_hwframe_transfer_data(softwareFrame, frame, 0);
                 });
-                if (transferResult < 0) continue;
+                if (transferResult < 0) {
+                    statsHardwareTransferFailures.incrementAndGet();
+                    continue;
+                }
+                statsHardwareTransferSuccesses.incrementAndGet();
                 source = softwareFrame;
             }
             if (DEBUG_SKIP_SWS_SCALE) continue;
@@ -648,6 +709,10 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
 
         long decoded = statsDecodedFrames.getAndSet(0);
         long hardware = statsHardwareFrames.getAndSet(0);
+        long nativeMisses = statsNativePresentationMisses.getAndSet(0);
+        long transferAttempts = statsHardwareTransferAttempts.getAndSet(0);
+        long transferSuccesses = statsHardwareTransferSuccesses.getAndSet(0);
+        long transferFailures = statsHardwareTransferFailures.getAndSet(0);
         long software = statsSoftwareFrames.getAndSet(0);
         long queueDrops = statsQueueDrops.getAndSet(0);
         long poolMisses = statsPoolMisses.getAndSet(0);
@@ -664,14 +729,15 @@ public final class FfmpegVideoDecoder extends SimpleChannelInboundHandler<MediaM
         double scaleAverageMs = scaleCount == 0 ? 0.0 : scaleNanos / 1_000_000.0 / scaleCount;
         System.out.printf(
                 Locale.ROOT,
-                "[scrcpy-java][%s] video stats: decoded=%.1f fps, hardware=%.1f fps, software=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/16%n",
-                serial, decodedFps, hardware / seconds, software / seconds,
+                "[scrcpy-java][%s] video stats: decoded=%.1f fps, rendererAccepted=%.1f fps, nativePresentMisses=%d, hwToCpuTransfers=%d/%d (failed=%d), softwarePresent=%.1f fps, queueDrops=%d, bgraPoolMisses=%d, swscaleAvg=%.2f ms, nativeLockMode=%s, globalLockWait=%.2f ms, globalLockHold=%.2f ms, globalLockContended=%d, deviceLockWait=%.2f ms, deviceLockHold=%.2f ms, deviceLockContended=%d, queue=%d/%d%n",
+                serial, decodedFps, hardware / seconds, nativeMisses,
+                transferSuccesses, transferAttempts, transferFailures, software / seconds,
                 queueDrops, poolMisses, scaleAverageMs,
                 PARALLEL_NATIVE_DECODE ? "parallel-device" : "global",
                 lockWaitNanos / 1_000_000.0, lockHoldNanos / 1_000_000.0,
                 lockContentions,
                 deviceLockWaitNanos / 1_000_000.0, deviceLockHoldNanos / 1_000_000.0,
-                deviceLockContentions, decodeQueue.size());
+                deviceLockContentions, decodeQueue.size(), DECODE_QUEUE_CAPACITY);
     }
 
     private byte[] ensureEncodedCapacity(int size) {

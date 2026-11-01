@@ -3,12 +3,11 @@ package com.jian.scrcpy.media;
 import com.jian.scrcpy.protocol.*;
 import io.netty.channel.*;
 import io.netty.util.ReferenceCountUtil;
+import com.jian.scrcpy.metrics.SessionMetrics;
 import org.bytedeco.ffmpeg.avcodec.*;
 import org.bytedeco.ffmpeg.avutil.*;
 import org.bytedeco.javacpp.*;
 
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -25,20 +24,33 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     private byte[] pendingCodecConfig;
     // Audio packets are small, but retaining a very deep live queue increases
     // latency and keeps Netty buffers alive unnecessarily.
-    private final BlockingQueue<MediaMessage> decodeQueue = new ArrayBlockingQueue<>(48);
+    // 16 packets cap audio backlog to a short live window while retaining
+    // enough buffering for normal scheduling jitter across many devices.
+    private static final int DECODE_QUEUE_CAPACITY = 16;
+    // Audio packets are independent: unlike predictive video frames, an audio
+    // packet can be dropped without waiting for a key frame. Keep the newest
+    // live audio by evicting the oldest queued media packet on overload.
+    private final AudioMediaMessageQueue decodeQueue =
+            new AudioMediaMessageQueue(DECODE_QUEUE_CAPACITY);
     private byte[] encodedBuffer = new byte[0];
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread decodeThread;
     private final String sessionLabel;
+    private final SessionMetrics metrics;
 
     public FfmpegAudioDecoder(Consumer<AudioFrame> s) {
-        this(s, null);
+        this(s, null, null);
     }
 
     public FfmpegAudioDecoder(Consumer<AudioFrame> s, String sessionLabel) {
+        this(s, sessionLabel, null);
+    }
+
+    public FfmpegAudioDecoder(Consumer<AudioFrame> s, String sessionLabel, SessionMetrics metrics) {
         super(false);
         sink = s;
         this.sessionLabel = sessionLabel == null || sessionLabel.isBlank() ? "unknown" : sessionLabel;
+        this.metrics = metrics;
         decodeThread = Thread.ofVirtual().name("scrcpy-audio-decoder-" + this.sessionLabel).start(this::decodeLoop);
     }
 
@@ -101,31 +113,39 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             releaseMessage(m);
             return;
         }
-        if (!decodeQueue.offer(m)) {
-            MediaMessage dropped = decodeQueue.poll();
-            releaseMessage(dropped);
-            if (!decodeQueue.offer(m)) releaseMessage(m);
+        // MediaMessage is a plain record, not a ReferenceCounted wrapper.
+        // The Packet's ByteBuf ownership transfers to the queue and is released
+        // by the worker or by the bounded-queue eviction/drop path.
+        AudioMediaMessageQueue.OfferResult result = decodeQueue.offer(m);
+        if (metrics != null) {
+            metrics.recordAudioQueue(result != AudioMediaMessageQueue.OfferResult.INCOMING_DROPPED,
+                    result == AudioMediaMessageQueue.OfferResult.ENQUEUED_AFTER_EVICTION, decodeQueue.size());
         }
     }
-
     private void decodeLoop() {
         try {
             while (!closed.get() || !decodeQueue.isEmpty()) {
                 MediaMessage m = decodeQueue.take();
+                if (metrics != null) metrics.updateAudioQueueDepth(decodeQueue.size());
                 try {
                     decodeMessage(m);
+                } catch (Throwable packetFailure) {
+                    if (metrics != null) metrics.recordAudioDecodeError();
+                    // A malformed packet or transient native/output failure must
+                    // not permanently kill this session's audio worker.
+                    System.err.println("[scrcpy-java][" + sessionLabel
+                            + "] audio message processing failed; continuing: " + packetFailure);
+                    packetFailure.printStackTrace(System.err);
                 } finally {
                     releaseMessage(m);
                 }
             }
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
-        } catch (Throwable t) {
-            System.err.println("[scrcpy-java][" + sessionLabel + "] audio decode worker failed: " + t);
-            t.printStackTrace(System.err);
         } finally {
             MediaMessage m;
             while ((m = decodeQueue.poll()) != null) releaseMessage(m);
+            if (metrics != null) metrics.updateAudioQueueDepth(decodeQueue.size());
             // Native FFmpeg state is owned and freed by the decode worker.
             // This prevents close() from freeing it while decodeMessage() is
             // still executing on this thread.
@@ -154,6 +174,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             return;
         }
         int payloadSize = p.data().readableBytes();
+        if (metrics != null) metrics.recordAudioDecodePacket();
         byte[] bytes = ensureEncodedCapacity(payloadSize);
         p.data().getBytes(p.data().readerIndex(), bytes, 0, payloadSize);
         av_packet_unref(packet);
@@ -196,7 +217,17 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
             if (ret >= 0) {
                 AudioFrame pcm = toPcm(frame, pts);
                 if (pcm != null) {
-                    sink.accept(pcm);
+                    if (metrics != null) metrics.recordPcm(pcm.pcm().length / pcm.channels(), pcm.pcm().length * 2);
+                    try {
+                        sink.accept(pcm);
+                    } catch (Throwable outputFailure) {
+                        if (metrics != null) metrics.recordAudioOutputError();
+                        // Playback device failures are isolated from decoding.
+                        // JavaSoundPlayer closes a broken line so the next PCM
+                        // frame can attempt to reopen the output device.
+                        System.err.println("[scrcpy-java][" + sessionLabel
+                                + "] audio output failed; decoder remains active: " + outputFailure);
+                    }
                 }
                 continue;
             }
@@ -208,6 +239,7 @@ public final class FfmpegAudioDecoder extends SimpleChannelInboundHandler<MediaM
     }
 
     private void logDecodeError(String operation, int error, long size, long pts) {
+        if (metrics != null) metrics.recordAudioDecodeError();
         try (BytePointer errorText = new BytePointer(256)) {
             av_strerror(error, errorText, 256);
             System.err.printf("[scrcpy-java][%s] audio %s failed: codec=%s size=%d pts=%d error=%d (%s)%n",

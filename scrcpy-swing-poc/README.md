@@ -1,65 +1,81 @@
-# Swing / JAWT / D3D11 proof of concept
+# scrcpy-java Swing frontend
 
-This is an isolated Windows-only rendering experiment. It does not replace the
-JavaFX application and does not modify the existing FFmpeg decoder.
+This module contains an independent Swing desktop client. The existing
+`scrcpy-app` JavaFX application is intentionally unchanged and remains
+available as a separate frontend.
 
-## What it verifies
+## Features
 
-1. A heavyweight AWT `Canvas` is hosted inside a normal Swing `JFrame`.
-2. JAWT obtains the Canvas' native `HWND` using the public AWT native interface.
-3. A native D3D11 device creates a DXGI swap chain for that HWND.
-4. The swap chain is resized with the Canvas and presents a GPU-cleared test color.
+- ADB device discovery, selection, connect-all, disconnect and reconnect.
+- Per-connection scrcpy settings, including video/audio/control, codec,
+  encoder, hardware/software decoder, bitrate, max size/FPS, crop and start app.
+- Simultaneous multi-device video tiles with a larger primary device.
+- Primary-device input broadcasting, optional coordinate adaptation, touch
+  mode and UHID relative-mouse mode (Ctrl+Esc releases mouse capture).
+- Per-device navigation actions: Back, Home, Recents, notification panel,
+  volume, power, display on/off and stay-awake.
+- Bidirectional desktop/device clipboard synchronization.
+- Batch file transfer and APK installation with per-device progress.
+- FFmpeg video/audio decoding through the existing `scrcpy-core` module.
 
-The video pixels are not painted by Java2D. The native D3D11 renderer owns the
-Canvas swap chain.
+## Rendering
 
-## Build native DLL (Windows, JDK 25, Visual Studio C++ tools, CMake)
+On Windows, the Swing frontend now has a native D3D11 presentation path:
 
-Open a Developer PowerShell with `JAVA_HOME` pointing to the JDK:
+`FFmpeg D3D11VA decode -> retained AVFrame/D3D11 texture -> D3D11 Video Processor -> AWT Canvas swap chain`
+
+The native Canvas creates the D3D11 device and supplies an AddRef'd reference to
+FFmpeg's `AVHWDeviceContext`. This keeps decoding and presentation on the same
+D3D11 device. The decoded texture is passed to the D3D11 video processor directly;
+the normal hardware presentation path does not call `av_hwframe_transfer_data`,
+`sws_scale`, or create a `BufferedImage`.
+
+The existing BGRA/Java2D renderer remains the fallback when the native library,
+D3D11 video processor, or a compatible hardware frame is unavailable. Non-Windows
+platforms continue to use the portable renderer. The native backend is Windows-only.
+
+### Build the native renderer (Windows)
+
+Requires CMake 3.24+, a Visual Studio C++ workload, Windows SDK, and JDK 25.
+From the repository root in PowerShell:
 
 ```powershell
 cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
 cmake --build scrcpy-swing-poc/native/build --config Release
+$env:PATH = "$PWD\scrcpy-swing-poc\native\build\Release;$env:PATH"
+mvn -pl scrcpy-swing-poc -am install
+mvn -pl scrcpy-swing-poc exec:java
 ```
 
-Copy `scrcpy_swing_d3d11.dll` from the build output to a directory on
-`java.library.path`, or set:
+If CMake cannot locate JNI/JAWT, set `JAVA_HOME` to the JDK 25 installation
+before configuring. The JavaFX `scrcpy-app` module is not changed.
 
-```powershell
-$env:JAVA_TOOL_OPTIONS = "-Djava.library.path=$PWD/scrcpy-swing-poc/native/build/Release"
-```
+`D3D11VA -> D3D11 Video Processor -> SwapChain` avoids a CPU frame download;
+the GPU may still perform an internal GPU-side video-processing pass to convert
+NV12/P010 into the swap-chain format. This is zero-copy with respect to the
+CPU/system-memory frame path, not a claim that no GPU resource or processing
+operation occurs.
 
-## Run
+## Build and run
+
+Requires JDK 25 and the Android platform-tools executable (bundled, SDK, PATH,
+or `-Dscrcpy.adb=...`).
 
 From the repository root:
 
 ```powershell
-mvn -pl scrcpy-swing-poc -am package
-java -Djava.library.path=scrcpy-swing-poc/native/build/Release -cp scrcpy-swing-poc/target/classes com.jian.scrcpy.swing.SwingD3D11PoC
+mvn -pl scrcpy-swing-poc -am install
+mvn -pl scrcpy-swing-poc exec:java
 ```
 
-Alternatively, run `com.jian.scrcpy.swing.SwingD3D11PoC` from the IDE with the
-native DLL directory in `java.library.path`.
+The JavaFX application remains independently runnable:
 
-Expected result: one Swing window with a dark blue test surface. Resize and
-move the window; the D3D11 swap chain should continue presenting inside the
-Canvas without creating another top-level window.
+```powershell
+mvn -pl scrcpy-app javafx:run
+```
 
-## Next integration step
+To use a specific ADB executable:
 
-After this PoC passes on the target Windows/JDK/GPU combination, connect the
-existing `HardwareVideoFrame` to a D3D11 renderer. That requires sharing the
-same `ID3D11Device` with FFmpeg's `AVHWDeviceContext`, obtaining the decoded
-D3D11 texture from the FFmpeg frame, and sampling it in a shader. The current
-PoC intentionally does not claim to implement that zero-CPU-copy video path.
-
-## Current limitations
-
-- Windows only.
-- One test Canvas in this PoC; the design can create one swap chain per Canvas
-  for multiple device tiles in the same Swing frame.
-- The render callback runs on Swing's EDT for simplicity. A production renderer
-  should move presentation to a dedicated render thread and synchronize
-  resize/peer lifecycle.
-- AWT peer recreation, monitor/DPI changes, device removal, and shutdown races
-  still need dedicated validation.
+```powershell
+mvn -pl scrcpy-swing-poc exec:java -Dscrcpy.adb=C:\\Android\\platform-tools\\adb.exe
+```

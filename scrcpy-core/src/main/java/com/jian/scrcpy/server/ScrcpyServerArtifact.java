@@ -1,88 +1,56 @@
 package com.jian.scrcpy.server;
 
 import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 
+/**
+ * Resolves the scrcpy server bundled by the desktop client on its runtime classpath.
+ */
 public final class ScrcpyServerArtifact {
     public static final String VERSION = "5.0.1";
-    private static final String URL =
-            "https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-server-v5.0.1";
+    private static final String RESOURCE = "scrcpy-server-v5.0.1.jar";
     private static final String SHA256 =
             "764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536";
 
     private ScrcpyServerArtifact() {
     }
 
+    /**
+     * Extracts the server bundled in scrcpy-swing-poc/src/main/resources to a
+     * temporary file so ADB can push it to the Android device.
+     */
     public static Path resolve() throws Exception {
-        String configured = System.getProperty("scrcpy.server.jar");
-        if (configured == null || configured.isBlank()) {
-            configured = System.getenv("SCRCPY_SERVER_JAR");
-        }
-        if (configured != null && !configured.isBlank()) {
-            Path path = Path.of(configured).toAbsolutePath();
-            verify(path);
-            return path;
-        }
+        ClassLoader classLoader = ScrcpyServerArtifact.class.getClassLoader();
+        try (InputStream resource = classLoader.getResourceAsStream(RESOURCE)) {
+            if (resource == null) {
+                throw new IllegalStateException(
+                        "Classpath resource " + RESOURCE + " was not found. "
+                        + "Make sure it is included in scrcpy-swing-poc/src/main/resources.");
+            }
 
-        Path[] candidates = {
-                Path.of("scrcpy-server-v5.0.1"),
-                Path.of("scrcpy-server-v5.0.1.jar"),
-                Path.of("scrcpy-server"),
-                applicationSibling("scrcpy-server-v5.0.1"),
-                applicationSibling("scrcpy-server-v5.0.1.jar"),
-                applicationParentSibling("scrcpy-server-v5.0.1")
-        };
-        for (Path candidate : candidates) {
-            if (Files.isRegularFile(candidate)) {
-                verify(candidate);
-                return candidate.toAbsolutePath();
+            Path extracted = Path.of(System.getProperty("java.io.tmpdir"),
+                    "scrcpy-java", RESOURCE);
+            Files.createDirectories(extracted.getParent());
+            Path temporary = Files.createTempFile(extracted.getParent(),
+                    "scrcpy-server-", ".tmp");
+            try {
+                Files.copy(resource, temporary, StandardCopyOption.REPLACE_EXISTING);
+                verify(temporary);
+                try {
+                    Files.move(temporary, extracted, StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE);
+                } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                    Files.move(temporary, extracted, StandardCopyOption.REPLACE_EXISTING);
+                }
+                verify(extracted);
+                return extracted;
+            } finally {
+                Files.deleteIfExists(temporary);
             }
         }
-
-        Path cache = Path.of(System.getProperty("user.home"), ".scrcpy-java",
-                "scrcpy-server-v5.0.1");
-        if (!Files.isRegularFile(cache) || !matchesSha256(cache)) {
-            Files.createDirectories(cache.getParent());
-            Path tmp = cache.resolveSibling(cache.getFileName() + ".download");
-            HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
-            HttpRequest request = HttpRequest.newBuilder(URI.create(URL)).GET().build();
-            HttpResponse<Path> response = client.send(request, HttpResponse.BodyHandlers.ofFile(tmp));
-            if (response.statusCode() != 200) {
-                Files.deleteIfExists(tmp);
-                throw new IllegalStateException("Cannot download scrcpy-server: HTTP " + response.statusCode());
-            }
-            if (!matchesSha256(tmp)) {
-                Files.deleteIfExists(tmp);
-                throw new IllegalStateException("scrcpy-server SHA-256 mismatch");
-            }
-            Files.move(tmp, cache, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        }
-        verify(cache);
-        return cache;
-    }
-
-    private static Path applicationSibling(String name) {
-        try {
-            Path code = Path.of(ScrcpyServerArtifact.class.getProtectionDomain()
-                    .getCodeSource().getLocation().toURI()).toAbsolutePath().normalize();
-            Path base = Files.isDirectory(code) ? code : code.getParent();
-            return base == null ? Path.of(name) : base.resolve(name);
-        } catch (Exception ignored) {
-            return Path.of(name);
-        }
-    }
-
-    private static Path applicationParentSibling(String name) {
-        Path sibling = applicationSibling(name);
-        Path parent = sibling.getParent();
-        if (parent != null) parent = parent.getParent();
-        return parent == null ? sibling : parent.resolve(name);
     }
 
     private static void verify(Path path) throws Exception {

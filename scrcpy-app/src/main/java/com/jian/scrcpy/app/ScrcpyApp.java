@@ -149,7 +149,7 @@ public final class ScrcpyApp extends Application {
         // Device connection targets are controlled by per-row check boxes.
         // The ListView selection is now only visual focus and never requires Ctrl.
 
-        stage.setTitle("scrcpy-java - 多设备投屏");
+        stage.setTitle("多设备投屏");
         Scene scene = new Scene(content, 1400, 900);
         // A fast drag can cross from one VideoView to another before JavaFX
         // delivers MOUSE_EXITED/MOUSE_DRAGGED to the original view. Keep a
@@ -679,7 +679,7 @@ public final class ScrcpyApp extends Application {
     private Optional<ConnectionSettings> showConnectionSettings(
             Map<String, List<ServerLauncher.VideoEncoder>> encoderCapabilities) {
         Dialog<ConnectionSettings> dialog = new Dialog<>();
-        dialog.setTitle("scrcpy 连接设置");
+        dialog.setTitle("连接设置");
         dialog.setHeaderText("连接设备前设置本次连接参数");
         dialog.initModality(Modality.APPLICATION_MODAL);
 
@@ -987,12 +987,11 @@ public final class ScrcpyApp extends Application {
                                 sdlRenderer)
                         : null;
                 videoDecoderRef.set(videoDecoder);
-                audioPlayer = new JavaSoundPlayer();
-                JavaSoundPlayer player = audioPlayer;
-
                 session = new ScrcpySession(
                         new Adb(System.getProperty("scrcpy.adb", "adb"), device.serial()),
                         options);
+                audioPlayer = new JavaSoundPlayer(session.metrics());
+                JavaSoundPlayer player = audioPlayer;
 
 
                 ScrcpySession runningSession = session;
@@ -1248,6 +1247,7 @@ public final class ScrcpyApp extends Application {
     private void rightSidebarDisplayPower(DeviceSession source, boolean on) {
         for (DeviceSession target : inputTargets(source)) {
             target.controller.setDisplayPower(on);
+            target.session.metrics().setDisplayOn(on);
             target.displayPower = on;
             if (target.displayPowerButton != null) {
                 updateDisplayPowerToggle(target.displayPowerButton, on);

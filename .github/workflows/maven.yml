@@ -1,21 +1,66 @@
 name: Maven CI
 on:
   push:
+    paths-ignore:
+      - 'scrcpy-swing-poc/src/main/resources/native/**'
   pull_request:
   workflow_dispatch:
 
-# Only the newest run for a workflow/branch is useful during active development.
-# Keep workflow name in the key so Maven CI never cancels packaging/release work.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+      has_native: ${{ steps.matrix.outputs.has_native }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        with:
+          filters: |
+            windows:
+              - 'scrcpy-swing-poc/native/CMakeLists.txt'
+              - 'scrcpy-swing-poc/native/src/scrcpy_swing_d3d11.cpp'
+              - '.github/workflows/maven.yml'
+      - name: Generate only the required native build matrix
+        id: matrix
+        shell: bash
+        env:
+          WINDOWS_CHANGED: ${{ steps.filter.outputs.windows }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          include='[]'
+          add_platform() {
+            include="$(jq -c --arg platform "$1" --arg os "$2" --arg library "$3" --arg source "$4" \
+              '. + [{platform:$platform, os:$os, library:$library, source:$source}]' <<< "$include")"
+          }
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$WINDOWS_CHANGED" == "true" ]]; then
+            add_platform windows windows-latest scrcpy_swing_d3d11.dll scrcpy-swing-poc/native/build/Release/scrcpy_swing_d3d11.dll
+          fi
+          matrix="$(jq -cn --argjson include "$include" '{include:$include}')"
+          has_native=false
+          if [[ "$include" != "[]" ]]; then has_native=true; fi
+          echo "value=$matrix" >> "$GITHUB_OUTPUT"
+          echo "has_native=$has_native" >> "$GITHUB_OUTPUT"
+          echo "Native build matrix: $matrix"
+
+  native:
+    needs: changes
+    if: ${{ needs.changes.outputs.has_native == 'true' }}
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -23,5 +68,84 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
+      - name: Configure native Swing renderer
+        shell: bash
+        run: |
+          cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
+      - name: Build native Swing renderer
+        run: cmake --build scrcpy-swing-poc/native/build --config Release
+      - name: Stage native renderer artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="windows-x86_64"
+          mkdir -p "native-output/$target"
+          cp "${{ matrix.source }}" "native-output/$target/${{ matrix.library }}"
+      - name: Upload native renderer
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrcpy-swing-native-${{ matrix.platform }}
+          path: native-output/
+          if-no-files-found: error
+
+  java-build:
+    needs: [changes, native]
+    if: ${{ always() && needs.changes.result == 'success' && (needs.native.result == 'success' || needs.native.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
           cache: maven
-      - run: mvn -B -ntp clean verify
+      - name: Download rebuilt native libraries
+        if: ${{ needs.native.result == 'success' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scrcpy-swing-native-*
+          path: native-artifacts
+          merge-multiple: true
+      - name: Overlay rebuilt native libraries
+        if: ${{ needs.native.result == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -R native-artifacts/. scrcpy-swing-poc/src/main/resources/native/
+      - name: Build Java modules once
+        run: mvn -B -ntp clean verify
+
+  publish-native:
+    needs: [changes, native, java-build]
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.native.result == 'success' && needs.java-build.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - name: Download rebuilt native libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scrcpy-swing-native-*
+          path: native-artifacts
+          merge-multiple: true
+      - name: Overlay rebuilt native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          resource_root="scrcpy-swing-poc/src/main/resources/native"
+          mkdir -p "$resource_root"
+          cp -R native-artifacts/. "$resource_root/"
+      - name: Commit changed native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scrcpy-swing-poc/src/main/resources/native
+          if git diff --cached --quiet; then
+            echo "Native libraries are already up to date."
+            exit 0
+          fi
+          git commit -m "Bundle updated native renderer libraries"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

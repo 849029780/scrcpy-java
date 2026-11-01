@@ -1,10 +1,16 @@
 package com.jian.scrcpy.media;
 
+import com.jian.scrcpy.metrics.SessionMetrics;
 import javax.sound.sampled.*;
 public final class JavaSoundPlayer implements AutoCloseable {
     private SourceDataLine line;
     private int rate, channels;
     private byte[] outputBuffer;
+    private final SessionMetrics metrics;
+
+    public JavaSoundPlayer() { this(null); }
+
+    public JavaSoundPlayer(SessionMetrics metrics) { this.metrics = metrics; }
 
     public synchronized void accept(AudioFrame f) {
         try {
@@ -23,8 +29,20 @@ public final class JavaSoundPlayer implements AutoCloseable {
                 outputBuffer[p] = (byte) s;
                 outputBuffer[p + 1] = (byte) (s >>> 8);
             }
-            line.write(outputBuffer, 0, bytes);
+            try {
+                int written = line.write(outputBuffer, 0, bytes);
+                if (metrics != null) metrics.recordPlayerWrite(written);
+            } catch (RuntimeException outputFailure) {
+                if (metrics != null) metrics.recordPlayerWriteError();
+                // A disconnected/reconfigured Windows audio endpoint can leave
+                // SourceDataLine unusable. Close it now; the next frame retries
+                // opening the current default output device.
+                close();
+                throw outputFailure;
+            }
         } catch (LineUnavailableException e) {
+            if (metrics != null) metrics.recordPlayerWriteError();
+            close();
             throw new IllegalStateException(e);
         }
     }
@@ -36,6 +54,7 @@ public final class JavaSoundPlayer implements AutoCloseable {
         line = AudioSystem.getSourceDataLine(f);
         line.open(f, Math.max(4096, r * c / 10));
         line.start();
+        if (metrics != null) metrics.recordPlayerOpen();
     }
 
     public synchronized void close() {

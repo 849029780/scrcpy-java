@@ -6,6 +6,27 @@
     <version>0.2.0-SNAPSHOT</version>
   </parent>
   <artifactId>scrcpy-swing-poc</artifactId>
-  <name>scrcpy-java Swing D3D11 PoC</name>
-  <description>Standalone Swing/JAWT/D3D11 rendering proof of concept.</description>
+  <name>scrcpy-java Swing desktop client</name>
+  <description>Independent Swing frontend; the JavaFX scrcpy-app module remains unchanged.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.jian.scrcpy</groupId>
+      <artifactId>scrcpy-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <mainClass>com.jian.scrcpy.swing.SwingScrcpyApp</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

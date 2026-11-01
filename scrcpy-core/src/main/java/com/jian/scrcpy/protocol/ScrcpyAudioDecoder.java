@@ -2,6 +2,7 @@ package com.jian.scrcpy.protocol;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
+import com.jian.scrcpy.metrics.SessionMetrics;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import java.util.List;
 
@@ -11,13 +12,19 @@ public final class ScrcpyAudioDecoder extends ByteToMessageDecoder {
     private static final long PTS_MASK = KEY - 1;
     private boolean codecRead;
     private final String sessionLabel;
+    private final SessionMetrics metrics;
 
     public ScrcpyAudioDecoder() {
-        this(null);
+        this(null, null);
     }
 
     public ScrcpyAudioDecoder(String sessionLabel) {
+        this(sessionLabel, null);
+    }
+
+    public ScrcpyAudioDecoder(String sessionLabel, SessionMetrics metrics) {
         this.sessionLabel = sessionLabel == null || sessionLabel.isBlank() ? "unknown" : sessionLabel;
+        this.metrics = metrics;
     }
 
     @Override
@@ -48,6 +55,7 @@ public final class ScrcpyAudioDecoder extends ByteToMessageDecoder {
         long pts = header & PTS_MASK;
         boolean config = (header & CONFIG) != 0;
         boolean keyFrame = (header & KEY) != 0;
+        if (metrics != null) metrics.recordAudioPacket(config, size);
         out.add(new MediaMessage.Packet(config ? -1 : pts, config, keyFrame, in.readRetainedSlice(size)));
     }
 }

@@ -42,7 +42,7 @@ public final class SwingD3D11PoC {
 
             @Override
             public void windowClosed(WindowEvent event) {
-                videoSurface.detachNativeRenderer();
+                videoSurface.close();
             }
         });
 
