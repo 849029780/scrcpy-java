@@ -110,6 +110,59 @@ jobs:
             exit 1
           fi
 
+      - name: Analyze dependencies and build minimized Java runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          input="scrcpy-swing-poc/target/package-input"
+          main_jar="$(find "$input" -maxdepth 1 -name 'scrcpy-swing-poc-*.jar' -print -quit)"
+          test -n "$main_jar"
+          echo "Analyzing application and runtime dependencies with jdeps..."
+          detected_modules="$(jdeps --multi-release 25 --ignore-missing-deps --print-module-deps --class-path "$input/*" "$main_jar")"
+          if [[ -z "$detected_modules" ]]; then
+            echo "jdeps did not return a module list; refusing to create an incomplete runtime."
+            exit 1
+          fi
+          echo "jdeps modules: $detected_modules"
+          required_modules="java.desktop java.logging java.management java.naming java.instrument jdk.unsupported jdk.crypto.ec jdk.charsets jdk.localedata"
+          all_modules="$(printf '%s\\n' "$detected_modules" | tr ',' '\\n'; printf '%s\\n' "$required_modules" | tr ' ' '\\n')"
+          modules="$(printf '%s\\n' "$all_modules" | sed '/^$/d' | sort -u | paste -sd, -)"
+          echo "Final runtime modules: $modules"
+          runtime="scrcpy-swing-poc/target/minimized-runtime"
+          rm -rf "$runtime"
+          jlink --add-modules "$modules" --strip-debug --no-header-files --no-man-pages --compress=2 --output "$runtime"
+          "$runtime/bin/java" -version
+          "$runtime/bin/java" --list-modules
+          du -sh "$runtime"
+
+          smoke_dir="scrcpy-swing-poc/target/runtime-smoke"
+          mkdir -p "$smoke_dir"
+          cat > "$smoke_dir/RuntimeSmoke.java" <<'JAVA'
+          import com.jian.scrcpy.net.NettyTransport;
+          import java.awt.Graphics2D;
+          import java.awt.image.BufferedImage;
+          public final class RuntimeSmoke {
+              public static void main(String[] args) throws Exception {
+                  BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+                  Graphics2D graphics = image.createGraphics();
+                  graphics.fillRect(0, 0, 8, 8);
+                  graphics.dispose();
+                  javax.swing.JPanel panel = new javax.swing.JPanel();
+                  if (panel == null || image.getRGB(1, 1) == 0) throw new IllegalStateException("Swing/AWT failed");
+                  Class.forName("org.bytedeco.ffmpeg.global.avutil", true, RuntimeSmoke.class.getClassLoader());
+                  NettyTransport.Selection transport = NettyTransport.select();
+                  System.out.println("Runtime smoke test passed; Netty transport=" + transport.name());
+              }
+          }
+          JAVA
+          classpath_separator=":"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then classpath_separator=";"; fi
+          javac -cp "$input/*" -d "$smoke_dir" "$smoke_dir/RuntimeSmoke.java"
+          "$runtime/bin/java" -cp "$input/*${classpath_separator}$smoke_dir" RuntimeSmoke
+          echo "Runtime and application dependency sizes:"
+          du -sh "$runtime" "$input"
+          find "$input" -maxdepth 1 -type f -name '*.jar' -printf '%f %k KB\\n' | sort
+
       - name: Create native application image
         shell: bash
         env:
@@ -125,6 +178,7 @@ jobs:
             --type app-image \
             --name scrcpy-java \
             --input scrcpy-swing-poc/target/package-input \
+            --runtime-image scrcpy-swing-poc/target/minimized-runtime \\
             --dest scrcpy-swing-poc/target/dist \
             --main-jar "$(basename scrcpy-swing-poc/target/package-input/scrcpy-swing-poc-*.jar)" \
             --main-class com.jian.scrcpy.swing.SwingScrcpyApp \
