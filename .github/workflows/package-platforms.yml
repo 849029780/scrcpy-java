@@ -124,6 +124,8 @@ jobs:
             --type app-image \
             --name scrcpy-java \
             --input scrcpy-swing-poc/target/package-input \
+            --app-content scrcpy-swing-poc/target/package-input/platform-tools \
+            --app-content scrcpy-swing-poc/target/package-input/lib \
             --dest scrcpy-swing-poc/target/dist \
             --main-jar "$(basename scrcpy-swing-poc/target/package-input/scrcpy-swing-poc-*.jar)" \
             --main-class com.jian.scrcpy.swing.SwingScrcpyApp \
