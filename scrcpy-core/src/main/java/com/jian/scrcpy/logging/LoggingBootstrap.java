@@ -40,9 +40,9 @@ public final class LoggingBootstrap {
 
         @Override
         public synchronized void write(int value) {
-            if (value == '\\n') {
+            if (value == '\n') {
                 emit();
-            } else if (value != '\\r') {
+            } else if (value != '\r') {
                 line.write(value);
             }
         }
