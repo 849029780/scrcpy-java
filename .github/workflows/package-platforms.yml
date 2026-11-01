@@ -125,14 +125,16 @@ jobs:
           fi
           echo "jdeps modules: $detected_modules"
           required_modules="java.desktop java.logging java.management java.naming java.instrument jdk.unsupported jdk.crypto.ec jdk.charsets jdk.localedata"
-          all_modules="$(printf '%s\\n' "$detected_modules" | tr ',' '\\n'; printf '%s\\n' "$required_modules" | tr ' ' '\\n')"
-          modules="$(printf '%s\\n' "$all_modules" | sed '/^$/d' | sort -u | paste -sd, -)"
+          all_modules="$(printf '%s\n' "$detected_modules" | tr ',' '\n'; printf '%s\n' "$required_modules" | tr ' ' '\n')"
+          modules="$(printf '%s\n' "$all_modules" | sed '/^$/d' | sort -u | paste -sd, -)"
           echo "Final runtime modules: $modules"
           runtime="scrcpy-swing-poc/target/minimized-runtime"
           rm -rf "$runtime"
           jlink --add-modules "$modules" --strip-debug --no-header-files --no-man-pages --compress=2 --output "$runtime"
-          "$runtime/bin/java" -version
-          "$runtime/bin/java" --list-modules
+          runtime_java="$runtime/bin/java"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then runtime_java="$runtime/bin/java.exe"; fi
+          "$runtime_java" -version
+          "$runtime_java" --list-modules
           du -sh "$runtime"
 
           smoke_dir="scrcpy-swing-poc/target/runtime-smoke"
@@ -158,10 +160,10 @@ jobs:
           classpath_separator=":"
           if [[ "${{ runner.os }}" == "Windows" ]]; then classpath_separator=";"; fi
           javac -cp "$input/*" -d "$smoke_dir" "$smoke_dir/RuntimeSmoke.java"
-          "$runtime/bin/java" -cp "$input/*${classpath_separator}$smoke_dir" RuntimeSmoke
+          "$runtime_java" -cp "$input/*${classpath_separator}$smoke_dir" RuntimeSmoke
           echo "Runtime and application dependency sizes:"
           du -sh "$runtime" "$input"
-          find "$input" -maxdepth 1 -type f -name '*.jar' -printf '%f %k KB\\n' | sort
+          for jar in "$input"/*.jar; do [ -f "$jar" ] || continue; printf '%s %s bytes\\n' "$(basename "$jar")" "$(wc -c < "$jar" | tr -d ' ')"; done | sort
 
       - name: Create native application image
         shell: bash
