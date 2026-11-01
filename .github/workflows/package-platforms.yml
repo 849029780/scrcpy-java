@@ -90,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           input="scrcpy-swing-poc/target/package-input"
-          files="$(find "$input" -maxdepth 1 -type f -name '*.jar' -exec basename {} \\;)"
+          files="$(for jar in "$input"/*.jar; do [ -f "$jar" ] || continue; basename "$jar"; done)"
           echo "Packaged JARs:"
           printf '%s\n' "$files"
           case "${{ matrix.platform }}" in
