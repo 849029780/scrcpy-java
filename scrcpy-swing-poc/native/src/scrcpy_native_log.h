@@ -125,10 +125,19 @@ inline void write(Level level, const char* component, const char* fmt, ...) {
 #endif
         char stamp[32]{};
         std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
-        if (auto* f = std::fopen(filePath.string().c_str(), "ab")) {
-            std::fprintf(f, "%s [%s] [tid=%zu] [%s] %s\n", stamp, levelName(level),
-                    std::hash<std::thread::id>{}(std::this_thread::get_id()), component ? component : "native", msg);
-            std::fflush(f); std::fclose(f);
+        char lineBuffer[4608]{};
+        const int lineLength = std::snprintf(lineBuffer, sizeof(lineBuffer),
+                "%s [%s] [tid=%zu] [%s] %s\\n", stamp, levelName(level),
+                std::hash<std::thread::id>{}(std::this_thread::get_id()),
+                component ? component : "native", msg);
+        if (lineLength > 0) {
+            const auto lineSize = std::min<std::size_t>(
+                    static_cast<std::size_t>(lineLength), sizeof(lineBuffer) - 1);
+            rotate(filePath, lineSize);
+            if (auto* f = std::fopen(filePath.string().c_str(), "ab")) {
+                std::fwrite(lineBuffer, 1, lineSize, f);
+                std::fflush(f); std::fclose(f);
+            }
         }
         cleanup(filePath.parent_path());
     } catch (...) {}
