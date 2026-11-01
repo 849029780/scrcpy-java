@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_map>
 
 namespace {
 struct Renderer {
@@ -18,13 +19,45 @@ struct Renderer {
     VADisplay vaDisplay{};
     std::mutex mutex;
     ~Renderer() {
-        if (vaDisplay) vaTerminate(vaDisplay);
+        if (vaDisplay) releaseVaDisplay(display);
         // JAWT owns the X11 Display; do not XCloseDisplay().
     }
 };
 std::mutex gMutex;
 std::unordered_map<jlong,std::shared_ptr<Renderer>> renderers;
 std::atomic<jlong> nextHandle{1};
+
+struct SharedVaDisplay { VADisplay display{}; size_t references{}; };
+std::mutex gVaPoolMutex;
+std::unordered_map<Display*, SharedVaDisplay> gVaDisplays;
+
+VADisplay acquireVaDisplay(Display* xDisplay) {
+    std::lock_guard<std::mutex> guard(gVaPoolMutex);
+    auto& entry = gVaDisplays[xDisplay];
+    if (!entry.display) {
+        VADisplay display = vaGetDisplay(xDisplay);
+        if (!display) { gVaDisplays.erase(xDisplay); return nullptr; }
+        int major = 0, minor = 0;
+        if (vaInitialize(display, &major, &minor) != VA_STATUS_SUCCESS) {
+            gVaDisplays.erase(xDisplay);
+            return nullptr;
+        }
+        entry.display = display;
+    }
+    ++entry.references;
+    return entry.display;
+}
+
+void releaseVaDisplay(Display* xDisplay) {
+    std::lock_guard<std::mutex> guard(gVaPoolMutex);
+    auto it = gVaDisplays.find(xDisplay);
+    if (it == gVaDisplays.end()) return;
+    if (it->second.references > 0) --it->second.references;
+    if (it->second.references == 0) {
+        if (it->second.display) vaTerminate(it->second.display);
+        gVaDisplays.erase(it);
+    }
+}
 
 void fail(JNIEnv* env,const char* msg){ jclass c=env->FindClass("java/lang/IllegalStateException"); if(c) env->ThrowNew(c,msg); }
 std::shared_ptr<Renderer> find(jlong h){ std::lock_guard<std::mutex> g(gMutex); auto i=renderers.find(h); return i==renderers.end()?nullptr:i->second; }
@@ -53,9 +86,8 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_jian_scrcpy_swing_NativeVaapiCanvas_
     Display* display=nullptr; Drawable drawable=0;
     if(!getSurface(env,canvas,&display,&drawable)){ fail(env,"JAWT X11 surface unavailable"); return 0; }
     auto r=std::make_shared<Renderer>(); r->display=display; r->drawable=drawable;
-    r->vaDisplay=vaGetDisplay(display);
-    if(!r->vaDisplay){ fail(env,"vaGetDisplay failed"); return 0; }
-    int major=0,minor=0; if(vaInitialize(r->vaDisplay,&major,&minor)!=VA_STATUS_SUCCESS){ fail(env,"vaInitialize failed"); return 0; }
+    r->vaDisplay=acquireVaDisplay(display);
+    if(!r->vaDisplay){ fail(env,"VAAPI shared display initialization failed"); return 0; }
     jlong h=nextHandle.fetch_add(1); std::lock_guard<std::mutex> g(gMutex); renderers.emplace(h,r); return h;
 }
 extern "C" JNIEXPORT jlong JNICALL Java_com_jian_scrcpy_swing_NativeVaapiCanvas_display0(JNIEnv*,jclass,jlong h){
