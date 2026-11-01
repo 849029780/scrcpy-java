@@ -136,9 +136,13 @@ jobs:
         run: |
           set -euo pipefail
           image="scrcpy-swing-poc/target/dist/scrcpy-java"
-          if [[ "${{ matrix.platform }}" == macos-* ]]; then image="scrcpy-swing-poc/target/dist/scrcpy-java.app/Contents/app"; fi
-          test -d "$image"
-          adb_dir="$image/platform-tools/${{ matrix.adb_platform }}"
+          app_dir="$image/app"
+          if [[ "${{ matrix.platform }}" == macos-* ]]; then
+            image="scrcpy-swing-poc/target/dist/scrcpy-java.app"
+            app_dir="$image/Contents/app"
+          fi
+          test -d "$app_dir"
+          adb_dir="$app_dir/platform-tools/${{ matrix.adb_platform }}"
           if [[ "${{ matrix.adb_platform }}" == windows ]]; then
             test -f "$adb_dir/adb.exe"
             test -f "$adb_dir/AdbWinApi.dll"
@@ -146,9 +150,9 @@ jobs:
           else
             test -x "$adb_dir/adb"
           fi
-          test -f "$image/lib/scrcpy-server-v5.0.1.jar"
+          test -f "$app_dir/lib/scrcpy-server-v5.0.1.jar"
           echo "Bundled ADB verified at: $adb_dir"
-          echo "Bundled scrcpy server verified at: $image/lib/scrcpy-server-v5.0.1.jar"
+          echo "Bundled scrcpy server verified at: $app_dir/lib/scrcpy-server-v5.0.1.jar"
 
       - name: Archive Windows package
         if: runner.os == 'Windows'
