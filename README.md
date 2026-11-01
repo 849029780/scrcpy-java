@@ -32,3 +32,9 @@ The `Desktop Packages` GitHub Actions workflow builds independent Windows, macOS
 - scrcpy-server download/cache plus bundled-server discovery
 
 This remains an incremental Java port of the scrcpy desktop client; platform-specific runtime behavior is continuously verified on Windows, macOS and Linux CI.
+## Bundled scrcpy server
+
+Place the official scrcpy 5.0.1 server artifact at the repository root as `scrcpy-server-v5.0.1.jar`. The application verifies its SHA-256 before pushing it to Android devices and no longer downloads the server automatically. For packaged builds, include the same file at `scrcpy-core/src/main/resources/scrcpy-server-v5.0.1.jar`.
+
+Official artifact: https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-server-v5.0.1  
+SHA-256: `764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536`
