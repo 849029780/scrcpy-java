@@ -133,15 +133,26 @@ jobs:
             --java-options "--enable-native-access=ALL-UNNAMED"
 
           image="scrcpy-swing-poc/target/dist/scrcpy-java"
-          app_dir="$image/app"
-          if [[ "${{ matrix.platform }}" == macos-* ]]; then
-            image="scrcpy-swing-poc/target/dist/scrcpy-java.app"
-            app_dir="$image/Contents/app"
+          case "${{ matrix.platform }}" in
+            linux-*) app_dir="$image/lib/app" ;;
+            macos-*)
+              image="scrcpy-swing-poc/target/dist/scrcpy-java.app"
+              app_dir="$image/Contents/app"
+              ;;
+            *) app_dir="$image/app" ;;
+          esac
+
+          echo "jpackage image: $image"
+          echo "Application content directory: $app_dir"
+          # jpackage uses lib/app on Linux, app on Windows, and Contents/app on macOS.
+          if [[ ! -d "$app_dir" ]]; then
+            echo "Expected application content directory does not exist. Actual image layout:"
+            find "$image" -maxdepth 4 -print || true
+            exit 1
           fi
 
           # jpackage's --input is for the application JARs. Copy non-JAR
           # runtime assets after image creation to preserve nested paths.
-          test -d "$app_dir"
           cp -a scrcpy-swing-poc/target/package-input/platform-tools "$app_dir/"
           cp -a scrcpy-swing-poc/target/package-input/lib "$app_dir/"
 
@@ -150,12 +161,20 @@ jobs:
         run: |
           set -euo pipefail
           image="scrcpy-swing-poc/target/dist/scrcpy-java"
-          app_dir="$image/app"
-          if [[ "${{ matrix.platform }}" == macos-* ]]; then
-            image="scrcpy-swing-poc/target/dist/scrcpy-java.app"
-            app_dir="$image/Contents/app"
+          case "${{ matrix.platform }}" in
+            linux-*) app_dir="$image/lib/app" ;;
+            macos-*)
+              image="scrcpy-swing-poc/target/dist/scrcpy-java.app"
+              app_dir="$image/Contents/app"
+              ;;
+            *) app_dir="$image/app" ;;
+          esac
+          echo "Checking application content directory: $app_dir"
+          if [[ ! -d "$app_dir" ]]; then
+            echo "Application content directory is missing. Actual image layout:"
+            find "$image" -maxdepth 4 -print || true
+            exit 1
           fi
-          test -d "$app_dir"
           adb_dir="$app_dir/platform-tools/${{ matrix.adb_platform }}"
           echo "Application image contents:"
           find "$app_dir" -maxdepth 5 -type f \( -name adb -o -name adb.exe -o -name 'AdbWin*.dll' -o -name 'scrcpy-server-v5.0.1.jar' \) -print
