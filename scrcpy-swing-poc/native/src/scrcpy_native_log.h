@@ -117,7 +117,7 @@ inline void write(Level level, const char* component, const char* fmt, ...) {
 #if defined(_WIN32)
         localtime_s(&tm, &tt);
 #else
-        localtime_r(&tm, &tt);
+        localtime_r(&tt, &tm);
 #endif
         char stamp[32]{};
         std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
