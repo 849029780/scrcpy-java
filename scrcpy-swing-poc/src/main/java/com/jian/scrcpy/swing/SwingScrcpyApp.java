@@ -603,7 +603,7 @@ public final class SwingScrcpyApp {
         advanced.add(codecOptions, BorderLayout.CENTER);
         JPanel content = new JPanel(new BorderLayout(4, 4));
         content.add(panel, BorderLayout.CENTER); content.add(advanced, BorderLayout.SOUTH);
-        int answer = JOptionPane.showConfirmDialog(frame, new JScrollPane(content), "scrcpy 连接设置",
+        int answer = JOptionPane.showConfirmDialog(frame, new JScrollPane(content), "连接设置",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (answer != JOptionPane.OK_OPTION) return null;
         try {
