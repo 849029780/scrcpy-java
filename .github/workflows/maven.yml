@@ -32,21 +32,38 @@ jobs:
               - 'scrcpy-swing-poc/native/CMakeLists.txt'
               - 'scrcpy-swing-poc/native/src/scrcpy_swing_d3d11.cpp'
               - '.github/workflows/maven.yml'
-      - name: Generate only the required native build matrix
+            linux:
+              - 'scrcpy-swing-poc/native/CMakeLists.txt'
+              - 'scrcpy-swing-poc/native/src/scrcpy_swing_vaapi.cpp'
+              - '.github/workflows/maven.yml'
+            macos:
+              - 'scrcpy-swing-poc/native/CMakeLists.txt'
+              - 'scrcpy-swing-poc/native/src/scrcpy_swing_metal.mm'
+              - '.github/workflows/maven.yml'
+      - name: Generate native build matrix
         id: matrix
         shell: bash
         env:
           WINDOWS_CHANGED: ${{ steps.filter.outputs.windows }}
+          LINUX_CHANGED: ${{ steps.filter.outputs.linux }}
+          MACOS_CHANGED: ${{ steps.filter.outputs.macos }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           include='[]'
           add_platform() {
-            include="$(jq -c --arg platform "$1" --arg os "$2" --arg library "$3" --arg source "$4" \
-              '. + [{platform:$platform, os:$os, library:$library, source:$source}]' <<< "$include")"
+            include="$(jq -c --arg platform "$1" --arg os "$2" --arg library "$3" --arg source "$4" --arg target "$5" \
+              '. + [{platform:$platform, os:$os, library:$library, source:$source, target:$target}]' <<< "$include")"
           }
           if [[ "$EVENT_NAME" == "workflow_dispatch" || "$WINDOWS_CHANGED" == "true" ]]; then
-            add_platform windows windows-latest scrcpy_swing_d3d11.dll scrcpy-swing-poc/native/build/Release/scrcpy_swing_d3d11.dll
+            add_platform windows windows-latest scrcpy_swing_d3d11.dll scrcpy-swing-poc/native/build/Release/scrcpy_swing_d3d11.dll windows-x86_64
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$LINUX_CHANGED" == "true" ]]; then
+            add_platform linux ubuntu-latest libscrcpy_swing_vaapi.so scrcpy-swing-poc/native/build/libscrcpy_swing_vaapi.so linux-x86_64
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$MACOS_CHANGED" == "true" ]]; then
+            add_platform macos-intel macos-15-intel libscrcpy_swing_metal.dylib scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib macos-x86_64
+            add_platform macos-arm64 macos-latest libscrcpy_swing_metal.dylib scrcpy-swing-poc/native/build/libscrcpy_swing_metal.dylib macos-aarch64
           fi
           matrix="$(jq -cn --argjson include "$include" '{include:$include}')"
           has_native=false
@@ -68,19 +85,27 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
+      - name: Install Linux VAAPI development dependencies
+        if: ${{ matrix.platform == 'linux' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libx11-dev libva-dev
       - name: Configure native Swing renderer
         shell: bash
         run: |
-          cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
+          if [[ "${{ matrix.platform }}" == "windows" ]]; then
+            cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build -A x64
+          else
+            cmake -S scrcpy-swing-poc/native -B scrcpy-swing-poc/native/build
+          fi
       - name: Build native Swing renderer
         run: cmake --build scrcpy-swing-poc/native/build --config Release
       - name: Stage native renderer artifact
         shell: bash
         run: |
           set -euo pipefail
-          target="windows-x86_64"
-          mkdir -p "native-output/$target"
-          cp "${{ matrix.source }}" "native-output/$target/${{ matrix.library }}"
+          mkdir -p "native-output/${{ matrix.target }}"
+          cp "${{ matrix.source }}" "native-output/${{ matrix.target }}/${{ matrix.library }}"
       - name: Upload native renderer
         uses: actions/upload-artifact@v4
         with:
@@ -141,7 +166,7 @@ jobs:
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+users.noreply.github.com"
           git add scrcpy-swing-poc/src/main/resources/native
           if git diff --cached --quiet; then
             echo "Native libraries are already up to date."
