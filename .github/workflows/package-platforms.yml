@@ -1,0 +1,174 @@
+name: Build and release platform packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x86_64
+            runner: windows-latest
+            archive: zip
+          - platform: linux-x86_64
+            runner: ubuntu-latest
+            archive: tar.gz
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            archive: zip
+          - platform: macos-arm64
+            runner: macos-latest
+            archive: zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      # Each runner builds from a clean source tree but only keeps its own
+      # native resources. This prevents foreign DLL/SO/dylib files entering
+      # the application JAR.
+      - name: Keep only this platform's bundled native resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.platform }}" in
+            windows-x86_64) keep="windows-x86_64" ;;
+            linux-x86_64) keep="linux-x86_64" ;;
+            macos-x86_64) keep="macos-x86_64" ;;
+            macos-arm64) keep="macos-aarch64" ;;
+            *) echo "Unknown platform: ${{ matrix.platform }}"; exit 1 ;;
+          esac
+          for dir in scrcpy-swing-poc/src/main/resources/native/*; do
+            [ -d "$dir" ] || continue
+            [ "$(basename "$dir")" = "$keep" ] || rm -rf "$dir"
+          done
+
+      - name: Build Swing client
+        run: mvn -B -pl scrcpy-swing-poc -am install -DskipTests
+
+      # Keep all runtime JARs at the top level: jpackage's generated launcher
+      # class path includes the input directory, not arbitrary nested folders.
+      - name: Prepare application input
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p scrcpy-swing-poc/target/package-input
+          cp scrcpy-swing-poc/target/scrcpy-swing-poc-*.jar scrcpy-swing-poc/target/package-input/
+          mvn -B -pl scrcpy-swing-poc dependency:copy-dependencies \
+            -DincludeScope=runtime \
+            -DoutputDirectory="${{ github.workspace }}/scrcpy-swing-poc/target/package-input"
+
+      - name: Verify platform-native dependency isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          input="scrcpy-swing-poc/target/package-input"
+          files="$(find "$input" -maxdepth 1 -type f -name '*.jar' -exec basename {} \;)"
+          echo "Packaged JARs:"
+          printf '%s\n' "$files"
+          case "${{ matrix.platform }}" in
+            windows-x86_64) forbidden='linux-|macosx-' ;;
+            linux-x86_64) forbidden='windows-|macosx-' ;;
+            macos-x86_64) forbidden='windows-|linux-' ;;
+            macos-arm64) forbidden='windows-|linux-|macosx-x86_64' ;;
+            *) echo "Unknown platform: ${{ matrix.platform }}"; exit 1 ;;
+          esac
+          if printf '%s\n' "$files" | grep -E "$forbidden"; then
+            echo "Foreign-platform native dependency found in package input."
+            exit 1
+          fi
+          if ! printf '%s\n' "$files" | grep -E '^(ffmpeg|javacpp)-.*-(windows-x86_64|linux-x86_64|macosx-x86_64|macosx-arm64)\.jar$' >/dev/null; then
+            echo "Expected platform-native JavaCPP/FFmpeg JARs were not found."
+            exit 1
+          fi
+
+      - name: Create native application image
+        shell: bash
+        env:
+          APP_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.2.0' }}
+        run: |
+          VERSION="${APP_VERSION#v}"
+          # macOS CFBundleVersion rejects a leading zero; map 0.x.y to 1.x.y
+          # for the bundle metadata while keeping the application/tag version intact.
+          if [[ "${{ matrix.platform }}" == macos-* && "$VERSION" =~ ^0\. ]]; then
+            VERSION="1.${VERSION#0.}"
+          fi
+          echo "jpackage app version: $VERSION"
+          jpackage \
+            --type app-image \
+            --name scrcpy-java \
+            --input scrcpy-swing-poc/target/package-input \
+            --dest scrcpy-swing-poc/target/dist \
+            --main-jar "$(basename scrcpy-swing-poc/target/package-input/scrcpy-swing-poc-*.jar)" \
+            --main-class com.jian.scrcpy.swing.SwingScrcpyApp \
+            --app-version "$VERSION" \
+            --vendor "scrcpy-java" \
+            --java-options "--enable-native-access=ALL-UNNAMED"
+
+      - name: Archive Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path scrcpy-swing-poc/target/dist/scrcpy-java -DestinationPath scrcpy-java-${{ matrix.platform }}.zip
+
+      - name: Archive macOS package
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent scrcpy-swing-poc/target/dist/scrcpy-java.app scrcpy-java-${{ matrix.platform }}.zip
+
+      - name: Archive Linux package
+        if: runner.os == 'Linux'
+        run: tar -C scrcpy-swing-poc/target/dist -czf scrcpy-java-${{ matrix.platform }}.tar.gz scrcpy-java
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrcpy-java-${{ matrix.platform }}
+          path: scrcpy-java-${{ matrix.platform }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all platform packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: scrcpy-java-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Release assets:"
+          find release-assets -maxdepth 1 -type f -printf '%f\n'
+          count="$(find release-assets -maxdepth 1 -type f | wc -l)"
+          if [ "$count" -ne 4 ]; then
+            echo "Expected 4 platform archives, found $count."
+            exit 1
+          fi
+
+      - name: Create GitHub Release and upload packages
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: scrcpy-java ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: release-assets/*
