@@ -6,7 +6,6 @@ import com.jian.scrcpy.adb.AdbDevice;
 import com.jian.scrcpy.media.JavaSoundPlayer;
 import com.jian.scrcpy.media.FfmpegVideoDecoder;
 import com.jian.scrcpy.media.VideoHardwareDeviceProvider;
-import com.jian.scrcpy.sdl.SdlD3d11VideoRenderer;
 import com.jian.scrcpy.control.DeviceController;
 import com.jian.scrcpy.control.UhidController;
 import com.jian.scrcpy.control.ClipboardController;
@@ -53,8 +52,6 @@ public final class ScrcpyApp extends Application {
     private static final double RELATIVE_MOUSE_EDGE_MARGIN = 2.0;
     private static final long RECONNECT_INTERVAL_MILLIS = 3_000;
     private static final int MAX_RECONNECT_ATTEMPTS = 20;
-    /** Experimental opt-in path: present D3D11 hardware frames in an SDL window. */
-    private static final boolean USE_SDL_D3D11_RENDERER = Boolean.getBoolean("scrcpy.video.sdl-d3d11");
 
     // Device management is intentionally kept out of the main workspace and
     // shown from the "设备" menu as a modal popup.
@@ -946,7 +943,6 @@ public final class ScrcpyApp extends Application {
             JavaSoundPlayer audioPlayer = null;
             java.util.concurrent.atomic.AtomicReference<FfmpegVideoDecoder> videoDecoderRef = new java.util.concurrent.atomic.AtomicReference<>();
             ScrcpySession session = null;
-            SdlD3d11VideoRenderer sdlRenderer = null;
             try {
                 ScrcpyOptions d = settings.toOptions(device.serial(), ScrcpyOptions.defaults());
                 ScrcpyOptions options = new ScrcpyOptions(
@@ -959,32 +955,10 @@ public final class ScrcpyApp extends Application {
                         d.turnScreenOff(), d.crop(), d.startApp());
 
                 VideoView view = new VideoView();
-                if (USE_SDL_D3D11_RENDERER) {
-                    try {
-                        sdlRenderer = SdlD3d11VideoRenderer.create(
-                                "scrcpy-java - " + device.displayName(), 360, 680);
-                    } catch (Throwable rendererError) {
-                        // SDL/D3D11 is an experimental presentation backend.
-                        // A renderer initialization failure must not prevent
-                        // the device session from connecting: the decoder will
-                        // use FFmpeg's default hardware device and transfer
-                        // frames to the existing JavaFX BGRA path.
-                        System.err.printf(
-                                "[scrcpy-java][%s] SDL D3D11 renderer unavailable; falling back to JavaFX: %s%n",
-                                device.serial(), rendererError);
-                        rendererError.printStackTrace(System.err);
-                        sdlRenderer = null;
-                    }
-                }
                 final FfmpegVideoDecoder videoDecoder = d.video()
                         ? new FfmpegVideoDecoder(
-                                view::accept,
-                                d.videoDecoder(),
-                                sdlRenderer != null
-                                        ? sdlRenderer.hardwareDeviceProvider()
-                                        : VideoHardwareDeviceProvider.DEFAULT,
-                                device.serial(),
-                                sdlRenderer)
+                                view::accept, d.videoDecoder(),
+                                VideoHardwareDeviceProvider.DEFAULT, device.serial())
                         : null;
                 videoDecoderRef.set(videoDecoder);
                 session = new ScrcpySession(
@@ -1007,10 +981,6 @@ public final class ScrcpyApp extends Application {
                         ScrcpyServerArtifact.resolve(),
                         videoDecoder,
                         player::accept);
-
-                // SdlD3d11VideoRenderer.create() already owns its SDL lifecycle
-                // on a dedicated platform render thread. Do not start a second pump loop here.
-                final SdlD3d11VideoRenderer sessionSdlRenderer = sdlRenderer;
 
                 Platform.runLater(() -> {
                     reconnecting.remove(device.serial());
@@ -1035,7 +1005,7 @@ public final class ScrcpyApp extends Application {
                     clipboard.onRemoteClipboard(this::applyDeviceClipboard);
                     DeviceSession handle = new DeviceSession(
                             runningSession, player, videoDecoder, view,
-                            new DeviceController(runningSession::sendControl), uhid, clipboard, sessionSdlRenderer);
+                            new DeviceController(runningSession::sendControl), uhid, clipboard);
                     sessions.put(device.serial(), handle);
                     addScreen(handle, device);
                     if (Objects.equals(desiredPrimarySerial, device.serial())) {
@@ -1047,13 +1017,6 @@ public final class ScrcpyApp extends Application {
                 });
             } catch (Throwable e) {
                 reconnecting.remove(device.serial());
-                if (sdlRenderer != null) {
-                    try {
-                        sdlRenderer.close();
-                    } catch (Throwable closeError) {
-                        e.addSuppressed(closeError);
-                    }
-                }
                 if (session != null) session.close();
                 FfmpegVideoDecoder videoDecoder = videoDecoderRef.getAndSet(null);
                 if (videoDecoder != null) videoDecoder.close();
@@ -2107,7 +2070,6 @@ public final class ScrcpyApp extends Application {
         private final DeviceController controller;
         private final UhidController uhid;
         private final ClipboardController clipboard;
-        private final SdlD3d11VideoRenderer sdlRenderer;
         private VBox tile;
         private StackPane viewport;
         private ToggleButton adaptClickButton;
@@ -2133,8 +2095,7 @@ public final class ScrcpyApp extends Application {
                 VideoView view,
                 DeviceController controller,
                 UhidController uhid,
-                ClipboardController clipboard,
-                SdlD3d11VideoRenderer sdlRenderer) {
+                ClipboardController clipboard) {
             this.session = session;
             this.audioPlayer = audioPlayer;
             this.videoDecoder = videoDecoder;
@@ -2142,7 +2103,6 @@ public final class ScrcpyApp extends Application {
             this.controller = controller;
             this.uhid = uhid;
             this.clipboard = clipboard;
-            this.sdlRenderer = sdlRenderer;
         }
 
         @Override
@@ -2162,10 +2122,6 @@ public final class ScrcpyApp extends Application {
                 if (videoDecoder != null) videoDecoder.close();
             } catch (Throwable t) {
                 first = t;
-            }
-
-            if (sdlRenderer != null) {
-                sdlRenderer.requestClose();
             }
 
             try {
