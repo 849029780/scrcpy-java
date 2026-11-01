@@ -1,5 +1,7 @@
 package com.jian.scrcpy.swing;
 
+import com.jian.scrcpy.logging.LoggingBootstrap;
+
 import com.jian.scrcpy.ScrcpySession;
 import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.adb.AdbDevice;
@@ -47,6 +49,10 @@ import java.util.stream.Collectors;
  * services but has no dependency on JavaFX and does not modify scrcpy-app.
  */
 public final class SwingScrcpyApp {
+    static {
+        LoggingBootstrap.install();
+    }
+
     private static final int TILE_WIDTH = 360;
     private static final int TILE_HEIGHT = 680;
     private static final int NAV_WIDTH = 40; // 38px button column + 2px scrollbar
