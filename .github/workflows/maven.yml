@@ -113,7 +113,7 @@ jobs:
           set -euo pipefail
           cp -R native-artifacts/. scrcpy-swing-poc/src/main/resources/native/
       - name: Build Java modules once
-        run: mvn -B -ntp clean verify
+        run: mvn -B -ntp -pl scrcpy-core,scrcpy-swing-poc -am clean verify
 
   publish-native:
     needs: [changes, native, java-build]
