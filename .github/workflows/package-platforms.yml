@@ -26,11 +26,6 @@ jobs:
             adb_platform: linux
             adb_source: linux-x86_64
             archive: tar.gz
-          - platform: macos-x86_64
-            runner: macos-15-intel
-            adb_platform: macos
-            adb_source: macos-x86_64
-            archive: zip
           - platform: macos-arm64
             runner: macos-latest
             adb_platform: macos
@@ -55,7 +50,6 @@ jobs:
           case "${{ matrix.platform }}" in
             windows-x86_64) keep="windows-x86_64" ;;
             linux-x86_64) keep="linux-x86_64" ;;
-            macos-x86_64) keep="macos-x86_64" ;;
             macos-arm64) keep="macos-aarch64" ;;
             *) echo "Unknown platform: ${{ matrix.platform }}"; exit 1 ;;
           esac
@@ -195,8 +189,8 @@ jobs:
           echo "Release assets:"
           find release-assets -maxdepth 1 -type f -printf '%f\n'
           count="$(find release-assets -maxdepth 1 -type f | wc -l)"
-          if [ "$count" -ne 4 ]; then
-            echo "Expected 4 platform archives, found $count."
+          if [ "$count" -ne 3 ]; then
+            echo "Expected 3 platform archives, found $count."
             exit 1
           fi
 
