@@ -64,49 +64,45 @@ Typical use cases include:
 
 ## Screenshots
 
-### 1. Simultaneous multi-device mirroring
+### 1. Device list
 
-View multiple Android devices in the same workspace without switching between individual mirroring windows.
-
-![Multi-device mirroring](assets/多设备投屏列表.png)
-
-### 2. Group control — embedded mode
-
-Keep multiple devices in one workspace and use the primary device for centralized operations.
-
-![Multi-device group control in embedded mode](assets/多设备群控嵌入模式.png)
-
-### 3. Group control — independent windows
-
-Detach device views into independent windows and arrange them as needed on the desktop.
-
-![Multi-device group control in independent windows](assets/多设备群控独立窗口.png)
-
-### 4. Device list and workspace
-
-Device list and workspace display.
+View Android devices connected through ADB and select the devices you want to mirror or manage.
 
 ![Device list](assets/设备列表.png)
 
-![Device list with toolbar hidden](assets/多设备列表隐藏工具栏.png)
+### 2. Connection settings
 
-### 5. Batch file transfer
+Before connecting, configure parameters such as video resolution, frame rate, bit rate, and encoder. Both software and hardware video decoding are supported. Hardware decoder availability depends on the video codec, GPU, driver, and runtime environment; software decoding can be used when hardware decoding is unavailable.
 
-Select target devices, send files in batches, and view the transfer progress for each device.
+![Device connection settings](assets/设备连接配置.png)
 
-![Batch file transfer](assets/批量传送文件.png)
+### 3. Multi-device mirroring workspace
 
-### 6. Batch application installation
+View multiple Android devices in the same workspace without switching between individual mirroring windows. Both embedded mode and independent windows are supported.
+
+![Multi-device mirroring](assets/多设备投屏列表.png)
+
+![Multi-device group control in embedded mode](assets/多设备群控嵌入模式.png)
+
+![Multi-device group control in independent windows](assets/多设备群控独立窗口.png)
+
+### 4. Mirroring toolbar
+
+Use the mirroring toolbar to perform common device operations and adjust the workspace display as needed.
+
+![Mirroring toolbar and workspace](assets/多设备列表隐藏工具栏.png)
+
+### 5. Batch APK installation
 
 Install APK files on multiple selected Android devices.
 
 ![Batch APK installation](assets/批量安装应用.png)
 
-### 7. Device connection settings
+### 6. Batch file transfer
 
-Adjust mirroring connection parameters according to the device and network environment.
+Select target devices, send files in batches, and view the transfer progress for each device.
 
-![Device connection settings](assets/设备连接配置.png)
+![Batch file transfer](assets/批量传送文件.png)
 
 ## Getting started
 
