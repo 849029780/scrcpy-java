@@ -11,7 +11,7 @@
 #include <chrono>
 #include <ctime>
 namespace scrcpy_native_log {
-enum class Level { DEBUG, INFO, WARN, ERROR };
+enum class Level { DEBUG, INFO, WARN, ERR };
 inline const char* levelName(Level v) { switch(v){case Level::DEBUG:return "DEBUG";case Level::INFO:return "INFO";case Level::WARN:return "WARN";default:return "ERROR";} }
 inline std::filesystem::path path() {
 #if defined(_WIN32)
@@ -48,4 +48,4 @@ inline void write(Level level,const char* component,const char* fmt,...) {
 #define SCRCPY_NATIVE_DEBUG(c,...) scrcpy_native_log::write(scrcpy_native_log::Level::DEBUG,c,__VA_ARGS__)
 #define SCRCPY_NATIVE_INFO(c,...) scrcpy_native_log::write(scrcpy_native_log::Level::INFO,c,__VA_ARGS__)
 #define SCRCPY_NATIVE_WARN(c,...) scrcpy_native_log::write(scrcpy_native_log::Level::WARN,c,__VA_ARGS__)
-#define SCRCPY_NATIVE_ERROR(c,...) scrcpy_native_log::write(scrcpy_native_log::Level::ERROR,c,__VA_ARGS__)
+#define SCRCPY_NATIVE_ERROR(c,...) scrcpy_native_log::write(scrcpy_native_log::Level::ERR,c,__VA_ARGS__)
