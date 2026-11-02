@@ -33,7 +33,7 @@ public final class ScrcpyConnection implements AutoCloseable {
 
         static synchronized Groups acquire() {
             if (ioGroup == null || ioGroup.isShuttingDown() || ioGroup.isShutdown()) {
-                int threads = Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors()));
+                int threads = Math.clamp(Runtime.getRuntime().availableProcessors(), 2, 8);
                 transport = NettyTransport.select();
                 ioGroup = new MultiThreadIoEventLoopGroup(threads, transport.ioHandlerFactory());
                 acceptGroup = new MultiThreadIoEventLoopGroup(1, transport.ioHandlerFactory());
