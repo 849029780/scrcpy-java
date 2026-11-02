@@ -80,10 +80,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v5
+      - uses: oracle-actions/setup-java@v1
         with:
-          distribution: temurin
-          java-version: '25'
+          release: 27
+          version: 27.0.1.0.3
       - name: Install Linux VAAPI development dependencies
         if: ${{ matrix.platform == 'linux' }}
         run: |
@@ -118,10 +118,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v5
+      - uses: oracle-actions/setup-java@v1
         with:
-          distribution: temurin
-          java-version: '25'
+          release: 27
+          version: 27.0.1.0.3
           cache: maven
       - name: Download rebuilt native libraries
         if: ${{ needs.native.result == 'success' }}
