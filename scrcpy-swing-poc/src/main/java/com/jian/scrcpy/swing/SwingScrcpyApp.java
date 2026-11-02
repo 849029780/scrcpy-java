@@ -1864,7 +1864,7 @@ public final class SwingScrcpyApp {
         if (closing || adbServicesStopped) return;
         int answer = JOptionPane.showConfirmDialog(
                 deviceDialog == null ? frame : deviceDialog,
-                "将关闭所有设备投屏会话并停止本机 ADB Server。\\n"
+                "将关闭所有设备投屏会话并停止本机 ADB Server。\n"
                         + "此操作也会影响 Android Studio、命令行等其他 ADB 客户端。\\n是否继续？",
                 "停止所有 ADB 服务",
                 JOptionPane.YES_NO_OPTION,
