@@ -1,5 +1,8 @@
 package com.jian.scrcpy.metrics;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -16,6 +19,7 @@ import java.util.concurrent.atomic.LongAdder;
  * Counters are interval deltas, while last-event ages and queue depth are gauges.
  */
 public final class SessionMetrics implements AutoCloseable {
+    private static final Logger LOG = LoggerFactory.getLogger(SessionMetrics.class);
     private static final ScheduledExecutorService REPORTER =
             Executors.newSingleThreadScheduledExecutor(task -> {
                 Thread thread = new Thread(task, "scrcpy-session-metrics");
@@ -118,7 +122,7 @@ public final class SessionMetrics implements AutoCloseable {
     private void reportSafely() {
         try { report(false); }
         catch (Throwable error) {
-            System.err.printf("[scrcpy-java][%s] metrics report failed: %s%n", serial, error);
+            LOG.error("[scrcpy-java][{}] metrics report failed", serial, error);
         }
     }
 
@@ -148,7 +152,7 @@ public final class SessionMetrics implements AutoCloseable {
             // Still report a quiet session: this is useful evidence when the
             // device is connected but the audio socket has stopped delivering.
         }
-        System.out.printf(Locale.ROOT,
+        LOG.debug(String.format(Locale.ROOT,
                 "[scrcpy-java][%s] %s stats: connected=%s, display=%s, transport=%s, transportErrors=%d, "
                         + "audio{tcpBytes=%d,tcpReads=%d,lastTcpAgoMs=%d,packets=%d,configPackets=%d,packetBytes=%d,"
                         + "queueAccepted=%d,queueEvicted=%d,queueDropped=%d,queue=%d/%d,"
@@ -159,7 +163,7 @@ public final class SessionMetrics implements AutoCloseable {
                 tcpBytes, tcpReads, ageMillis(lastAudioTcpNanos), packets, configPackets, packetBytes,
                 queueAccepted, queueEvicted, queueDropped, depth, maxDepth,
                 decodePackets, decodeErrors, frames, samples, pcmByteCount, ageMillis(lastPcmNanos),
-                outputErrors, writeBytes, writeErrors, opens, ageMillis(lastPlayerWriteNanos));
+                outputErrors, writeBytes, writeErrors, opens, ageMillis(lastPlayerWriteNanos)));
     }
 
     @Override public void close() {

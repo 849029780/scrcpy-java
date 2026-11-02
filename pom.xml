@@ -19,10 +19,16 @@
         <javacpp.version>1.5.14</javacpp.version>
         <ffmpeg.version>8.1.2-${javacpp.version}</ffmpeg.version>
         <lwjgl.version>3.4.3</lwjgl.version>
+        <logback.version>1.5.21</logback.version>
         <junit.version>5.14.0</junit.version>
     </properties>
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${logback.version}</version>
+            </dependency>
             <dependency>
                 <groupId>io.netty</groupId>
                 <artifactId>netty-bom</artifactId>
@@ -32,4 +38,44 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+    <profiles>
+        <!-- Native classifiers are inherited by child modules so the Swing runtime
+             dependency set contains only the current host platform binaries. -->
+        <profile>
+            <id>native-windows-x86_64</id>
+            <activation><os><family>Windows</family><arch>amd64</arch></os></activation>
+            <dependencies>
+                <dependency><groupId>org.bytedeco</groupId><artifactId>javacpp</artifactId><version>${javacpp.version}</version><classifier>windows-x86_64</classifier></dependency>
+                <dependency><groupId>org.bytedeco</groupId><artifactId>ffmpeg</artifactId><version>${ffmpeg.version}</version><classifier>windows-x86_64</classifier></dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>native-linux-x86_64</id>
+            <activation><os><family>unix</family><name>Linux</name><arch>amd64</arch></os></activation>
+            <dependencies>
+                <dependency><groupId>org.bytedeco</groupId><artifactId>javacpp</artifactId><version>${javacpp.version}</version><classifier>linux-x86_64</classifier></dependency>
+                <dependency><groupId>org.bytedeco</groupId><artifactId>ffmpeg</artifactId><version>${ffmpeg.version}</version><classifier>linux-x86_64</classifier></dependency>
+                <dependency><groupId>io.netty</groupId><artifactId>netty-transport-native-epoll</artifactId><version>${netty.version}</version><classifier>linux-x86_64</classifier></dependency>
+                <dependency><groupId>io.netty</groupId><artifactId>netty-transport-native-io_uring</artifactId><version>${netty.version}</version><classifier>linux-x86_64</classifier></dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>native-macos-x86_64</id>
+            <activation><os><family>mac</family><arch>x86_64</arch></os></activation>
+            <dependencies>
+                <dependency><groupId>org.bytedeco</groupId><artifactId>javacpp</artifactId><version>${javacpp.version}</version><classifier>macosx-x86_64</classifier></dependency>
+                <dependency><groupId>org.bytedeco</groupId><artifactId>ffmpeg</artifactId><version>${ffmpeg.version}</version><classifier>macosx-x86_64</classifier></dependency>
+                <dependency><groupId>io.netty</groupId><artifactId>netty-transport-native-kqueue</artifactId><version>${netty.version}</version><classifier>osx-x86_64</classifier></dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>native-macos-arm64</id>
+            <activation><os><family>mac</family><arch>aarch64</arch></os></activation>
+            <dependencies>
+                <dependency><groupId>org.bytedeco</groupId><artifactId>javacpp</artifactId><version>${javacpp.version}</version><classifier>macosx-arm64</classifier></dependency>
+                <dependency><groupId>org.bytedeco</groupId><artifactId>ffmpeg</artifactId><version>${ffmpeg.version}</version><classifier>macosx-arm64</classifier></dependency>
+                <dependency><groupId>io.netty</groupId><artifactId>netty-transport-native-kqueue</artifactId><version>${netty.version}</version><classifier>osx-aarch_64</classifier></dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

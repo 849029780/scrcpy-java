@@ -3,6 +3,8 @@ name: Build and release platform packages
 on:
   workflow_dispatch:
   push:
+    branches:
+      - "feature/swing-ui-port"
     tags:
       - "v*"
 
@@ -18,15 +20,18 @@ jobs:
         include:
           - platform: windows-x86_64
             runner: windows-latest
+            adb_platform: windows
+            adb_source: windows-x86_64
             archive: zip
           - platform: linux-x86_64
             runner: ubuntu-latest
+            adb_platform: linux
+            adb_source: linux-x86_64
             archive: tar.gz
-          - platform: macos-x86_64
-            runner: macos-15-intel
-            archive: zip
           - platform: macos-arm64
             runner: macos-latest
+            adb_platform: macos
+            adb_source: macos-aarch64
             archive: zip
     runs-on: ${{ matrix.runner }}
     steps:
@@ -39,9 +44,7 @@ jobs:
           java-version: "25"
           cache: maven
 
-      # Each runner builds from a clean source tree but only keeps its own
-      # native resources. This prevents foreign DLL/SO/dylib files entering
-      # the application JAR.
+      # Keep only the native renderer matching this runner in the application JAR.
       - name: Keep only this platform's bundled native resources
         shell: bash
         run: |
@@ -49,7 +52,6 @@ jobs:
           case "${{ matrix.platform }}" in
             windows-x86_64) keep="windows-x86_64" ;;
             linux-x86_64) keep="linux-x86_64" ;;
-            macos-x86_64) keep="macos-x86_64" ;;
             macos-arm64) keep="macos-aarch64" ;;
             *) echo "Unknown platform: ${{ matrix.platform }}"; exit 1 ;;
           esac
@@ -61,91 +63,132 @@ jobs:
       - name: Build Swing client
         run: mvn -B -pl scrcpy-swing-poc -am install -DskipTests
 
-      # Keep all runtime JARs at the top level: jpackage's generated launcher
-      # class path includes the input directory, not arbitrary nested folders.
-      - name: Prepare application input
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p scrcpy-swing-poc/target/package-input
-          cp scrcpy-swing-poc/target/scrcpy-swing-poc-*.jar scrcpy-swing-poc/target/package-input/
-          mvn -B -pl scrcpy-swing-poc dependency:copy-dependencies \
-            -DincludeScope=runtime \
-            -DoutputDirectory="${{ github.workspace }}/scrcpy-swing-poc/target/package-input"
-
-      # ffmpeg-platform and javacpp-platform include native JARs for every
-      # supported OS/CPU. Keep only the classifier matching this target.
-      - name: Remove foreign-platform native dependencies
+      # Keep ADB and the server in a staging directory; copy them into the
+      # completed jpackage image explicitly so their directory layout is stable.
+      - name: Prepare application input with bundled ADB and scrcpy server
         shell: bash
         run: |
           set -euo pipefail
           input="scrcpy-swing-poc/target/package-input"
-          case "${{ matrix.platform }}" in
-            windows-x86_64) native_classifier="windows-x86_64" ;;
-            linux-x86_64) native_classifier="linux-x86_64" ;;
-            macos-x86_64) native_classifier="macosx-x86_64" ;;
-            macos-arm64) native_classifier="macosx-arm64" ;;
-            *) echo "Unknown platform: ${{ matrix.platform }}"; exit 1 ;;
-          esac
+          mkdir -p "$input/platform-tools/${{ matrix.adb_platform }}" "$input/lib"
+          cp scrcpy-swing-poc/target/scrcpy-swing-poc-*.jar "$input/"
+          mvn -B -pl scrcpy-swing-poc dependency:copy-dependencies \
+            -DincludeScope=runtime \
+            -DoutputDirectory="${{ github.workspace }}/$input"
 
-          for jar in "$input"/*.jar; do
-            [ -f "$jar" ] || continue
-            name="$(basename "$jar")"
-            case "$name" in
-              ffmpeg-*-android-*|ffmpeg-*-ios-*|ffmpeg-*-linux-*|ffmpeg-*-macosx-*|ffmpeg-*-windows-*|javacpp-*-android-*|javacpp-*-ios-*|javacpp-*-linux-*|javacpp-*-macosx-*|javacpp-*-windows-*)
-                case "$name" in
-                  *-"$native_classifier".jar) ;;
-                  *) echo "Removing foreign native dependency: $name"; rm -f "$jar" ;;
-                esac
-                ;;
-            esac
-          done
+          cp -R "platform-tools/${{ matrix.adb_source }}/." "$input/platform-tools/${{ matrix.adb_platform }}/"
+          cp lib/scrcpy-server-v5.0.1.jar "$input/lib/"
+
+          if [ "${{ matrix.adb_platform }}" != "windows" ]; then
+            chmod 755 "$input/platform-tools/${{ matrix.adb_platform }}/adb"
+          fi
+
+          adb_name="adb"
+          if [ "${{ matrix.adb_platform }}" = "windows" ]; then adb_name="adb.exe"; fi
+          test -f "$input/platform-tools/${{ matrix.adb_platform }}/$adb_name"
+          test -f "$input/lib/scrcpy-server-v5.0.1.jar"
 
       - name: Verify platform-native dependency isolation
         shell: bash
         run: |
           set -euo pipefail
           input="scrcpy-swing-poc/target/package-input"
+          files="$(for jar in "$input"/*.jar; do [ -f "$jar" ] || continue; basename "$jar"; done)"
+          echo "Packaged JARs:"
+          printf '%s\n' "$files"
           case "${{ matrix.platform }}" in
-            windows-x86_64) native_classifier="windows-x86_64" ;;
-            linux-x86_64) native_classifier="linux-x86_64" ;;
-            macos-x86_64) native_classifier="macosx-x86_64" ;;
-            macos-arm64) native_classifier="macosx-arm64" ;;
+            windows-x86_64) forbidden='linux-|macosx-' ;;
+            linux-x86_64) forbidden='windows-|macosx-' ;;
+            macos-x86_64) forbidden='windows-|linux-' ;;
+            macos-arm64) forbidden='windows-|linux-|macosx-x86_64' ;;
             *) echo "Unknown platform: ${{ matrix.platform }}"; exit 1 ;;
           esac
+          if printf '%s\n' "$files" | grep -E "$forbidden"; then
+            echo "Foreign-platform native dependency found in package input."
+            exit 1
+          fi
+          if ! printf '%s\n' "$files" | grep -E '^(ffmpeg|javacpp)-.*-(windows-x86_64|linux-x86_64|macosx-x86_64|macosx-arm64)\.jar$' >/dev/null; then
+            echo "Expected platform-native JavaCPP/FFmpeg JARs were not found."
+            exit 1
+          fi
 
-          found_ffmpeg=0
-          found_javacpp=0
-          echo "Packaged JARs:"
-          for jar in "$input"/*.jar; do
-            [ -f "$jar" ] || continue
-            name="$(basename "$jar")"
-            printf '%s\\n' "$name"
-            case "$name" in
-              ffmpeg-*-"$native_classifier".jar) found_ffmpeg=1 ;;
-              javacpp-*-"$native_classifier".jar) found_javacpp=1 ;;
-            esac
-            case "$name" in
-              ffmpeg-*-android-*|ffmpeg-*-ios-*|ffmpeg-*-linux-*|ffmpeg-*-macosx-*|ffmpeg-*-windows-*|javacpp-*-android-*|javacpp-*-ios-*|javacpp-*-linux-*|javacpp-*-macosx-*|javacpp-*-windows-*)
-                case "$name" in
-                  *-"$native_classifier".jar) ;;
-                  *) echo "Foreign-platform native dependency remains: $name"; exit 1 ;;
-                esac
-                ;;
-            esac
+      - name: Analyze dependencies and build minimized Java runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          input="scrcpy-swing-poc/target/package-input"
+          main_jar="$(find "$input" -maxdepth 1 -name 'scrcpy-swing-poc-*.jar' -print -quit)"
+          test -n "$main_jar"
+          echo "Analyzing application and runtime dependencies with jdeps..."
+          classpath_separator=":"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then classpath_separator=";"; fi
+          dependency_classpath=""
+          for dependency in "$input"/*.jar; do
+            [ -f "$dependency" ] || continue
+            if [[ -n "$dependency_classpath" ]]; then
+              dependency_classpath="${dependency_classpath}${classpath_separator}"
+            fi
+            dependency_classpath="${dependency_classpath}${dependency}"
           done
+          jdeps_error="scrcpy-swing-poc/target/jdeps-error.log"
+          if ! detected_modules="$(jdeps --multi-release 25 --ignore-missing-deps --recursive --print-module-deps --class-path "$dependency_classpath" "$main_jar" 2>"$jdeps_error")"; then
+            cat "$jdeps_error"
+            echo "jdeps failed; refusing to create an incomplete runtime."
+            exit 1
+          fi
+          if [[ -z "$detected_modules" ]]; then
+            cat "$jdeps_error"
+            echo "jdeps did not return a module list; refusing to create an incomplete runtime."
+            exit 1
+          fi
+          if [[ -s "$jdeps_error" ]]; then cat "$jdeps_error"; fi
+          echo "jdeps modules: $detected_modules"
+          required_modules="java.desktop java.logging java.management java.naming java.instrument java.xml jdk.unsupported jdk.crypto.ec jdk.charsets jdk.localedata"
+          all_modules="$(printf '%s\n' "$detected_modules" | tr ',' '\n'; printf '%s\n' "$required_modules" | tr ' ' '\n')"
+          modules="$(printf '%s\n' "$all_modules" | sed '/^$/d' | sort -u | paste -sd, -)"
+          echo "Final runtime modules: $modules"
+          runtime="scrcpy-swing-poc/target/minimized-runtime"
+          rm -rf "$runtime"
+          jlink --add-modules "$modules" --strip-debug --no-header-files --no-man-pages --compress=2 --output "$runtime"
+          runtime_java="$runtime/bin/java"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then runtime_java="$runtime/bin/java.exe"; fi
+          "$runtime_java" -version
+          "$runtime_java" --list-modules
+          du -sh "$runtime"
 
-          [ "$found_ffmpeg" -eq 1 ] || { echo "Missing FFmpeg native JAR for $native_classifier."; exit 1; }
-          [ "$found_javacpp" -eq 1 ] || { echo "Missing JavaCPP native JAR for $native_classifier."; exit 1; }
+          smoke_dir="scrcpy-swing-poc/target/runtime-smoke"
+          mkdir -p "$smoke_dir"
+          cat > "$smoke_dir/RuntimeSmoke.java" <<'JAVA'
+          import com.jian.scrcpy.net.NettyTransport;
+          import java.awt.Graphics2D;
+          import java.awt.image.BufferedImage;
+          public final class RuntimeSmoke {
+              public static void main(String[] args) throws Exception {
+                  BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+                  Graphics2D graphics = image.createGraphics();
+                  graphics.fillRect(0, 0, 8, 8);
+                  graphics.dispose();
+                  javax.swing.JPanel panel = new javax.swing.JPanel();
+                  if (panel == null || image.getRGB(1, 1) == 0) throw new IllegalStateException("Swing/AWT failed");
+                  Class.forName("org.bytedeco.ffmpeg.global.avutil", true, RuntimeSmoke.class.getClassLoader());
+                  NettyTransport.Selection transport = NettyTransport.select();
+                  System.out.println("Runtime smoke test passed; Netty transport=" + transport.name());
+              }
+          }
+          JAVA
+          javac -cp "$input/*" -d "$smoke_dir" "$smoke_dir/RuntimeSmoke.java"
+          "$runtime_java" -cp "$input/*${classpath_separator}$smoke_dir" RuntimeSmoke
+          echo "Runtime and application dependency sizes:"
+          du -sh "$runtime" "$input"
+          for jar in "$input"/*.jar; do [ -f "$jar" ] || continue; echo "$(basename "$jar") $(wc -c < "$jar") bytes"; done | sort
 
       - name: Create native application image
         shell: bash
         env:
           APP_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.2.0' }}
         run: |
+          set -euo pipefail
           VERSION="${APP_VERSION#v}"
-          # macOS CFBundleVersion rejects a leading zero; map 0.x.y to 1.x.y
-          # for the bundle metadata while keeping the application/tag version intact.
           if [[ "${{ matrix.platform }}" == macos-* && "$VERSION" =~ ^0\. ]]; then
             VERSION="1.${VERSION#0.}"
           fi
@@ -154,12 +197,74 @@ jobs:
             --type app-image \
             --name scrcpy-java \
             --input scrcpy-swing-poc/target/package-input \
+            --runtime-image scrcpy-swing-poc/target/minimized-runtime \
             --dest scrcpy-swing-poc/target/dist \
             --main-jar "$(basename scrcpy-swing-poc/target/package-input/scrcpy-swing-poc-*.jar)" \
             --main-class com.jian.scrcpy.swing.SwingScrcpyApp \
             --app-version "$VERSION" \
             --vendor "scrcpy-java" \
             --java-options "--enable-native-access=ALL-UNNAMED"
+
+          image="scrcpy-swing-poc/target/dist/scrcpy-java"
+          case "${{ matrix.platform }}" in
+            linux-*) app_dir="$image/lib/app" ;;
+            macos-*)
+              image="scrcpy-swing-poc/target/dist/scrcpy-java.app"
+              app_dir="$image/Contents/app"
+              ;;
+            *) app_dir="$image/app" ;;
+          esac
+
+          echo "jpackage image: $image"
+          echo "Application content directory: $app_dir"
+          # jpackage uses lib/app on Linux, app on Windows, and Contents/app on macOS.
+          if [[ ! -d "$app_dir" ]]; then
+            echo "Expected application content directory does not exist. Actual image layout:"
+            find "$image" -maxdepth 4 -print || true
+            exit 1
+          fi
+
+          # jpackage's --input is for the application JARs. Copy non-JAR
+          # runtime assets after image creation to preserve nested paths.
+          cp -a scrcpy-swing-poc/target/package-input/platform-tools "$app_dir/"
+          cp -a scrcpy-swing-poc/target/package-input/lib "$app_dir/"
+
+      - name: Smoke-check packaged ADB and application image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="scrcpy-swing-poc/target/dist/scrcpy-java"
+          case "${{ matrix.platform }}" in
+            linux-*) app_dir="$image/lib/app" ;;
+            macos-*)
+              image="scrcpy-swing-poc/target/dist/scrcpy-java.app"
+              app_dir="$image/Contents/app"
+              ;;
+            *) app_dir="$image/app" ;;
+          esac
+          echo "Checking application content directory: $app_dir"
+          if [[ ! -d "$app_dir" ]]; then
+            echo "Application content directory is missing. Actual image layout:"
+            find "$image" -maxdepth 4 -print || true
+            exit 1
+          fi
+          adb_dir="$app_dir/platform-tools/${{ matrix.adb_platform }}"
+          echo "Application image contents:"
+          find "$app_dir" -maxdepth 5 -type f \( -name adb -o -name adb.exe -o -name 'AdbWin*.dll' -o -name 'scrcpy-server-v5.0.1.jar' \) -print
+          if [[ "${{ matrix.adb_platform }}" == windows ]]; then
+            test -f "$adb_dir/adb.exe"
+            test -f "$adb_dir/AdbWinApi.dll"
+            test -f "$adb_dir/AdbWinUsbApi.dll"
+          else
+            test -f "$adb_dir/adb"
+            test -x "$adb_dir/adb"
+            if [[ "${{ matrix.adb_platform }}" == linux ]]; then
+              "$adb_dir/adb" version
+            fi
+          fi
+          test -f "$app_dir/lib/scrcpy-server-v5.0.1.jar"
+          echo "Bundled ADB verified at: $adb_dir"
+          echo "Bundled scrcpy server verified at: $app_dir/lib/scrcpy-server-v5.0.1.jar"
 
       - name: Archive Windows package
         if: runner.os == 'Windows'
@@ -200,8 +305,8 @@ jobs:
           echo "Release assets:"
           find release-assets -maxdepth 1 -type f -printf '%f\n'
           count="$(find release-assets -maxdepth 1 -type f | wc -l)"
-          if [ "$count" -ne 4 ]; then
-            echo "Expected 4 platform archives, found $count."
+          if [ "$count" -ne 3 ]; then
+            echo "Expected 3 platform archives, found $count."
             exit 1
           fi
 

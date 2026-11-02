@@ -1,4 +1,5 @@
 #include <jni.h>
+#include "scrcpy_native_log.h"
 #include <jawt.h>
 #include <jawt_md.h>
 #include <va/va.h>
@@ -12,19 +13,54 @@
 #include <unordered_map>
 
 namespace {
+void releaseVaDisplay(Display* xDisplay);
+
 struct Renderer {
     Display* display{};
     Drawable drawable{};
     VADisplay vaDisplay{};
     std::mutex mutex;
     ~Renderer() {
-        if (vaDisplay) vaTerminate(vaDisplay);
+        if (vaDisplay) releaseVaDisplay(display);
         // JAWT owns the X11 Display; do not XCloseDisplay().
     }
 };
 std::mutex gMutex;
 std::unordered_map<jlong,std::shared_ptr<Renderer>> renderers;
 std::atomic<jlong> nextHandle{1};
+
+struct SharedVaDisplay { VADisplay display{}; size_t references{}; };
+std::mutex gVaPoolMutex;
+std::unordered_map<Display*, SharedVaDisplay> gVaDisplays;
+
+VADisplay acquireVaDisplay(Display* xDisplay) {
+    std::lock_guard<std::mutex> guard(gVaPoolMutex);
+    auto& entry = gVaDisplays[xDisplay];
+    if (!entry.display) {
+        VADisplay display = vaGetDisplay(xDisplay);
+        if (!display) { SCRCPY_NATIVE_ERROR("vaapi", "vaGetDisplay failed"); gVaDisplays.erase(xDisplay); return nullptr; }
+        int major = 0, minor = 0;
+        if (vaInitialize(display, &major, &minor) != VA_STATUS_SUCCESS) {
+            gVaDisplays.erase(xDisplay);
+            return nullptr;
+        }
+        entry.display = display;
+        SCRCPY_NATIVE_INFO("vaapi", "VAAPI display initialized version=%d.%d", major, minor);
+    }
+    ++entry.references;
+    return entry.display;
+}
+
+void releaseVaDisplay(Display* xDisplay) {
+    std::lock_guard<std::mutex> guard(gVaPoolMutex);
+    auto it = gVaDisplays.find(xDisplay);
+    if (it == gVaDisplays.end()) return;
+    if (it->second.references > 0) --it->second.references;
+    if (it->second.references == 0) {
+        if (it->second.display) vaTerminate(it->second.display);
+        gVaDisplays.erase(it);
+    }
+}
 
 void fail(JNIEnv* env,const char* msg){ jclass c=env->FindClass("java/lang/IllegalStateException"); if(c) env->ThrowNew(c,msg); }
 std::shared_ptr<Renderer> find(jlong h){ std::lock_guard<std::mutex> g(gMutex); auto i=renderers.find(h); return i==renderers.end()?nullptr:i->second; }
@@ -51,11 +87,11 @@ bool getSurface(JNIEnv* env,jobject canvas,Display** display,Drawable* drawable)
 
 extern "C" JNIEXPORT jlong JNICALL Java_com_jian_scrcpy_swing_NativeVaapiCanvas_attach0(JNIEnv* env,jclass,jobject canvas){
     Display* display=nullptr; Drawable drawable=0;
-    if(!getSurface(env,canvas,&display,&drawable)){ fail(env,"JAWT X11 surface unavailable"); return 0; }
+    if(!getSurface(env,canvas,&display,&drawable)){ SCRCPY_NATIVE_ERROR("vaapi", "JAWT X11 surface unavailable"); fail(env,"JAWT X11 surface unavailable"); return 0; }
     auto r=std::make_shared<Renderer>(); r->display=display; r->drawable=drawable;
-    r->vaDisplay=vaGetDisplay(display);
-    if(!r->vaDisplay){ fail(env,"vaGetDisplay failed"); return 0; }
-    int major=0,minor=0; if(vaInitialize(r->vaDisplay,&major,&minor)!=VA_STATUS_SUCCESS){ fail(env,"vaInitialize failed"); return 0; }
+    r->vaDisplay=acquireVaDisplay(display);
+    if(!r->vaDisplay){ SCRCPY_NATIVE_ERROR("vaapi", "shared display initialization failed"); fail(env,"VAAPI shared display initialization failed"); return 0; }
+    SCRCPY_NATIVE_INFO("vaapi", "renderer attached");
     jlong h=nextHandle.fetch_add(1); std::lock_guard<std::mutex> g(gMutex); renderers.emplace(h,r); return h;
 }
 extern "C" JNIEXPORT jlong JNICALL Java_com_jian_scrcpy_swing_NativeVaapiCanvas_display0(JNIEnv*,jclass,jlong h){
@@ -71,6 +107,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_jian_scrcpy_swing_NativeVaapiCanv
     VAStatus s=vaPutSurface(r->vaDisplay,(VASurfaceID)(uintptr_t)surface,r->drawable,
         0,0,width,height,dx,dy,dw,dh,nullptr,0,VA_FRAME_PICTURE);
     if(s==VA_STATUS_SUCCESS) { vaSyncSurface(r->vaDisplay,(VASurfaceID)(uintptr_t)surface); XFlush(r->display); }
+    if(s!=VA_STATUS_SUCCESS) SCRCPY_NATIVE_WARN("vaapi", "vaPutSurface failed status=%d", (int)s);
     return s==VA_STATUS_SUCCESS?JNI_TRUE:JNI_FALSE;
 }
 extern "C" JNIEXPORT void JNICALL Java_com_jian_scrcpy_swing_NativeVaapiCanvas_destroy0(JNIEnv*,jclass,jlong h){

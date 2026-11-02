@@ -1,5 +1,7 @@
 package com.jian.scrcpy.swing;
 
+import com.jian.scrcpy.logging.LoggingBootstrap;
+
 import com.jian.scrcpy.ScrcpySession;
 import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.adb.AdbDevice;
@@ -47,6 +49,10 @@ import java.util.stream.Collectors;
  * services but has no dependency on JavaFX and does not modify scrcpy-app.
  */
 public final class SwingScrcpyApp {
+    static {
+        LoggingBootstrap.install();
+    }
+
     private static final int TILE_WIDTH = 360;
     private static final int TILE_HEIGHT = 680;
     private static final int NAV_WIDTH = 40; // 38px button column + 2px scrollbar
@@ -221,21 +227,41 @@ public final class SwingScrcpyApp {
         scroll.setPreferredSize(new Dimension(620, 440));
 
         JButton refresh = new JButton("刷新");
+        JButton selectUnprojected = new JButton("全选未投屏");
         JButton connect = new JButton("连接选中");
         JButton connectAll = new JButton("全部连接");
         JButton disconnect = new JButton("断开选中");
         refresh.addActionListener(e -> scanDevices());
+        selectUnprojected.addActionListener(e -> selectAllUnprojectedDevices());
         connect.addActionListener(e -> connectSelected());
         connectAll.addActionListener(e -> connectAll());
         disconnect.addActionListener(e -> disconnectSelected());
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        actions.add(refresh); actions.add(connect); actions.add(connectAll); actions.add(disconnect);
+        actions.add(refresh); actions.add(selectUnprojected); actions.add(connect); actions.add(connectAll); actions.add(disconnect);
 
         deviceDialog.add(scroll, BorderLayout.CENTER);
         deviceDialog.add(actions, BorderLayout.SOUTH);
         deviceDialog.pack();
         deviceDialog.setLocationRelativeTo(frame);
         deviceDialog.setVisible(true);
+    }
+
+    /**
+     * Select every ADB-ready device that does not currently have a projection
+     * session. Existing selections are replaced so connected devices are not
+     * accidentally included in the next batch operation.
+     */
+    private void selectAllUnprojectedDevices() {
+        checkedDevices.clear();
+        knownDevices.stream()
+                .filter(AdbDevice::ready)
+                .filter(device -> !sessions.containsKey(device.serial()))
+                .map(AdbDevice::serial)
+                .forEach(checkedDevices::add);
+
+        deviceChecks.forEach((serial, check) -> check.setSelected(checkedDevices.contains(serial)));
+        int selected = checkedDevices.size();
+        status.setText("已选择 " + selected + " 台未投屏且可用的设备");
     }
 
     private void rebuildDeviceRows(JPanel list) {

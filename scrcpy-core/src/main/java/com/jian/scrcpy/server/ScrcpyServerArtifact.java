@@ -3,15 +3,16 @@ package com.jian.scrcpy.server;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Resolves the scrcpy server bundled by the desktop client on its runtime classpath.
+ * Resolves the external scrcpy server JAR bundled beside the desktop application.
  */
 public final class ScrcpyServerArtifact {
     public static final String VERSION = "5.0.1";
-    private static final String RESOURCE = "scrcpy-server-v5.0.1.jar";
+    private static final String FILE_NAME = "scrcpy-server-v5.0.1.jar";
     private static final String SHA256 =
             "764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536";
 
@@ -19,46 +20,43 @@ public final class ScrcpyServerArtifact {
     }
 
     /**
-     * Extracts the server bundled in scrcpy-swing-poc/src/main/resources to a
-     * temporary file so ADB can push it to the Android device.
+     * Finds the server in the application's lib directory. The packaged layout is:
+     * app/
+     *   scrcpy-swing-poc-*.jar
+     *   lib/scrcpy-server-v5.0.1.jar
      */
     public static Path resolve() throws Exception {
-        ClassLoader classLoader = ScrcpyServerArtifact.class.getClassLoader();
-        try (InputStream resource = classLoader.getResourceAsStream(RESOURCE)) {
-            if (resource == null) {
-                throw new IllegalStateException(
-                        "Classpath resource " + RESOURCE + " was not found. "
-                        + "Make sure it is included in scrcpy-swing-poc/src/main/resources.");
-            }
-
-            Path extracted = Path.of(System.getProperty("java.io.tmpdir"),
-                    "scrcpy-java", RESOURCE);
-            Files.createDirectories(extracted.getParent());
-            Path temporary = Files.createTempFile(extracted.getParent(),
-                    "scrcpy-server-", ".tmp");
-            try {
-                Files.copy(resource, temporary, StandardCopyOption.REPLACE_EXISTING);
-                verify(temporary);
-                try {
-                    Files.move(temporary, extracted, StandardCopyOption.REPLACE_EXISTING,
-                            StandardCopyOption.ATOMIC_MOVE);
-                } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
-                    Files.move(temporary, extracted, StandardCopyOption.REPLACE_EXISTING);
-                }
-                verify(extracted);
-                return extracted;
-            } finally {
-                Files.deleteIfExists(temporary);
+        for (Path candidate : candidates()) {
+            if (Files.isRegularFile(candidate)) {
+                verify(candidate);
+                return candidate.toAbsolutePath().normalize();
             }
         }
+        throw new IllegalStateException("Bundled scrcpy server not found. Expected "
+                + "lib/" + FILE_NAME + " beside the application.");
+    }
+
+    private static List<Path> candidates() {
+        List<Path> result = new ArrayList<>();
+        Path cwd = Path.of("").toAbsolutePath().normalize();
+        result.add(cwd.resolve("lib").resolve(FILE_NAME));
+        try {
+            Path code = Path.of(ScrcpyServerArtifact.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI()).toAbsolutePath().normalize();
+            Path base = Files.isDirectory(code) ? code : code.getParent();
+            if (base != null) {
+                result.add(base.resolve("lib").resolve(FILE_NAME));
+                Path parent = base.getParent();
+                if (parent != null) result.add(parent.resolve("lib").resolve(FILE_NAME));
+            }
+        } catch (Exception ignored) {
+        }
+        return result;
     }
 
     private static void verify(Path path) throws Exception {
-        if (!Files.isRegularFile(path)) {
-            throw new IllegalArgumentException("scrcpy server not found: " + path);
-        }
-        if (!matchesSha256(path)) {
-            throw new IllegalArgumentException("scrcpy server SHA-256 mismatch: " + path);
+        if (!Files.isRegularFile(path) || !matchesSha256(path)) {
+            throw new IllegalArgumentException("scrcpy server missing or SHA-256 mismatch: " + path);
         }
     }
 

@@ -162,6 +162,19 @@ com.jian.scrcpy.swing.SwingScrcpyApp
 
 > The native D3D11 rendering path on Windows requires the corresponding native library to be deployed correctly. Hardware rendering may be unavailable if the native library is missing or cannot be loaded.
 
+### Standalone packages for each platform
+
+GitHub Actions builds a standalone Swing application image on the matching operating system and bundles a Java runtime. Each package contains only the JavaCPP/FFmpeg native binaries for its target OS and CPU architecture; native binaries for other platforms are not included.
+
+Current build targets:
+
+- Windows x86-64: ZIP; run `scrcpy-java.exe` after extraction.
+- Linux x86-64: `tar.gz`; run `scrcpy-java/bin/scrcpy-java` after extraction.
+- macOS Intel: ZIP; launch `scrcpy-java.app`.
+- macOS Apple Silicon: ZIP; launch `scrcpy-java.app`.
+
+Run the **Build platform packages** workflow manually in GitHub Actions, or push a `v*` tag to trigger all platform builds. Each platform is uploaded as a separate workflow artifact.
+
 ## Technology stack
 
 | Technology / module | Purpose |
