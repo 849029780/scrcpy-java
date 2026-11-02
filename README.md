@@ -1,4 +1,6 @@
-# scrcpy-java
+<h1 style="text-align:center">scrcpy-java</h1>
+
+---
 
 <p align="center">
   <strong>基于 Java 的 Android 多设备投屏与群控桌面客户端</strong>
