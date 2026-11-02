@@ -202,6 +202,12 @@ jobs:
             --main-class com.jian.scrcpy.swing.SwingScrcpyApp \
             --app-version "$VERSION" \
             --vendor "scrcpy-java" \
+            --java-options "-Xms100m" \
+            --java-options "-Xmx8g" \
+            --java-options "-XX:+UseG1GC" \
+            --java-options "-XX:+G1PeriodicGCInvokesConcurrent" \
+            --java-options "-XX:G1PeriodicGCInterval=60000" \
+            --java-options "-XX:G1PeriodicGCSystemLoadThreshold=0" \
             --java-options "--enable-native-access=ALL-UNNAMED"
 
           image="scrcpy-swing-poc/target/dist/scrcpy-java"
