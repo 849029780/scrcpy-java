@@ -88,6 +88,8 @@ public final class SwingScrcpyApp {
     private JButton toggleNavigationBarsButton;
     private volatile String lastDesktopClipboard = "";
     private volatile boolean closing;
+    private volatile boolean adbServicesStopped;
+    private JButton stopAdbButton;
     private JDialog deviceDialog;
 
     public SwingScrcpyApp() {
@@ -228,16 +230,22 @@ public final class SwingScrcpyApp {
 
         JButton refresh = new JButton("刷新");
         JButton selectUnprojected = new JButton("全选未投屏");
+        stopAdbButton = new JButton("停止所有 ADB 服务");
+        stopAdbButton.setToolTipText("关闭全部投屏会话并停止本机 ADB Server（会影响其他 ADB 客户端）");
         JButton connect = new JButton("连接选中");
         JButton connectAll = new JButton("全部连接");
         JButton disconnect = new JButton("断开选中");
-        refresh.addActionListener(e -> scanDevices());
+        refresh.addActionListener(e -> {
+            adbServicesStopped = false;
+            scanDevices();
+        });
         selectUnprojected.addActionListener(e -> selectAllUnprojectedDevices());
+        stopAdbButton.addActionListener(e -> stopAllAdbServices());
         connect.addActionListener(e -> connectSelected());
         connectAll.addActionListener(e -> connectAll());
         disconnect.addActionListener(e -> disconnectSelected());
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        actions.add(refresh); actions.add(selectUnprojected); actions.add(connect); actions.add(connectAll); actions.add(disconnect);
+        actions.add(refresh); actions.add(selectUnprojected); actions.add(connect); actions.add(connectAll); actions.add(disconnect); actions.add(stopAdbButton);
 
         deviceDialog.add(scroll, BorderLayout.CENTER);
         deviceDialog.add(actions, BorderLayout.SOUTH);
@@ -454,7 +462,7 @@ public final class SwingScrcpyApp {
     }
 
     private void pollAdbState() {
-        if (closing) return;
+        if (closing || adbServicesStopped) return;
         try {
             List<AdbDevice> snapshot = adb.devices();
             knownDevices = List.copyOf(snapshot);
@@ -534,6 +542,7 @@ public final class SwingScrcpyApp {
     }
 
     private void connectDevices(List<AdbDevice> selected) {
+        adbServicesStopped = false;
         List<AdbDevice> targets = selected.stream().filter(AdbDevice::ready)
                 .filter(d -> !sessions.containsKey(d.serial())).toList();
         if (targets.isEmpty()) { status.setText("没有可连接的新设备"); return; }
@@ -1847,19 +1856,100 @@ public final class SwingScrcpyApp {
         }
     }
 
+    /**
+     * Close every projection session and stop the shared host-side ADB server.
+     * ADB is shared by all local clients, so the user must explicitly confirm.
+     */
+    private void stopAllAdbServices() {
+        if (closing || adbServicesStopped) return;
+        int answer = JOptionPane.showConfirmDialog(
+                deviceDialog == null ? frame : deviceDialog,
+                "将关闭所有设备投屏会话并停止本机 ADB Server。\\n"
+                        + "此操作也会影响 Android Studio、命令行等其他 ADB 客户端。\\n是否继续？",
+                "停止所有 ADB 服务",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (answer != JOptionPane.YES_OPTION) return;
+
+        adbServicesStopped = true;
+        if (stopAdbButton != null) stopAdbButton.setEnabled(false);
+        desiredConnections.clear();
+        reconnecting.clear();
+        reconnectStates.clear();
+        checkedDevices.clear();
+        releaseAllTransientInput();
+
+        List<DeviceSession> handles = new ArrayList<>(sessions.values());
+        sessions.clear();
+        for (DeviceSession handle : handles) {
+            if (handle.floatingFrame != null) {
+                handle.floatingFrame.dispose();
+                handle.floatingFrame = null;
+                handle.floatingHost = null;
+            }
+            if (handle.tile != null) {
+                primaryHost.remove(handle.tile);
+                secondaryGrid.remove(handle.tile);
+            }
+            try { handle.uhid.releaseInputState(); } catch (Throwable ignored) {}
+        }
+        primarySerial = null;
+        desiredPrimarySerial = null;
+        primaryHost.setVisible(false);
+        workspace.remove(primaryHost);
+        knownDevices = List.of();
+        refreshPrimaryUi();
+        refreshDeviceRows();
+        workspace.revalidate();
+        workspace.repaint();
+        status.setText("正在关闭投屏会话并停止 ADB Server...");
+
+        Thread.startVirtualThread(() -> {
+            List<String> failures = new CopyOnWriteArrayList<>();
+            for (DeviceSession handle : handles) {
+                try { handle.close(); }
+                catch (Throwable t) { failures.add(t.getMessage() == null ? t.toString() : t.getMessage()); }
+            }
+            try {
+                adb.run("kill-server");
+            } catch (Throwable t) {
+                failures.add("停止 ADB Server 失败：" + t.getMessage());
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (stopAdbButton != null) stopAdbButton.setEnabled(true);
+                refreshDeviceRows();
+                String message = failures.isEmpty()
+                        ? "所有投屏会话已关闭，ADB Server 已停止"
+                        : "投屏会话已清理，但部分操作失败：" + String.join("；", failures);
+                status.setText(message);
+            });
+        });
+    }
+
     private void shutdown() {
         if (closing) return;
         closing = true;
+        adbServicesStopped = true;
         background.shutdownNow();
         releaseAllTransientInput();
-        for (DeviceSession handle : new ArrayList<>(sessions.values())) {
-            try { handle.close(); } catch (Throwable t) { t.printStackTrace(System.err); }
-        }
+        List<DeviceSession> handles = new ArrayList<>(sessions.values());
         sessions.clear();
         desiredConnections.clear();
         reconnecting.clear();
         reconnectStates.clear();
-        frame.dispose();
+        Thread.startVirtualThread(() -> {
+            for (DeviceSession handle : handles) {
+                try { handle.close(); }
+                catch (Throwable t) { System.err.println("[scrcpy-swing] shutdown session failed: " + t); }
+            }
+            try {
+                adb.run("kill-server");
+                System.out.println("[scrcpy-swing] ADB server stopped.");
+            } catch (Throwable t) {
+                System.err.println("[scrcpy-swing] failed to stop ADB server: " + t.getMessage());
+            }
+            SwingUtilities.invokeLater(frame::dispose);
+        });
     }
 
     private static int indexClamp(int index, int size) {
