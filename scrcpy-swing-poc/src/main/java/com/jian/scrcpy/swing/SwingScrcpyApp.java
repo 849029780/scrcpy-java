@@ -446,7 +446,9 @@ public final class SwingScrcpyApp {
     private void scanDevices() {
         Thread.startVirtualThread(() -> {
             try {
+                if (closing || adbServicesStopped) return;
                 List<AdbDevice> found = adb.devices();
+                if (closing || adbServicesStopped) return;
                 knownDevices = List.copyOf(found);
                 SwingUtilities.invokeLater(() -> {
                     status.setText("发现 " + found.size() + " 台 ADB 设备");
@@ -553,6 +555,7 @@ public final class SwingScrcpyApp {
             try {
                 Path jar = ScrcpyServerArtifact.resolve();
                 for (AdbDevice device : targets) {
+                    if (closing || adbServicesStopped) return;
                     try {
                         ServerLauncher launcher = new ServerLauncher(new Adb(System.getProperty("scrcpy.adb", "adb"), device.serial()), ScrcpyOptions.defaults());
                         capabilities.put(device.serial(), launcher.listVideoEncoders(jar));
@@ -562,7 +565,9 @@ public final class SwingScrcpyApp {
                     }
                 }
             } catch (Throwable t) { failures.add("读取编码器失败：" + t.getMessage()); }
+            if (closing || adbServicesStopped) return;
             SwingUtilities.invokeLater(() -> {
+                if (closing || adbServicesStopped) return;
                 status.setText(failures.isEmpty() ? "正在连接 " + targets.size() + " 台设备..." : "编码器查询部分失败，将仅提供自动选择");
                 ConnectionSettings settings = showConnectionSettings(capabilities);
                 if (settings == null) return;
