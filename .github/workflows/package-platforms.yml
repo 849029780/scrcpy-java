@@ -37,12 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 25
-        uses: actions/setup-java@v4
+      - name: Set up Oracle JDK 27.0.1.0.3
+        uses: oracle-actions/setup-java@v1
         with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
+          release: 27
+          version: 27.0.1.0.3
 
       # Keep only the native renderer matching this runner in the application JAR.
       - name: Keep only this platform's bundled native resources
@@ -131,7 +130,7 @@ jobs:
             dependency_classpath="${dependency_classpath}${dependency}"
           done
           jdeps_error="scrcpy-swing-poc/target/jdeps-error.log"
-          if ! detected_modules="$(jdeps --multi-release 25 --ignore-missing-deps --recursive --print-module-deps --class-path "$dependency_classpath" "$main_jar" 2>"$jdeps_error")"; then
+          if ! detected_modules="$(jdeps --multi-release 27 --ignore-missing-deps --recursive --print-module-deps --class-path "$dependency_classpath" "$main_jar" 2>"$jdeps_error")"; then
             cat "$jdeps_error"
             echo "jdeps failed; refusing to create an incomplete runtime."
             exit 1
