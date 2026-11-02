@@ -56,6 +56,32 @@ NV12/P010 into the swap-chain format. This is zero-copy with respect to the
 CPU/system-memory frame path, not a claim that no GPU resource or processing
 operation occurs.
 
+## JVM memory configuration
+
+The Swing client uses the following JVM options for both the packaged application
+and Maven-based development launches:
+
+```text
+-Xms100m
+-Xmx8g
+-XX:+UseG1GC
+-XX:+G1PeriodicGCInvokesConcurrent
+-XX:G1PeriodicGCInterval=60000
+-XX:G1PeriodicGCSystemLoadThreshold=0
+```
+
+- `-Xms100m` sets the initial Java heap; `-Xmx8g` sets the maximum Java heap,
+  not a cap on the complete process memory. FFmpeg, Netty direct buffers, and
+  D3D11/GPU resources are accounted for separately.
+- The 60-second periodic G1 check is intended to help reclaim unused committed
+  heap during long idle periods. It does not force a collection every 60 seconds
+  while the application is actively streaming. A system-load threshold of zero
+  disables the load-threshold check.
+
+The repository-root `.mvn/jvm.config` applies these options to Maven JVM
+launches such as `mvn -pl scrcpy-swing-poc exec:java`. The platform packaging
+workflow also embeds the same options in the generated application launcher.
+
 ## Build and run
 
 Requires JDK 25 and the Android platform-tools executable (bundled, SDK, PATH,
