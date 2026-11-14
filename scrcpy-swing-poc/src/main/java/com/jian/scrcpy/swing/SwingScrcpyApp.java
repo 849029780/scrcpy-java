@@ -109,6 +109,7 @@ public final class SwingScrcpyApp {
     }
 
     public static void main(String[] args) {
+        System.setProperty("sun.awt.noerasebackground", "true");
         SwingUtilities.invokeLater(() -> new SwingScrcpyApp().show());
     }
 
@@ -184,7 +185,10 @@ public final class SwingScrcpyApp {
         workspace.addComponentListener(new ComponentAdapter() {
             @Override public void componentResized(ComponentEvent e) {
                 DeviceSession primary = primarySerial == null ? null : sessions.get(primarySerial);
-                if (primary != null) resizeTile(primary, true);
+                if (primary != null) {
+                    resizeTile(primary, true);
+                    scheduleKeyframeRequest(primary);
+                }
             }
         });
 
@@ -1132,6 +1136,7 @@ public final class SwingScrcpyApp {
         host.addComponentListener(new ComponentAdapter() {
             @Override public void componentResized(ComponentEvent e) {
                 resizeTile(handle, isPrimary(handle));
+                scheduleKeyframeRequest(handle);
             }
         });
         if (handle.popOutButton != null) handle.popOutButton.setToolTipText("还原到主窗口");
@@ -1208,6 +1213,19 @@ public final class SwingScrcpyApp {
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    private void scheduleKeyframeRequest(DeviceSession handle) {
+        if (handle == null) return;
+        // 拖拽拉伸窗口大小时，避免频繁打断手机编码器造成画面闪烁；由系统 DWM 硬件平滑拉伸现有画面；
+        // 在停止拖拽 120ms 后发送一次关键帧请求，以最终尺寸瞬间呈现高清晰画面，彻底杜绝闪屏
+        if (handle.resizeKeyframeTimer == null) {
+            handle.resizeKeyframeTimer = new javax.swing.Timer(120, e -> {
+                requestKeyframe(handle);
+            });
+            handle.resizeKeyframeTimer.setRepeats(false);
+        }
+        handle.resizeKeyframeTimer.restart();
     }
 
     private void popOutAllDevices() {
@@ -2039,7 +2057,6 @@ public final class SwingScrcpyApp {
         handle.tile.setMaximumSize(preferred);
         if (floating && handle.floatingHost != null) {
             handle.floatingHost.revalidate();
-            handle.floatingHost.repaint();
         }
         handle.viewport.setPreferredSize(new Dimension(vw, vh));
         handle.viewport.setMinimumSize(new Dimension(vw, vh));
@@ -2251,6 +2268,8 @@ public final class SwingScrcpyApp {
         int secondaryIndex = -1;
         int portraitViewportWidth, portraitViewportHeight;
         MouseMode mouseMode = MouseMode.ABSOLUTE_TOUCH;
+        javax.swing.Timer resizeKeyframeTimer;
+        long lastKeyframeRequestNanos;
 
         DeviceSession(ScrcpySession session, JavaSoundPlayer audioPlayer, FfmpegVideoDecoder decoder,
                       SwingHardwareVideoRenderer nativeRenderer, SwingVideoSurface view,
@@ -2261,6 +2280,7 @@ public final class SwingScrcpyApp {
         }
 
         @Override public void close() {
+            try { if (resizeKeyframeTimer != null) resizeKeyframeTimer.stop(); } catch (Throwable ignored) {}
             Throwable first = null;
             try { uhid.close(); } catch (Throwable t) { first = t; }
             try { if (decoder != null) decoder.close(); } catch (Throwable t) { if (first == null) first = t; else first.addSuppressed(t); }
