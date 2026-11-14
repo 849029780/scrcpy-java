@@ -30,7 +30,7 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
 
     public SwingVideoSurface() {
         setOpaque(true);
-        setBackground(Color.WHITE);
+        setBackground(new Color(24, 24, 24));
         setFocusable(true);
         setPreferredSize(new Dimension(360, 680));
         setDoubleBuffered(false);

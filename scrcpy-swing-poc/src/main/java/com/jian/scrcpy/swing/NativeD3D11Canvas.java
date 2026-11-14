@@ -20,9 +20,23 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
     private final CompletableFuture<Void> deviceReady = new CompletableFuture<>();
 
     public NativeD3D11Canvas() {
-        setBackground(java.awt.Color.WHITE);
+        setBackground(new java.awt.Color(24, 24, 24));
         setFocusable(true);
         setVisible(true);
+    }
+
+    @Override
+    public void update(java.awt.Graphics g) {
+        // Suppress default AWT Canvas background clearing (clearRect) which causes white flashes
+        paint(g);
+    }
+
+    @Override
+    public void paint(java.awt.Graphics g) {
+        if (!surfaceAttached) {
+            g.setColor(getBackground());
+            g.fillRect(0, 0, getWidth(), getHeight());
+        }
     }
 
     @Override
@@ -65,6 +79,7 @@ public final class NativeD3D11Canvas extends Canvas implements AutoCloseable {
         }
         surfaceAttached = true;
         deviceReady.complete(null);
+        renderFrame();
     }
 
     public long retainD3D11Device() {

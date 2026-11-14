@@ -17,6 +17,7 @@ import com.jian.scrcpy.media.VideoFrame;
 import com.jian.scrcpy.media.VideoHardwareDeviceProvider;
 import com.jian.scrcpy.media.VideoRenderer;
 import com.jian.scrcpy.protocol.ControlMessages;
+import com.jian.scrcpy.protocol.ControlMessageType;
 import com.jian.scrcpy.server.ScrcpyOptions;
 import com.jian.scrcpy.server.ScrcpyServerArtifact;
 import com.jian.scrcpy.server.ServerLauncher;
@@ -86,6 +87,7 @@ public final class SwingScrcpyApp {
     private volatile boolean adaptScreenClick;
     private volatile boolean navigationBarsVisible;
     private JButton toggleNavigationBarsButton;
+    private JButton togglePopOutAllButton;
     private volatile String lastDesktopClipboard = "";
     private volatile boolean closing;
     private volatile boolean adbServicesStopped;
@@ -121,6 +123,7 @@ public final class SwingScrcpyApp {
         frame.setMinimumSize(new Dimension(1050, 700));
         frame.setSize(1500, 950);
         frame.setLocationByPlatform(true);
+        frame.setJMenuBar(buildMenuBar());
 
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 7));
         JButton devices = new JButton("设备列表");
@@ -128,17 +131,21 @@ public final class SwingScrcpyApp {
         JButton install = new JButton("批量安装应用");
         JButton toggleAllOrientation = new JButton("批量切换横竖屏");
         toggleAllOrientation.setToolTipText("将所有正在投屏的设备统一切换为横屏或竖屏");
+        togglePopOutAllButton = new JButton("一键独立所有设备");
+        togglePopOutAllButton.setToolTipText("将所有正在投屏的设备弹出为独立窗口（全部独立后可一键还原）");
         toggleNavigationBarsButton = new JButton("显示设备按钮栏");
         toggleNavigationBarsButton.setToolTipText("一键显示或隐藏所有设备右侧的操作按钮栏");
         devices.addActionListener(e -> showDeviceManager());
         files.addActionListener(e -> showBatchDialog(false));
         install.addActionListener(e -> showBatchDialog(true));
         toggleAllOrientation.addActionListener(e -> toggleAllOrientations());
+        togglePopOutAllButton.addActionListener(e -> togglePopOutAllDevices());
         toggleNavigationBarsButton.addActionListener(e -> setNavigationBarsVisible(!navigationBarsVisible));
         toolbar.add(devices);
         toolbar.add(files);
         toolbar.add(install);
         toolbar.add(toggleAllOrientation);
+        toolbar.add(togglePopOutAllButton);
         toolbar.add(toggleNavigationBarsButton);
         toolbar.add(primaryStatus);
         toolbar.add(status);
@@ -179,6 +186,56 @@ public final class SwingScrcpyApp {
                 releaseAllTransientInput();
             }
         });
+    }
+
+    private JMenuBar buildMenuBar() {
+        JMenuBar menuBar = new JMenuBar();
+
+        JMenu windowMenu = new JMenu("窗口(W)");
+        windowMenu.setMnemonic(KeyEvent.VK_W);
+
+        JMenuItem popOutAllItem = new JMenuItem("一键独立所有设备投影");
+        popOutAllItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_D, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+        popOutAllItem.addActionListener(e -> popOutAllDevices());
+
+        JMenuItem restoreAllItem = new JMenuItem("一键还原所有设备投影");
+        restoreAllItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+        restoreAllItem.addActionListener(e -> restoreAllDevices());
+
+        JMenuItem tileWindowsItem = new JMenuItem("自动排列独立窗口");
+        tileWindowsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_A, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+        tileWindowsItem.addActionListener(e -> tileFloatingWindows());
+
+        windowMenu.add(popOutAllItem);
+        windowMenu.add(restoreAllItem);
+        windowMenu.add(tileWindowsItem);
+        windowMenu.addSeparator();
+
+        JMenuItem toggleOrientationItem = new JMenuItem("批量切换横竖屏");
+        toggleOrientationItem.addActionListener(e -> toggleAllOrientations());
+        windowMenu.add(toggleOrientationItem);
+
+        JMenuItem toggleNavBarsItem = new JMenuItem("显示/隐藏设备按钮栏");
+        toggleNavBarsItem.addActionListener(e -> setNavigationBarsVisible(!navigationBarsVisible));
+        windowMenu.add(toggleNavBarsItem);
+
+        JMenu deviceMenu = new JMenu("设备(D)");
+        deviceMenu.setMnemonic(KeyEvent.VK_D);
+
+        JMenuItem devicesItem = new JMenuItem("设备列表...");
+        devicesItem.addActionListener(e -> showDeviceManager());
+        JMenuItem filesItem = new JMenuItem("批量传送文件...");
+        filesItem.addActionListener(e -> showBatchDialog(false));
+        JMenuItem installItem = new JMenuItem("批量安装应用...");
+        installItem.addActionListener(e -> showBatchDialog(true));
+
+        deviceMenu.add(devicesItem);
+        deviceMenu.add(filesItem);
+        deviceMenu.add(installItem);
+
+        menuBar.add(windowMenu);
+        menuBar.add(deviceMenu);
+        return menuBar;
     }
 
     private JComponent statusBar() {
@@ -851,11 +908,11 @@ public final class SwingScrcpyApp {
         handle.tileTitle = title;
         JPanel videoAndNavigation = new JPanel(new BorderLayout(0, 0));
         videoAndNavigation.setOpaque(true);
-        videoAndNavigation.setBackground(Color.WHITE);
+        videoAndNavigation.setBackground(new Color(24, 24, 24));
         videoAndNavigation.setDoubleBuffered(false);
         JPanel viewport = new JPanel(new BorderLayout());
         viewport.setOpaque(true);
-        viewport.setBackground(Color.WHITE);
+        viewport.setBackground(new Color(24, 24, 24));
         viewport.setDoubleBuffered(false);
         viewport.add(handle.view, BorderLayout.CENTER);
         JPanel navigation = createNavigationBar(handle, device);
@@ -884,6 +941,7 @@ public final class SwingScrcpyApp {
         tile.add(title, BorderLayout.NORTH);
         tile.add(videoAndNavigation, BorderLayout.CENTER);
         handle.tile = tile;
+        handle.videoAndNavigation = videoAndNavigation;
         handle.viewport = viewport;
         handle.navigationScroll = navigationScroll;
         handle.device = device;
@@ -899,6 +957,9 @@ public final class SwingScrcpyApp {
                 if (handle.landscape != actualLandscape) {
                     handle.landscape = actualLandscape;
                     updateOrientationButton(handle);
+                    if (handle.floatingFrame != null) {
+                        adjustFloatingFrameSize(handle);
+                    }
                 }
                 // Landscape tiles are wider and the toolbar can contain more
                 // controls below the fold. Increase wheel travel so one notch
@@ -916,6 +977,119 @@ public final class SwingScrcpyApp {
         updateFrameGeometry.run();
         secondaryGrid.add(tile);
         secondaryGrid.revalidate(); secondaryGrid.repaint();
+        updatePopOutAllButtonState();
+    }
+
+    private Dimension calculateProjectedContentSize(DeviceSession handle) {
+        int navWidth = (handle.navigationScroll != null && handle.navigationScroll.isVisible()) ? NAV_WIDTH : 0;
+        int vw = 0;
+        int vh = 0;
+
+        if (handle.viewport != null && handle.viewport.getWidth() > 0 && handle.viewport.getHeight() > 0) {
+            vw = handle.viewport.getWidth();
+            vh = handle.viewport.getHeight();
+        } else if (!handle.landscape && handle.portraitViewportWidth > 0 && handle.portraitViewportHeight > 0) {
+            vw = handle.portraitViewportWidth;
+            vh = handle.portraitViewportHeight;
+        }
+
+        int frameWidth = handle.view != null ? handle.view.frameWidth() : 0;
+        int frameHeight = handle.view != null ? handle.view.frameHeight() : 0;
+        if ((vw <= 0 || vh <= 0) && frameWidth > 0 && frameHeight > 0) {
+            int baseH = handle.landscape ? TILE_WIDTH : TILE_HEIGHT;
+            vh = baseH;
+            vw = Math.max(1, (int) Math.round(frameWidth * (baseH / (double) frameHeight)));
+        }
+
+        if (vw <= 0 || vh <= 0) {
+            vw = handle.landscape ? TILE_HEIGHT : TILE_WIDTH;
+            vh = handle.landscape ? TILE_WIDTH : TILE_HEIGHT;
+        }
+
+        return new Dimension(vw + navWidth, vh);
+    }
+
+    private void adjustFloatingFrameSize(DeviceSession handle) {
+        if (handle == null || handle.floatingFrame == null || handle.floatingHost == null) return;
+        Dimension contentSize = calculateProjectedContentSize(handle);
+        handle.floatingHost.setPreferredSize(contentSize);
+        handle.floatingFrame.pack();
+        resizeTile(handle, isPrimary(handle));
+    }
+
+    private Rectangle getScreenWorkingArea() {
+        GraphicsConfiguration gc = frame.getGraphicsConfiguration();
+        Rectangle bounds = gc.getBounds();
+        Insets insets = Toolkit.getDefaultToolkit().getScreenInsets(gc);
+        return new Rectangle(
+                bounds.x + insets.left,
+                bounds.y + insets.top,
+                Math.max(100, bounds.width - insets.left - insets.right),
+                Math.max(100, bounds.height - insets.top - insets.bottom)
+        );
+    }
+
+    private void tileFloatingWindows() {
+        List<DeviceSession> floatingSessions = sessions.values().stream()
+                .filter(s -> s.floatingFrame != null && s.floatingFrame.isDisplayable())
+                .sorted(Comparator.comparing((DeviceSession s) -> isPrimary(s) ? 0 : 1)
+                        .thenComparingInt(s -> s.embeddedIndex >= 0 ? s.embeddedIndex : Integer.MAX_VALUE)
+                        .thenComparing(s -> s.device != null ? s.device.serial() : ""))
+                .toList();
+
+        if (floatingSessions.isEmpty()) return;
+
+        Rectangle area = getScreenWorkingArea();
+        boolean isWin = System.getProperty("os.name", "").toLowerCase().contains("win");
+        // Windows 10/11 的系统 JFrame 自带约 7px 的不可见透明调整边框和阴影
+        int dwmShadowX = isWin ? 14 : 0;
+        int dwmShadowY = isWin ? 7 : 0;
+        // 视觉上真实可见的窗口细微缝隙（紧凑无缝贴合）
+        int visualGap = 1;
+
+        int margin = 4;
+        int startX = area.x + margin;
+        int startY = area.y + margin;
+        int currentX = startX;
+        int currentY = startY;
+        int rowMaxHeight = 0;
+        int overflowShift = 0;
+
+        for (DeviceSession session : floatingSessions) {
+            JFrame win = session.floatingFrame;
+            if (win == null) continue;
+            int w = win.getWidth();
+            int h = win.getHeight();
+
+            boolean toolbarVisible = session.navigationScroll != null && session.navigationScroll.isVisible();
+            int toolbarGap = toolbarVisible ? 0 : NAV_WIDTH;
+            int horizontalGap = visualGap + toolbarGap;
+            int stepX = Math.max(10, w - dwmShadowX + horizontalGap);
+
+            // 若当前行放不下且当前行已有窗口，换到下一行
+            if (currentX + w - dwmShadowX > area.x + area.width && currentX > startX) {
+                currentX = startX;
+                currentY += rowMaxHeight - dwmShadowY + visualGap;
+                rowMaxHeight = 0;
+            }
+
+            // 若换行后高度超出可用屏幕底端，重置回左上角并增加轻微偏移
+            if (currentY + h - dwmShadowY > area.y + area.height && currentY > startY) {
+                overflowShift += 30;
+                startX = area.x + margin + overflowShift;
+                startY = area.y + margin + overflowShift;
+                currentX = startX;
+                currentY = startY;
+                rowMaxHeight = 0;
+            }
+
+            win.setLocation(currentX, currentY);
+            currentX += stepX;
+            if (h > rowMaxHeight) {
+                rowMaxHeight = h;
+            }
+            win.toFront();
+        }
     }
 
     /**
@@ -924,12 +1098,18 @@ public final class SwingScrcpyApp {
      * decoder, renderer, or Android connection is created.
      */
     private void popOutTile(DeviceSession handle) {
+        popOutTile(handle, true);
+    }
+
+    private void popOutTile(DeviceSession handle, boolean autoTile) {
         if (handle == null || handle.tile == null || handle.floatingFrame != null) return;
         releaseAllTransientInput();
         Container oldParent = handle.tile.getParent();
         if (oldParent == null) return;
         handle.embeddedParent = oldParent;
-        handle.embeddedIndex = indexOfComponent(oldParent, handle.tile);
+        if (handle.embeddedIndex < 0) {
+            handle.embeddedIndex = indexOfComponent(oldParent, handle.tile);
+        }
 
         // When the embedded primary is detached, remove the now-empty left
         // primary host entirely so the secondary WrapLayout can reclaim that
@@ -946,13 +1126,32 @@ public final class SwingScrcpyApp {
             workspace.repaint();
         }
 
+        // 使用 GridBagLayout 搭配深色背景：窗口可自由调整尺寸，投屏画面始终等比居中自适应，绝不强行拉伸变形
         JPanel host = new JPanel(new GridBagLayout());
-        host.setBackground(Color.WHITE);
+        host.setBackground(new Color(24, 24, 24));
         host.setOpaque(true);
+
         JFrame floating = new JFrame(handle.device == null ? "scrcpy-java" : handle.device.displayName());
         floating.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
-        floating.setMinimumSize(new Dimension(360, 320));
-        floating.setSize(handle.landscape ? new Dimension(1100, 620) : new Dimension(620, 900));
+        floating.setMinimumSize(new Dimension(200, 200));
+
+        // 隐藏在独立窗口内多余的标题栏和边框，并将背景置为深色，彻底避免白边
+        if (handle.tileTitle != null) handle.tileTitle.setVisible(false);
+        handle.tile.setBackground(new Color(24, 24, 24));
+        handle.tile.setBorder(BorderFactory.createEmptyBorder());
+        if (handle.videoAndNavigation != null) handle.videoAndNavigation.setBackground(new Color(24, 24, 24));
+        if (handle.viewport != null) handle.viewport.setBackground(new Color(24, 24, 24));
+        if (handle.view != null) handle.view.setBackground(new Color(24, 24, 24));
+
+        detachTile(handle.tile);
+        host.add(handle.tile);
+
+        // 设置窗口初始内容大小与投屏内容一致（精准贴合视频画面+导航栏）
+        Dimension contentSize = calculateProjectedContentSize(handle);
+        host.setPreferredSize(contentSize);
+        floating.setContentPane(host);
+        floating.pack();
+
         floating.setLocationRelativeTo(frame);
         floating.addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent e) { restoreTile(handle); }
@@ -960,12 +1159,7 @@ public final class SwingScrcpyApp {
                 if (activeMouseInput == handle) releaseAllTransientInput();
             }
         });
-        // The device name is already shown in the native window title bar.
-        // Hide the in-tile header while detached to maximize the video area.
-        if (handle.tileTitle != null) handle.tileTitle.setVisible(false);
-        detachTile(handle.tile);
-        host.add(handle.tile);
-        floating.setContentPane(host);
+
         handle.floatingHost = host;
         handle.floatingFrame = floating;
         host.addComponentListener(new ComponentAdapter() {
@@ -979,6 +1173,11 @@ public final class SwingScrcpyApp {
         host.revalidate();
         host.repaint();
         handle.view.requestFocusInWindow();
+        requestKeyframe(handle);
+        if (autoTile) {
+            tileFloatingWindows();
+        }
+        updatePopOutAllButtonState();
     }
 
     private void restoreTile(DeviceSession handle) {
@@ -1012,6 +1211,12 @@ public final class SwingScrcpyApp {
         }
         floating.getContentPane().removeAll();
         floating.dispose();
+        // 还原嵌入模式下的背景与边框
+        handle.tile.setBackground(Color.WHITE);
+        handle.tile.setBorder(BorderFactory.createLineBorder(new Color(68, 68, 68)));
+        if (handle.videoAndNavigation != null) handle.videoAndNavigation.setBackground(new Color(24, 24, 24));
+        if (handle.viewport != null) handle.viewport.setBackground(new Color(24, 24, 24));
+        if (handle.view != null) handle.view.setBackground(new Color(24, 24, 24));
         if (handle.tileTitle != null) handle.tileTitle.setVisible(true);
         handle.embeddedParent = null;
         handle.embeddedIndex = -1;
@@ -1024,6 +1229,91 @@ public final class SwingScrcpyApp {
         target.repaint();
         workspace.revalidate();
         workspace.repaint();
+        requestKeyframe(handle);
+        updatePopOutAllButtonState();
+    }
+
+    private void requestKeyframe(DeviceSession handle) {
+        if (handle == null) return;
+        try {
+            if (handle.session != null) {
+                handle.session.sendControl(new ControlMessages.Simple(ControlMessageType.RESET_VIDEO));
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void popOutAllDevices() {
+        List<DeviceSession> targets = sessions.values().stream()
+                .filter(s -> s.tile != null && s.floatingFrame == null)
+                .sorted(Comparator.comparing((DeviceSession s) -> isPrimary(s) ? 0 : 1)
+                        .thenComparing(s -> s.device != null ? s.device.serial() : ""))
+                .toList();
+        if (targets.isEmpty()) {
+            long floatingCount = sessions.values().stream().filter(s -> s.floatingFrame != null).count();
+            if (floatingCount > 0) {
+                status.setText("所有设备投影均已是独立窗口");
+            } else {
+                status.setText("当前没有正在投屏的设备");
+            }
+            return;
+        }
+        for (DeviceSession s : targets) {
+            if (s.tile != null && s.tile.getParent() != null && s.embeddedIndex < 0) {
+                s.embeddedIndex = indexOfComponent(s.tile.getParent(), s.tile);
+                s.embeddedParent = s.tile.getParent();
+            }
+        }
+        for (DeviceSession target : targets) {
+            popOutTile(target, false);
+        }
+        tileFloatingWindows();
+        workspace.revalidate();
+        workspace.repaint();
+        status.setText("已将 " + targets.size() + " 台设备投影弹出并平铺排列");
+        updatePopOutAllButtonState();
+    }
+
+    private void restoreAllDevices() {
+        List<DeviceSession> targets = sessions.values().stream()
+                .filter(s -> s.floatingFrame != null && s.tile != null)
+                .sorted(Comparator.comparing((DeviceSession s) -> isPrimary(s) ? 0 : 1)
+                        .thenComparingInt(s -> s.embeddedIndex >= 0 ? s.embeddedIndex : Integer.MAX_VALUE)
+                        .thenComparing(s -> s.device != null ? s.device.serial() : ""))
+                .toList();
+        if (targets.isEmpty()) {
+            status.setText("当前没有已独立的设备投影");
+            return;
+        }
+        for (DeviceSession target : targets) {
+            restoreTile(target);
+        }
+        workspace.revalidate();
+        workspace.repaint();
+        status.setText("已还原 " + targets.size() + " 台设备投影到主窗口");
+        updatePopOutAllButtonState();
+    }
+
+    private void togglePopOutAllDevices() {
+        long attachedCount = sessions.values().stream().filter(s -> s.tile != null && s.floatingFrame == null).count();
+        if (attachedCount > 0) {
+            popOutAllDevices();
+        } else {
+            restoreAllDevices();
+        }
+    }
+
+    private void updatePopOutAllButtonState() {
+        if (togglePopOutAllButton == null) return;
+        long attachedCount = sessions.values().stream().filter(s -> s.tile != null && s.floatingFrame == null).count();
+        long floatingCount = sessions.values().stream().filter(s -> s.tile != null && s.floatingFrame != null).count();
+        if (attachedCount == 0 && floatingCount > 0) {
+            togglePopOutAllButton.setText("一键还原所有设备");
+            togglePopOutAllButton.setToolTipText("将所有已独立的设备窗口还原回主工作区");
+        } else {
+            togglePopOutAllButton.setText("一键独立所有设备");
+            togglePopOutAllButton.setToolTipText("将所有正在投屏的设备弹出为独立窗口");
+        }
     }
 
     private void setNavigationBarsVisible(boolean visible) {
@@ -1034,6 +1324,9 @@ public final class SwingScrcpyApp {
         for (DeviceSession session : sessions.values()) {
             if (session.navigationScroll == null || session.tile == null) continue;
             session.navigationScroll.setVisible(visible);
+            if (session.floatingFrame != null) {
+                adjustFloatingFrameSize(session);
+            }
             resizeTile(session, isPrimary(session));
             session.tile.revalidate();
             session.tile.repaint();
@@ -1688,13 +1981,14 @@ public final class SwingScrcpyApp {
     private void resizeTile(DeviceSession handle, boolean primary) {
         if (handle.tile == null) return;
         boolean floating = handle.floatingHost != null && handle.floatingFrame != null;
+        Insets tileInsets = handle.tile.getInsets();
+        int navigationWidth = handle.navigationScroll != null && handle.navigationScroll.isVisible() ? NAV_WIDTH : 0;
         int availableWidth = floating
-                ? Math.max(1, handle.floatingHost.getWidth() - NAV_WIDTH - 16)
+                ? Math.max(1, handle.floatingHost.getWidth() - navigationWidth - tileInsets.left - tileInsets.right)
                 : Math.max(1, workspace.getWidth() - 24);
         int availableHeight = floating
-                // The detached tile has no header; reserve only its 1px border
-                // on the top and bottom so the video reaches the window edges.
-                ? Math.max(1, handle.floatingHost.getHeight() - 2)
+                // The detached tile has no header; reserve only its border
+                ? Math.max(1, handle.floatingHost.getHeight() - tileInsets.top - tileInsets.bottom)
                 : Math.max(1, workspace.getHeight() - 30);
         int frameWidth = handle.view.frameWidth();
         int frameHeight = handle.view.frameHeight();
@@ -1750,10 +2044,8 @@ public final class SwingScrcpyApp {
         BorderLayout tileLayout = (BorderLayout) handle.tile.getLayout();
         Component title = tileLayout.getLayoutComponent(BorderLayout.NORTH);
         int titleHeight = title == null || !title.isVisible() ? 0 : title.getPreferredSize().height;
-        Insets tileInsets = handle.tile.getInsets();
 
         Component videoAndNavigation = tileLayout.getLayoutComponent(BorderLayout.CENTER);
-        int navigationWidth = handle.navigationScroll != null && handle.navigationScroll.isVisible() ? NAV_WIDTH : 0;
         if (videoAndNavigation instanceof Container container
                 && container.getLayout() instanceof BorderLayout contentLayout) {
             Component navigation = contentLayout.getLayoutComponent(BorderLayout.EAST);
@@ -1777,14 +2069,17 @@ public final class SwingScrcpyApp {
                 vh + titleHeight + tileInsets.top + tileInsets.bottom);
         handle.tile.setPreferredSize(preferred);
         handle.tile.setMinimumSize(floating ? new Dimension(1, 1) : preferred);
+        handle.tile.setMaximumSize(preferred);
         if (floating && handle.floatingHost != null) {
             handle.floatingHost.revalidate();
             handle.floatingHost.repaint();
         }
         handle.viewport.setPreferredSize(new Dimension(vw, vh));
         handle.viewport.setMinimumSize(new Dimension(vw, vh));
+        handle.viewport.setMaximumSize(new Dimension(vw, vh));
         handle.view.setPreferredSize(new Dimension(vw, vh));
         handle.view.setMinimumSize(new Dimension(vw, vh));
+        handle.view.setMaximumSize(new Dimension(vw, vh));
         handle.tile.revalidate();
         if (primary && Objects.equals(primarySerial, handle.device == null ? null : handle.device.serial())) {
             primaryHost.setPreferredSize(new Dimension(preferred.width, 0));
@@ -1852,6 +2147,7 @@ public final class SwingScrcpyApp {
         refreshPrimaryUi();
         refreshDeviceRows();
         workspace.revalidate(); workspace.repaint();
+        updatePopOutAllButtonState();
     }
 
     private void refreshDeviceRows() {
@@ -1907,6 +2203,7 @@ public final class SwingScrcpyApp {
         refreshDeviceRows();
         workspace.revalidate();
         workspace.repaint();
+        updatePopOutAllButtonState();
         status.setText("正在关闭投屏会话并停止 ADB Server...");
 
         Thread.startVirtualThread(() -> {
@@ -1973,6 +2270,7 @@ public final class SwingScrcpyApp {
         AdbDevice device;
         JPanel tile;
         JLabel tileTitle;
+        JPanel videoAndNavigation;
         JPanel viewport;
         JScrollPane navigationScroll;
         JFrame floatingFrame;
