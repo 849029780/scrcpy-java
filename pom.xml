@@ -19,7 +19,7 @@
         <javacpp.version>1.5.14</javacpp.version>
         <ffmpeg.version>8.1.2-${javacpp.version}</ffmpeg.version>
         <lwjgl.version>3.4.3</lwjgl.version>
-        <logback.version>1.5.21</logback.version>
+        <logback.version>1.6.6</logback.version>
         <junit.version>5.14.0</junit.version>
     </properties>
     <dependencyManagement>
