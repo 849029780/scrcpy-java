@@ -123,7 +123,6 @@ public final class SwingScrcpyApp {
         frame.setMinimumSize(new Dimension(1050, 700));
         frame.setSize(1500, 950);
         frame.setLocationByPlatform(true);
-        frame.setJMenuBar(buildMenuBar());
 
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 7));
         JButton devices = new JButton("设备列表");
@@ -133,6 +132,8 @@ public final class SwingScrcpyApp {
         toggleAllOrientation.setToolTipText("将所有正在投屏的设备统一切换为横屏或竖屏");
         togglePopOutAllButton = new JButton("一键独立所有设备");
         togglePopOutAllButton.setToolTipText("将所有正在投屏的设备弹出为独立窗口（全部独立后可一键还原）");
+        JButton tileWindowsButton = new JButton("排列独立窗口");
+        tileWindowsButton.setToolTipText("自动平铺排列当前所有独立的设备投屏窗口 (Ctrl+Shift+A)");
         toggleNavigationBarsButton = new JButton("显示设备按钮栏");
         toggleNavigationBarsButton.setToolTipText("一键显示或隐藏所有设备右侧的操作按钮栏");
         devices.addActionListener(e -> showDeviceManager());
@@ -140,16 +141,30 @@ public final class SwingScrcpyApp {
         install.addActionListener(e -> showBatchDialog(true));
         toggleAllOrientation.addActionListener(e -> toggleAllOrientations());
         togglePopOutAllButton.addActionListener(e -> togglePopOutAllDevices());
+        tileWindowsButton.addActionListener(e -> tileFloatingWindows());
         toggleNavigationBarsButton.addActionListener(e -> setNavigationBarsVisible(!navigationBarsVisible));
         toolbar.add(devices);
         toolbar.add(files);
         toolbar.add(install);
         toolbar.add(toggleAllOrientation);
         toolbar.add(togglePopOutAllButton);
+        toolbar.add(tileWindowsButton);
         toolbar.add(toggleNavigationBarsButton);
         toolbar.add(primaryStatus);
         toolbar.add(status);
         toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(215, 215, 215)));
+
+        // 全局快捷键注册（Ctrl+Shift+D 独立全部，Ctrl+Shift+R 还原全部，Ctrl+Shift+A 自动平铺）
+        JRootPane root = frame.getRootPane();
+        root.registerKeyboardAction(e -> popOutAllDevices(),
+                KeyStroke.getKeyStroke(KeyEvent.VK_D, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+                JComponent.WHEN_IN_FOCUSED_WINDOW);
+        root.registerKeyboardAction(e -> restoreAllDevices(),
+                KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+                JComponent.WHEN_IN_FOCUSED_WINDOW);
+        root.registerKeyboardAction(e -> tileFloatingWindows(),
+                KeyStroke.getKeyStroke(KeyEvent.VK_A, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+                JComponent.WHEN_IN_FOCUSED_WINDOW);
 
         primaryHost.setOpaque(true);
         primaryHost.setBackground(Color.WHITE);
@@ -188,55 +203,7 @@ public final class SwingScrcpyApp {
         });
     }
 
-    private JMenuBar buildMenuBar() {
-        JMenuBar menuBar = new JMenuBar();
 
-        JMenu windowMenu = new JMenu("窗口(W)");
-        windowMenu.setMnemonic(KeyEvent.VK_W);
-
-        JMenuItem popOutAllItem = new JMenuItem("一键独立所有设备投影");
-        popOutAllItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_D, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
-        popOutAllItem.addActionListener(e -> popOutAllDevices());
-
-        JMenuItem restoreAllItem = new JMenuItem("一键还原所有设备投影");
-        restoreAllItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
-        restoreAllItem.addActionListener(e -> restoreAllDevices());
-
-        JMenuItem tileWindowsItem = new JMenuItem("自动排列独立窗口");
-        tileWindowsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_A, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
-        tileWindowsItem.addActionListener(e -> tileFloatingWindows());
-
-        windowMenu.add(popOutAllItem);
-        windowMenu.add(restoreAllItem);
-        windowMenu.add(tileWindowsItem);
-        windowMenu.addSeparator();
-
-        JMenuItem toggleOrientationItem = new JMenuItem("批量切换横竖屏");
-        toggleOrientationItem.addActionListener(e -> toggleAllOrientations());
-        windowMenu.add(toggleOrientationItem);
-
-        JMenuItem toggleNavBarsItem = new JMenuItem("显示/隐藏设备按钮栏");
-        toggleNavBarsItem.addActionListener(e -> setNavigationBarsVisible(!navigationBarsVisible));
-        windowMenu.add(toggleNavBarsItem);
-
-        JMenu deviceMenu = new JMenu("设备(D)");
-        deviceMenu.setMnemonic(KeyEvent.VK_D);
-
-        JMenuItem devicesItem = new JMenuItem("设备列表...");
-        devicesItem.addActionListener(e -> showDeviceManager());
-        JMenuItem filesItem = new JMenuItem("批量传送文件...");
-        filesItem.addActionListener(e -> showBatchDialog(false));
-        JMenuItem installItem = new JMenuItem("批量安装应用...");
-        installItem.addActionListener(e -> showBatchDialog(true));
-
-        deviceMenu.add(devicesItem);
-        deviceMenu.add(filesItem);
-        deviceMenu.add(installItem);
-
-        menuBar.add(windowMenu);
-        menuBar.add(deviceMenu);
-        return menuBar;
-    }
 
     private JComponent statusBar() {
         JPanel panel = new JPanel(new BorderLayout());
