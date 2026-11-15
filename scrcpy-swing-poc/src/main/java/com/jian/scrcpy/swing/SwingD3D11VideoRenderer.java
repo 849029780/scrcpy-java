@@ -35,6 +35,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
                     task -> {
                         Thread thread = new Thread(task, "scrcpy-d3d11-present");
                         thread.setDaemon(true);
+                        thread.setPriority(Thread.MAX_PRIORITY);
                         return thread;
                     });
     private static final int MAX_QUEUED_HARDWARE_FRAMES = 2;
@@ -68,6 +69,7 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     private final NativeD3D11Canvas canvas;
     private volatile String deviceSerial = "unknown";
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean suspended = new AtomicBoolean();
     private final AtomicBoolean firstNativePresentLogged = new AtomicBoolean();
     private final ArrayBlockingQueue<HardwareVideoFrame> pendingFrames =
             new ArrayBlockingQueue<>(MAX_QUEUED_HARDWARE_FRAMES);
@@ -140,8 +142,17 @@ public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer
     }
 
     @Override
+    public void setSuspended(boolean value) {
+        suspended.set(value);
+    }
+
+    @Override
     public boolean renderHardware(HardwareVideoFrame hardwareFrame) {
         if (closed.get() || !"d3d11va".equalsIgnoreCase(hardwareFrame.backend())) return false;
+        if (suspended.get()) {
+            hardwareFrame.close();
+            return true;
+        }
         deviceSerial = hardwareFrame.serial();
         try {
             while (!closed.get()) {

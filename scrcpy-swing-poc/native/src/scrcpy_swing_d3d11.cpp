@@ -230,6 +230,8 @@ struct Renderer {
     UINT processorOutputWidth{};
     UINT processorOutputHeight{};
     DXGI_FORMAT processorFormat{DXGI_FORMAT_UNKNOWN};
+    bool isFlipModel{false};
+    bool tearingSupported{false};
     bool geometryLogged{};
 
     ~Renderer() {
@@ -306,7 +308,8 @@ struct Renderer {
                         reinterpret_cast<void**>(&backBuffer)))) {
                     context->CopyResource(backBuffer, slot.texture);
                     backBuffer->Release();
-                    shown = SUCCEEDED(swapChain->Present(0, 0));
+                    UINT presentFlags = tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0;
+                    shown = SUCCEEDED(swapChain->Present(0, presentFlags));
                 }
             }
             completedTokens.push_back(shown ? slot.token : -slot.token);
@@ -335,7 +338,8 @@ struct Renderer {
                     reinterpret_cast<void**>(&backBuffer)))) {
                 context->CopyResource(backBuffer, slot.texture);
                 backBuffer->Release();
-                shown = SUCCEEDED(swapChain->Present(0, 0));
+                UINT presentFlags = tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0;
+                shown = SUCCEEDED(swapChain->Present(0, presentFlags));
             }
         }
         const jlong token = shown ? slot.token : -slot.token;
@@ -422,6 +426,17 @@ struct Renderer {
                 reinterpret_cast<void**>(&factory));
 
         if (SUCCEEDED(hr)) {
+            // Check for tearing support if supported by DXGI factory (DXGI 1.5+)
+            BOOL allowTearing = FALSE;
+            IDXGIFactory5* factory5 = nullptr;
+            if (SUCCEEDED(factory->QueryInterface(__uuidof(IDXGIFactory5), reinterpret_cast<void**>(&factory5)))) {
+                hr = factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing));
+                if (SUCCEEDED(hr) && allowTearing) {
+                    tearingSupported = true;
+                }
+                factory5->Release();
+            }
+
             DXGI_SWAP_CHAIN_DESC desc{};
             desc.BufferDesc.Width = width;
             desc.BufferDesc.Height = height;
@@ -431,8 +446,25 @@ struct Renderer {
             desc.BufferCount = 2;
             desc.OutputWindow = hwnd;
             desc.Windowed = TRUE;
-            desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+            desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+            desc.Flags = tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
             hr = factory->CreateSwapChain(device, &desc, &swapChain);
+            if (FAILED(hr)) {
+                SCRCPY_NATIVE_INFO("d3d11", "[scrcpy-swing] FLIP_DISCARD unavailable (hr=0x%08lx); falling back to legacy DISCARD\n", hr);
+                desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+                desc.BufferCount = 1;
+                desc.Flags = 0;
+                tearingSupported = false;
+                isFlipModel = false;
+                hr = factory->CreateSwapChain(device, &desc, &swapChain);
+            } else {
+                isFlipModel = true;
+                SCRCPY_NATIVE_INFO("d3d11", "[scrcpy-swing] D3D11 swapchain created with DXGI_SWAP_EFFECT_FLIP_DISCARD (Modern Flip Model, tearing=%d)\n",
+                        tearingSupported ? 1 : 0);
+            }
+
+            // Prevent DXGI from monitoring Alt+Enter or window messages
+            factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER | DXGI_MWA_NO_WINDOW_CHANGES);
         }
 
         if (factory) factory->Release();
@@ -473,6 +505,8 @@ struct Renderer {
         }
         hwnd = nullptr;
         width = height = 0;
+        isFlipModel = false;
+        tearingSupported = false;
     }
 
     bool resizeIfNeeded() {
@@ -485,13 +519,17 @@ struct Renderer {
         if (newWidth == width && newHeight == height) return true;
         if (hasInFlightFrames()) return false;
 
+        if (context) {
+            context->OMSetRenderTargets(0, nullptr, nullptr);
+        }
         releaseFrameSlots();
         if (renderTarget) {
             renderTarget->Release();
             renderTarget = nullptr;
         }
+        UINT flags = tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
         HRESULT hr = swapChain->ResizeBuffers(
-            0, newWidth, newHeight, DXGI_FORMAT_UNKNOWN, 0);
+            0, newWidth, newHeight, DXGI_FORMAT_UNKNOWN, flags);
         if (FAILED(hr)) return false;
         width = newWidth;
         height = newHeight;

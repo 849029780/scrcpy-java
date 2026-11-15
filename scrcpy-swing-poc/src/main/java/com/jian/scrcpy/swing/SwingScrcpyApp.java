@@ -88,6 +88,8 @@ public final class SwingScrcpyApp {
     private volatile boolean navigationBarsVisible;
     private JButton toggleNavigationBarsButton;
     private JButton togglePopOutAllButton;
+    private volatile boolean alwaysOnTop;
+    private JButton toggleAlwaysOnTopButton;
     private volatile String lastDesktopClipboard = "";
     private volatile boolean closing;
     private volatile boolean adbServicesStopped;
@@ -135,6 +137,8 @@ public final class SwingScrcpyApp {
         togglePopOutAllButton.setToolTipText("将所有正在投屏的设备弹出为独立窗口（全部独立后可一键还原）");
         JButton tileWindowsButton = new JButton("排列独立窗口");
         tileWindowsButton.setToolTipText("自动平铺排列当前所有独立的设备投屏窗口 (Ctrl+Shift+A)");
+        toggleAlwaysOnTopButton = new JButton("所有窗口置顶");
+        toggleAlwaysOnTopButton.setToolTipText("一键将所有独立投屏窗口保持在最顶层显示 (Ctrl+Shift+T)");
         toggleNavigationBarsButton = new JButton("显示设备按钮栏");
         toggleNavigationBarsButton.setToolTipText("一键显示或隐藏所有设备右侧的操作按钮栏");
         devices.addActionListener(e -> showDeviceManager());
@@ -143,6 +147,7 @@ public final class SwingScrcpyApp {
         toggleAllOrientation.addActionListener(e -> toggleAllOrientations());
         togglePopOutAllButton.addActionListener(e -> togglePopOutAllDevices());
         tileWindowsButton.addActionListener(e -> tileFloatingWindows());
+        toggleAlwaysOnTopButton.addActionListener(e -> toggleAlwaysOnTopAll());
         toggleNavigationBarsButton.addActionListener(e -> setNavigationBarsVisible(!navigationBarsVisible));
         toolbar.add(devices);
         toolbar.add(files);
@@ -150,12 +155,13 @@ public final class SwingScrcpyApp {
         toolbar.add(toggleAllOrientation);
         toolbar.add(togglePopOutAllButton);
         toolbar.add(tileWindowsButton);
+        toolbar.add(toggleAlwaysOnTopButton);
         toolbar.add(toggleNavigationBarsButton);
         toolbar.add(primaryStatus);
         toolbar.add(status);
         toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(215, 215, 215)));
 
-        // 全局快捷键注册（Ctrl+Shift+D 独立全部，Ctrl+Shift+R 还原全部，Ctrl+Shift+A 自动平铺）
+        // 全局快捷键注册（Ctrl+Shift+D 独立全部，Ctrl+Shift+R 还原全部，Ctrl+Shift+A 自动平铺，Ctrl+Shift+T 置顶全部）
         JRootPane root = frame.getRootPane();
         root.registerKeyboardAction(e -> popOutAllDevices(),
                 KeyStroke.getKeyStroke(KeyEvent.VK_D, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
@@ -165,6 +171,9 @@ public final class SwingScrcpyApp {
                 JComponent.WHEN_IN_FOCUSED_WINDOW);
         root.registerKeyboardAction(e -> tileFloatingWindows(),
                 KeyStroke.getKeyStroke(KeyEvent.VK_A, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
+                JComponent.WHEN_IN_FOCUSED_WINDOW);
+        root.registerKeyboardAction(e -> toggleAlwaysOnTopAll(),
+                KeyStroke.getKeyStroke(KeyEvent.VK_T, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK),
                 JComponent.WHEN_IN_FOCUSED_WINDOW);
 
         primaryHost.setOpaque(true);
@@ -468,7 +477,16 @@ public final class SwingScrcpyApp {
 
     private void startMonitors() {
         background.scheduleWithFixedDelay(this::pollAdbState, 1500, 1500, TimeUnit.MILLISECONDS);
-        background.scheduleWithFixedDelay(this::syncDesktopClipboard, 250, 250, TimeUnit.MILLISECONDS);
+        try {
+            Toolkit.getDefaultToolkit().getSystemClipboard().addFlavorListener(e -> {
+                Thread.startVirtualThread(this::syncDesktopClipboard);
+            });
+            // Initial sync on startup
+            Thread.startVirtualThread(this::syncDesktopClipboard);
+        } catch (Throwable t) {
+            // Fallback to light periodic check only if system clipboard listener fails
+            background.scheduleWithFixedDelay(this::syncDesktopClipboard, 1000, 1000, TimeUnit.MILLISECONDS);
+        }
     }
 
     private void scanDevices() {
@@ -491,8 +509,17 @@ public final class SwingScrcpyApp {
         });
     }
 
+    private long lastAdbPollTimestamp = 0;
     private void pollAdbState() {
         if (closing || adbServicesStopped) return;
+        long currentTimestamp = System.currentTimeMillis();
+        // If there are no pending reconnects and no active device management dialog open,
+        // relax ADB polling to 4000ms to eliminate process churn and CPU consumption.
+        boolean needFastPoll = !desiredConnections.isEmpty() || (deviceDialog != null && deviceDialog.isShowing());
+        if (!needFastPoll && (currentTimestamp - lastAdbPollTimestamp < 4000)) {
+            return;
+        }
+        lastAdbPollTimestamp = currentTimestamp;
         try {
             List<AdbDevice> snapshot = adb.devices();
             knownDevices = List.copyOf(snapshot);
@@ -1129,10 +1156,35 @@ public final class SwingScrcpyApp {
             @Override public void windowLostFocus(WindowEvent e) {
                 if (activeMouseInput == handle) releaseAllTransientInput();
             }
+            @Override public void windowIconified(WindowEvent e) {
+                if (handle.nativeRenderer != null) handle.nativeRenderer.setSuspended(true);
+            }
+            @Override public void windowDeiconified(WindowEvent e) {
+                if (handle.nativeRenderer != null) {
+                    handle.nativeRenderer.setSuspended(false);
+                    requestKeyframe(handle);
+                }
+            }
         });
 
         handle.floatingHost = host;
         handle.floatingFrame = floating;
+        boolean initialTop = handle.alwaysOnTop || alwaysOnTop;
+        floating.setAlwaysOnTop(initialTop);
+        if (handle.alwaysOnTopButton != null) {
+            handle.alwaysOnTopButton.setSelected(initialTop);
+            handle.alwaysOnTopButton.setToolTipText(initialTop ? "取消窗口置顶" : "窗口置顶");
+        }
+        floating.getRootPane().registerKeyboardAction(e -> {
+            boolean next = !floating.isAlwaysOnTop();
+            floating.setAlwaysOnTop(next);
+            handle.alwaysOnTop = next;
+            if (handle.alwaysOnTopButton != null) {
+                handle.alwaysOnTopButton.setSelected(next);
+                handle.alwaysOnTopButton.setToolTipText(next ? "取消窗口置顶" : "窗口置顶");
+            }
+            status.setText((handle.device == null ? "设备" : handle.device.displayName()) + (next ? " 窗口已置顶" : " 已取消窗口置顶"));
+        }, KeyStroke.getKeyStroke(KeyEvent.VK_T, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK), JComponent.WHEN_IN_FOCUSED_WINDOW);
         host.addComponentListener(new ComponentAdapter() {
             @Override public void componentResized(ComponentEvent e) {
                 resizeTile(handle, isPrimary(handle));
@@ -1226,6 +1278,38 @@ public final class SwingScrcpyApp {
             handle.resizeKeyframeTimer.setRepeats(false);
         }
         handle.resizeKeyframeTimer.restart();
+    }
+
+    private void toggleAlwaysOnTopAll() {
+        alwaysOnTop = !alwaysOnTop;
+        for (DeviceSession s : sessions.values()) {
+            s.alwaysOnTop = alwaysOnTop;
+            if (s.floatingFrame != null) {
+                s.floatingFrame.setAlwaysOnTop(alwaysOnTop);
+            }
+            if (s.alwaysOnTopButton != null) {
+                s.alwaysOnTopButton.setSelected(alwaysOnTop);
+                s.alwaysOnTopButton.setToolTipText(alwaysOnTop ? "取消窗口置顶" : "窗口置顶");
+            }
+        }
+        if (toggleAlwaysOnTopButton != null) {
+            toggleAlwaysOnTopButton.setText(alwaysOnTop ? "取消所有置顶" : "所有窗口置顶");
+        }
+        status.setText(alwaysOnTop ? "已开启所有独立窗口置顶" : "已取消所有独立窗口置顶");
+    }
+
+    private void toggleAlwaysOnTop(DeviceSession handle) {
+        boolean selected = handle.alwaysOnTopButton != null && handle.alwaysOnTopButton.isSelected();
+        handle.alwaysOnTop = selected;
+        if (handle.floatingFrame != null) {
+            handle.floatingFrame.setAlwaysOnTop(selected);
+            status.setText((handle.device == null ? "设备" : handle.device.displayName()) + (selected ? " 窗口已置顶" : " 已取消窗口置顶"));
+        } else {
+            status.setText((handle.device == null ? "设备" : handle.device.displayName()) + (selected ? " 已预设置顶（独立时生效）" : " 已取消预设置顶"));
+        }
+        if (handle.alwaysOnTopButton != null) {
+            handle.alwaysOnTopButton.setToolTipText(selected ? "取消窗口置顶" : "窗口置顶");
+        }
     }
 
     private void popOutAllDevices() {
@@ -1340,6 +1424,10 @@ public final class SwingScrcpyApp {
         JButton popOut = controlButton("recent-apps.png", "弹出独立窗口",
                 () -> { if (handle.floatingFrame != null) restoreTile(handle); else popOutTile(handle); });
         handle.popOutButton = popOut;
+        JToggleButton pin = toggleButton("固定窗口.png", "窗口置顶");
+        handle.alwaysOnTopButton = pin;
+        pin.setSelected(handle.alwaysOnTop || alwaysOnTop);
+        pin.addActionListener(e -> toggleAlwaysOnTop(handle));
         JButton taskbar = controlButton("notification-panel.png", "打开通知栏", () -> sidebarTaskbar(handle));
         JButton volumeUp = controlButton("volume-up.png", "音量加", () -> sidebarKey(handle, AndroidKeycodes.VOLUME_UP));
         JButton volumeDown = controlButton("volume-down.png", "音量减", () -> sidebarKey(handle, AndroidKeycodes.VOLUME_DOWN));
@@ -1354,7 +1442,7 @@ public final class SwingScrcpyApp {
         JToggleButton orientation = toggleButton("portrait.png", "切换为横屏");
         handle.orientationButton = orientation;
         orientation.addActionListener(e -> sidebarOrientation(handle));
-        for (JComponent c : List.of(close, primary, back, home, recent, popOut, taskbar, volumeUp, volumeDown, power, display, awake, orientation, mouse)) {
+        for (JComponent c : List.of(close, primary, back, home, recent, popOut, pin, taskbar, volumeUp, volumeDown, power, display, awake, orientation, mouse)) {
             c.setAlignmentX(Component.CENTER_ALIGNMENT);
             bar.add(c);
             bar.add(Box.createVerticalStrut(4));
@@ -2261,9 +2349,9 @@ public final class SwingScrcpyApp {
         JPanel floatingHost;
         Container embeddedParent;
         int embeddedIndex = -1;
-        JToggleButton primaryButton, mouseModeButton, displayButton, awakeButton, orientationButton;
+        JToggleButton primaryButton, mouseModeButton, displayButton, awakeButton, orientationButton, alwaysOnTopButton;
         JButton popOutButton;
-        boolean primary, stayAwake, displayPower = true, landscape, orientationPending;
+        boolean primary, stayAwake, displayPower = true, landscape, orientationPending, alwaysOnTop;
         boolean relativePointerValid, recentering, relativeCaptured;
         int secondaryIndex = -1;
         int portraitViewportWidth, portraitViewportHeight;

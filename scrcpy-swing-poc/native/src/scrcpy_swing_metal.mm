@@ -69,6 +69,10 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_jian_scrcpy_swing_NativeMetalCanvas_
         r->ciContext=[CIContext contextWithMTLDevice:r->device];
         r->layer=[CAMetalLayer layer]; r->layer.device=r->device; r->layer.pixelFormat=MTLPixelFormatBGRA8Unorm;
         r->layer.framebufferOnly=NO; r->layer.contentsScale=NSScreen.mainScreen.backingScaleFactor;
+        r->layer.presentsWithTransaction=NO;
+        if (@available(macOS 10.15, *)) {
+            r->layer.displaySyncEnabled=NO;
+        }
         jint canvasWidth=env->CallIntMethod(canvas,env->GetMethodID(env->GetObjectClass(canvas),"getWidth","()I"));
         jint canvasHeight=env->CallIntMethod(canvas,env->GetMethodID(env->GetObjectClass(canvas),"getHeight","()I"));
         dispatch_sync(dispatch_get_main_queue(), ^{
@@ -100,9 +104,9 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_jian_scrcpy_swing_NativeMetalCanv
         CGColorSpaceRef cs=CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
         [r->ciContext render:fitted toMTLTexture:drawable.texture commandBuffer:command bounds:CGRectMake(0,0,drawable.texture.width,drawable.texture.height) colorSpace:cs];
         CGColorSpaceRelease(cs);
-        [command presentDrawable:drawable]; [command commit]; [command waitUntilCompleted];
-        if(command.status!=MTLCommandBufferStatusCompleted) SCRCPY_NATIVE_ERROR("metal", "command buffer failed status=%ld error=%s", (long)command.status, command.error.localizedDescription.UTF8String ?: "unknown");
-        return command.status==MTLCommandBufferStatusCompleted?JNI_TRUE:JNI_FALSE;
+        [command presentDrawable:drawable];
+        [command commit];
+        return JNI_TRUE;
     }
 }
 extern "C" JNIEXPORT void JNICALL Java_com_jian_scrcpy_swing_NativeMetalCanvas_destroy0(JNIEnv*,jclass,jlong h){

@@ -106,7 +106,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_jian_scrcpy_swing_NativeVaapiCanv
     int dx=(attr.width-dw)/2, dy=(attr.height-dh)/2;
     VAStatus s=vaPutSurface(r->vaDisplay,(VASurfaceID)(uintptr_t)surface,r->drawable,
         0,0,width,height,dx,dy,dw,dh,nullptr,0,VA_FRAME_PICTURE);
-    if(s==VA_STATUS_SUCCESS) { vaSyncSurface(r->vaDisplay,(VASurfaceID)(uintptr_t)surface); XFlush(r->display); }
+    if(s==VA_STATUS_SUCCESS) { XFlush(r->display); }
     if(s!=VA_STATUS_SUCCESS) SCRCPY_NATIVE_WARN("vaapi", "vaPutSurface failed status=%d", (int)s);
     return s==VA_STATUS_SUCCESS?JNI_TRUE:JNI_FALSE;
 }

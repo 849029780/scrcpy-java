@@ -149,7 +149,7 @@ public final class Adb {
     }
 
     private void startLogPump(InputStream stream, String channel) {
-        Thread thread = new Thread(() -> {
+        Thread.ofVirtual().name("scrcpy-server-log-" + channel).start(() -> {
             try (var reader = new BufferedReader(
                     new InputStreamReader(stream, StandardCharsets.UTF_8))) {
                 for (String line; (line = reader.readLine()) != null; ) {
@@ -164,9 +164,7 @@ public final class Adb {
                         channel,
                         e.getMessage());
             }
-        }, "scrcpy-server-log-" + channel);
-        thread.setDaemon(true);
-        thread.start();
+        });
     }
 
     private IOException unavailable(IOException cause) {

@@ -21,10 +21,12 @@ public final class SwingVaapiVideoRenderer implements SwingHardwareVideoRenderer
     private final SwingVideoSurface surface;
     private final NativeVaapiCanvas canvas;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean suspended = new AtomicBoolean();
     private final ThreadPoolExecutor presenter = new ThreadPoolExecutor(1, 1, 0L,
             TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(2), task -> {
                 Thread thread = new Thread(task, "scrcpy-vaapi-present");
                 thread.setDaemon(true);
+                thread.setPriority(Thread.MAX_PRIORITY);
                 return thread;
             }, new ThreadPoolExecutor.AbortPolicy());
 
@@ -62,8 +64,14 @@ public final class SwingVaapiVideoRenderer implements SwingHardwareVideoRenderer
         }
     }
 
+    @Override public void setSuspended(boolean value) { suspended.set(value); }
+
     @Override public boolean renderHardware(HardwareVideoFrame hardwareFrame) {
         if (closed.get() || !"vaapi".equalsIgnoreCase(hardwareFrame.backend())) return false;
+        if (suspended.get()) {
+            hardwareFrame.close();
+            return true;
+        }
         AVFrame frame = hardwareFrame.frame();
         BytePointer vaSurface = frame.data(3);
         if (vaSurface == null || vaSurface.isNull()) return false;
