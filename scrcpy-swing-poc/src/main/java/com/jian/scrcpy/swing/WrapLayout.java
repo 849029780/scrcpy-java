@@ -1,11 +1,13 @@
 package com.jian.scrcpy.swing;
 
 import java.awt.*;
+import java.io.Serial;
 import java.util.ArrayList;
 import java.util.List;
 
 /** FlowLayout variant that reports the height required for the current width. */
 final class WrapLayout extends FlowLayout {
+    @Serial
     private static final long serialVersionUID = 1L;
 
     WrapLayout(int alignment, int hgap, int vgap) {

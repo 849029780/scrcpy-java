@@ -11,8 +11,6 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static org.bytedeco.ffmpeg.global.avutil.AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
-
 /** Bounded asynchronous VideoToolbox CVPixelBuffer -> Metal presentation. */
 public final class SwingMetalVideoRenderer implements SwingHardwareVideoRenderer {
     private final SwingVideoSurface surface;

@@ -31,7 +31,7 @@ import static org.bytedeco.ffmpeg.global.avutil.*;
 public final class SwingD3D11VideoRenderer implements SwingHardwareVideoRenderer {
     private static final ScheduledExecutorService PRESENT_EXECUTOR =
             Executors.newScheduledThreadPool(
-                    Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors())),
+                    Math.clamp(Runtime.getRuntime().availableProcessors(), 2, 4),
                     task -> {
                         Thread thread = new Thread(task, "scrcpy-d3d11-present");
                         thread.setDaemon(true);

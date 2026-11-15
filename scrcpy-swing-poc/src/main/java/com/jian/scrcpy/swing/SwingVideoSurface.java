@@ -232,10 +232,10 @@ public final class SwingVideoSurface extends JComponent implements AutoCloseable
         // maps to Android coordinates.
         if (bounds.isEmpty() || x < bounds.x || y < bounds.y
                 || x >= bounds.x + bounds.width || y >= bounds.y + bounds.height) return null;
-        int px = Math.min(fw - 1, Math.max(0,
-                (int) ((x - bounds.x) * fw / bounds.width)));
-        int py = Math.min(fh - 1, Math.max(0,
-                (int) ((y - bounds.y) * fh / bounds.height)));
+        int px = Math.clamp(
+                (int) ((x - bounds.x) * fw / bounds.width), 0, fw - 1);
+        int py = Math.clamp(
+                (int) ((y - bounds.y) * fh / bounds.height), 0, fh - 1);
         return new DeviceController.ScreenPosition(px, py, fw, fh);
     }
 

@@ -1,7 +1,5 @@
 package com.jian.scrcpy.swing;
 
-import com.jian.scrcpy.logging.LoggingBootstrap;
-
 import com.jian.scrcpy.ScrcpySession;
 import com.jian.scrcpy.adb.Adb;
 import com.jian.scrcpy.adb.AdbDevice;
@@ -10,14 +8,13 @@ import com.jian.scrcpy.control.DeviceController;
 import com.jian.scrcpy.control.UhidController;
 import com.jian.scrcpy.control.UhidMouse;
 import com.jian.scrcpy.input.AndroidKeycodes;
+import com.jian.scrcpy.logging.LoggingBootstrap;
 import com.jian.scrcpy.media.FfmpegVideoDecoder;
-import com.jian.scrcpy.media.HardwareVideoFrame;
 import com.jian.scrcpy.media.JavaSoundPlayer;
-import com.jian.scrcpy.media.VideoFrame;
 import com.jian.scrcpy.media.VideoHardwareDeviceProvider;
 import com.jian.scrcpy.media.VideoRenderer;
-import com.jian.scrcpy.protocol.ControlMessages;
 import com.jian.scrcpy.protocol.ControlMessageType;
+import com.jian.scrcpy.protocol.ControlMessages;
 import com.jian.scrcpy.server.ScrcpyOptions;
 import com.jian.scrcpy.server.ScrcpyServerArtifact;
 import com.jian.scrcpy.server.ServerLauncher;
@@ -29,18 +26,13 @@ import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.*;
-import java.awt.image.BufferedImage;
-import java.awt.image.DataBufferInt;
 import java.io.File;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.IntBuffer;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.*;
-import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
