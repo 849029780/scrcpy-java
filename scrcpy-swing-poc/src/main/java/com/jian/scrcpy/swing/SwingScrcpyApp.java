@@ -44,7 +44,30 @@ import java.util.stream.Collectors;
 public final class SwingScrcpyApp {
     static {
         LoggingBootstrap.install();
+        try {
+            com.formdev.flatlaf.FlatLightLaf.setup();
+            UIManager.put("Button.arc", 6);
+            UIManager.put("Component.arc", 6);
+            UIManager.put("ProgressBar.arc", 6);
+            UIManager.put("TextComponent.arc", 6);
+            UIManager.put("ScrollBar.showButtons", false);
+            UIManager.put("ScrollBar.width", 10);
+            UIManager.put("TabbedPane.showTabSeparators", true);
+        } catch (Throwable t) {
+            System.err.println("FlatLaf setup failed: " + t.getMessage());
+        }
     }
+
+    // Modern Developer Tool / IDE Light Theme Design Tokens
+    private static final Color COLOR_APP_BG = new Color(0xF1, 0xF5, 0xF9);          // Soft Slate #F1F5F9
+    private static final Color COLOR_TOOLBAR_BG = new Color(0xFF, 0xFF, 0xFF);      // Crisp White #FFFFFF
+    private static final Color COLOR_CARD_BG = new Color(0xFF, 0xFF, 0xFF);         // Tile / Card Surface #FFFFFF
+    private static final Color COLOR_CARD_HEADER = new Color(0xF8, 0xFA, 0xFC);     // Card Header #F8FAFC
+    private static final Color COLOR_BORDER = new Color(0xCB, 0xD5, 0xE1);          // Crisp border #CBD5E1
+    private static final Color COLOR_TEXT_PRIMARY = new Color(0x0F, 0x17, 0x2A);    // Deep high-contrast Slate #0F172A
+    private static final Color COLOR_TEXT_MUTED = new Color(0x64, 0x74, 0x8B);      // Secondary muted slate #64748B
+    private static final Color COLOR_ACCENT_GREEN = new Color(0x16, 0xA3, 0x4A);    // Connected green #16A34A
+    private static final Color COLOR_ACCENT_BLUE = new Color(0x02, 0x84, 0xC7);     // Primary action blue #0284C7
 
     private static final int TILE_WIDTH = 360;
     private static final int TILE_HEIGHT = 680;
@@ -119,7 +142,8 @@ public final class SwingScrcpyApp {
         frame.setSize(1500, 950);
         frame.setLocationByPlatform(true);
 
-        JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 7));
+        JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 8));
+        toolbar.setBackground(COLOR_TOOLBAR_BG);
         JButton devices = new JButton("设备列表");
         JButton files = new JButton("批量传送文件");
         JButton install = new JButton("批量安装应用");
@@ -149,9 +173,11 @@ public final class SwingScrcpyApp {
         toolbar.add(tileWindowsButton);
         toolbar.add(toggleAlwaysOnTopButton);
         toolbar.add(toggleNavigationBarsButton);
+        primaryStatus.setForeground(COLOR_ACCENT_BLUE);
+        status.setForeground(COLOR_TEXT_MUTED);
         toolbar.add(primaryStatus);
         toolbar.add(status);
-        toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(215, 215, 215)));
+        toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, COLOR_BORDER));
 
         // 全局快捷键注册（Ctrl+Shift+D 独立全部，Ctrl+Shift+R 还原全部，Ctrl+Shift+A 自动平铺，Ctrl+Shift+T 置顶全部）
         JRootPane root = frame.getRootPane();
@@ -169,19 +195,19 @@ public final class SwingScrcpyApp {
                 JComponent.WHEN_IN_FOCUSED_WINDOW);
 
         primaryHost.setOpaque(true);
-        primaryHost.setBackground(Color.WHITE);
+        primaryHost.setBackground(COLOR_APP_BG);
         primaryHost.setDoubleBuffered(false);
         workspace.setOpaque(true);
         workspace.setDoubleBuffered(false);
         primaryHost.setPreferredSize(new Dimension(0, 0));
         primaryHost.setVisible(false);
-        secondaryGrid.setBackground(Color.WHITE);
-        secondaryGrid.setBorder(new EmptyBorder(10, 10, 10, 10));
+        secondaryGrid.setBackground(COLOR_APP_BG);
+        secondaryGrid.setBorder(new EmptyBorder(12, 12, 12, 12));
         secondaryScroll.setBorder(BorderFactory.createEmptyBorder());
         secondaryScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        secondaryScroll.getViewport().setBackground(Color.WHITE);
+        secondaryScroll.getViewport().setBackground(COLOR_APP_BG);
         secondaryScroll.getVerticalScrollBar().setUnitIncrement(24);
-        workspace.setBackground(Color.WHITE);
+        workspace.setBackground(COLOR_APP_BG);
         workspace.add(secondaryScroll, BorderLayout.CENTER);
         workspace.addComponentListener(new ComponentAdapter() {
             @Override public void componentResized(ComponentEvent e) {
@@ -212,7 +238,12 @@ public final class SwingScrcpyApp {
 
     private JComponent statusBar() {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(new EmptyBorder(3, 8, 3, 8));
+        panel.setBackground(COLOR_TOOLBAR_BG);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, COLOR_BORDER),
+                new EmptyBorder(5, 12, 5, 12)
+        ));
+        status.setForeground(COLOR_TEXT_MUTED);
         panel.add(status, BorderLayout.WEST);
         return panel;
     }
@@ -888,13 +919,15 @@ public final class SwingScrcpyApp {
         if (sessions.get(device.serial()) != handle || handle.tile != null) return;
         JPanel tile = new JPanel(new BorderLayout(0, 0));
         tile.setOpaque(true);
-        tile.setBackground(Color.WHITE);
+        tile.setBackground(COLOR_CARD_BG);
         tile.setDoubleBuffered(false);
-        tile.setBorder(BorderFactory.createLineBorder(new Color(68, 68, 68)));
+        tile.setBorder(BorderFactory.createLineBorder(COLOR_BORDER, 1));
         JLabel title = new JLabel(device.displayName());
-        title.setOpaque(true); title.setBackground(Color.WHITE); title.setForeground(Color.BLACK);
-        title.setFont(title.getFont().deriveFont(Font.BOLD));
-        title.setBorder(new EmptyBorder(4, 6, 4, 6));
+        title.setOpaque(true);
+        title.setBackground(COLOR_CARD_HEADER);
+        title.setForeground(COLOR_TEXT_PRIMARY);
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 12.5f));
+        title.setBorder(new EmptyBorder(6, 10, 6, 10));
         handle.tileTitle = title;
         JPanel videoAndNavigation = new JPanel(new BorderLayout(0, 0));
         videoAndNavigation.setOpaque(true);
@@ -1215,7 +1248,7 @@ public final class SwingScrcpyApp {
             primaryHost.removeAll();
             primaryHost.add(handle.tile, BorderLayout.CENTER);
             primaryHost.setOpaque(true);
-            primaryHost.setBackground(Color.WHITE);
+            primaryHost.setBackground(COLOR_APP_BG);
             primaryHost.setVisible(true);
             if (primaryHost.getParent() != workspace) workspace.add(primaryHost, BorderLayout.WEST);
             workspace.setComponentZOrder(primaryHost, 0);
@@ -1228,12 +1261,16 @@ public final class SwingScrcpyApp {
         floating.getContentPane().removeAll();
         floating.dispose();
         // 还原嵌入模式下的背景与边框
-        handle.tile.setBackground(Color.WHITE);
-        handle.tile.setBorder(BorderFactory.createLineBorder(new Color(68, 68, 68)));
+        handle.tile.setBackground(COLOR_CARD_BG);
+        handle.tile.setBorder(BorderFactory.createLineBorder(COLOR_BORDER, 1));
         if (handle.videoAndNavigation != null) handle.videoAndNavigation.setBackground(new Color(24, 24, 24));
         if (handle.viewport != null) handle.viewport.setBackground(new Color(24, 24, 24));
         if (handle.view != null) handle.view.setBackground(new Color(24, 24, 24));
-        if (handle.tileTitle != null) handle.tileTitle.setVisible(true);
+        if (handle.tileTitle != null) {
+            handle.tileTitle.setBackground(COLOR_CARD_HEADER);
+            handle.tileTitle.setForeground(COLOR_TEXT_PRIMARY);
+            handle.tileTitle.setVisible(true);
+        }
         handle.embeddedParent = null;
         handle.embeddedIndex = -1;
         if (handle.popOutButton != null) handle.popOutButton.setToolTipText("弹出独立窗口");

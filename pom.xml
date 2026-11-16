@@ -14,7 +14,7 @@
     <properties>
         <maven.compiler.release>27</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <netty.version>4.2.19.Final</netty.version>
+        <netty.version>4.2.20.Final</netty.version>
         <javafx.version>25.0.1</javafx.version>
         <javacpp.version>1.5.14</javacpp.version>
         <ffmpeg.version>8.1.2-${javacpp.version}</ffmpeg.version>
